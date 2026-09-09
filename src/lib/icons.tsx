@@ -1,5 +1,6 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
+import { Gift } from "lucide-react";
 import {
   Camera,
   CameraOff,
@@ -81,6 +82,9 @@ function wrap(LucideIcon: ComponentType<LucideProps>, props: IconProps) {
   );
 }
 
+export function IconGif(props: IconProps) {
+  return wrap(Gift, props);
+}
 export function IconMenu(props: IconProps) {
   return wrap(Menu, props);
 }
