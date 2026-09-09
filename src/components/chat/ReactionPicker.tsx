@@ -9,12 +9,11 @@ const EmojiPanel = dynamic(
   { ssr: false }
 );
 
-const QUICK = ["❤️", "🔥", "👍", "👏", "👎", "🥰", "😁"] as const;
+const QUICK = ["❤️", "🔥", "👍", "👏", "👎", "🥰", "😁", "😂", "😮", "🤔"] as const;
 
 type ReactionPickerProps = {
   onPick: (emoji: string) => void;
   compact?: boolean;
-  /** When true, render as a fixed portal near the anchor. */
   portal?: boolean;
   anchorEl?: HTMLElement | null;
 };
@@ -35,8 +34,8 @@ export function ReactionPicker({
     function place() {
       if (!anchorEl) return;
       const rect = anchorEl.getBoundingClientRect();
-      const width = expanded ? 352 : 260;
-      const height = expanded ? 400 : 56;
+      const width = expanded ? 400 : 320;
+      const height = expanded ? 440 : 56;
       let left = rect.right - width;
       let top = rect.top - height - 8;
       left = Math.min(Math.max(8, left), window.innerWidth - width - 8);
@@ -70,7 +69,9 @@ export function ReactionPicker({
             className="reaction-picker__chip"
             onClick={() => onPick(emoji)}
           >
-            {emoji}
+            <span style={{ fontSize: compact ? "1.4rem" : "1.8rem" }}>
+              {emoji}
+            </span>
           </button>
         ))}
         <button
@@ -88,6 +89,7 @@ export function ReactionPicker({
           closeOnSelect
           showTrigger={false}
           className="reaction-picker__panel"
+          emojiSize={36}
           onOpenChange={(next) => {
             if (!next) setExpanded(false);
           }}
