@@ -1778,6 +1778,13 @@ app.prepare().then(() => {
     }
 
     const url = req.url || "";
+    if (
+      !url.startsWith("/_next/") &&
+      !url.startsWith("/uploads") &&
+      !url.startsWith("/api/")
+    ) {
+      res.setHeader("Cache-Control", "no-store");
+    }
     if (url.startsWith("/livekit")) {
       proxyLiveKitHttp(req, res);
       return;
@@ -1811,6 +1818,7 @@ app.prepare().then(() => {
     if (url.startsWith("/api/health")) {
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
+      res.setHeader("Cache-Control", "no-store");
       res.end(JSON.stringify({ ok: true, service: "pulse", bootId: APP_BOOT_ID }));
       return;
     }
