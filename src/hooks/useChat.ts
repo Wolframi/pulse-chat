@@ -1752,7 +1752,7 @@ export function useChat() {
     refreshChatMembers(session.room);
   }, [session?.room, currentChat?.members, refreshChatMembers]);
 
-  // Keep guild roster presence in sync with global people updates.
+  // Keep guild roster in sync with people (avatars used to stay stale until reload).
   useEffect(() => {
     if (!people.length) return;
     setChatMembers((prev) => {
@@ -1760,9 +1760,25 @@ export function useChat() {
       let changed = false;
       const next = prev.map((member) => {
         const live = people.find((user) => user.id === member.id);
-        if (!live || live.online === member.online) return member;
+        if (!live) return member;
+        if (
+          live.online === member.online &&
+          live.avatarUrl === member.avatarUrl &&
+          live.displayName === member.displayName &&
+          live.username === member.username &&
+          live.bio === member.bio
+        ) {
+          return member;
+        }
         changed = true;
-        return { ...member, online: live.online };
+        return {
+          ...member,
+          online: live.online,
+          avatarUrl: live.avatarUrl,
+          displayName: live.displayName,
+          username: live.username,
+          bio: live.bio,
+        };
       });
       return changed ? next : prev;
     });
