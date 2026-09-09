@@ -10,6 +10,29 @@ const nextConfig: NextConfig = {
     "*.trycloudflare.com",
     ...lanDevHosts(),
   ],
+  webpack: (config, { dev }) => {
+    if (dev) {
+      const extra = ["**/uploads/**", "**/data/**"];
+      const prev = config.watchOptions?.ignored;
+      const ignored =
+        typeof prev === "function"
+          ? (file: string) =>
+              prev(file) || /(?:^|[/\\])(?:uploads|data)(?:[/\\]|$)/.test(file)
+          : [
+              ...(Array.isArray(prev)
+                ? prev
+                : prev
+                  ? [prev]
+                  : ["**/node_modules/**"]),
+              ...extra,
+            ];
+      config.watchOptions = {
+        ...config.watchOptions,
+        ignored,
+      };
+    }
+    return config;
+  },
   transpilePackages: [
     "react-voice-recorder-kit",
     "@wavesurfer/react",

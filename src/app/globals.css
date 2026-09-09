@@ -1854,6 +1854,19 @@ button:active:not(:disabled) {
   transform: translateZ(0);
 }
 
+.server-rail__orb--guild .avatar.server-rail__face {
+  width: 100%;
+  height: 100%;
+  box-shadow: none;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.server-rail__orb--guild .avatar.server-rail__face img {
+  clip-path: none;
+  border-radius: inherit;
+}
+
 .server-rail__guild-initials {
   line-height: 1;
   user-select: none;
