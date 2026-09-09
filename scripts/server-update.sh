@@ -10,8 +10,10 @@ if [ ! -d .git ]; then
 fi
 
 git fetch origin
-git checkout master
-git pull --ff-only origin master
+git checkout -f master
+git reset --hard origin/master
+# Drop leftover untracked sources; keep data/uploads/secrets (gitignored).
+git clean -fd --exclude=data --exclude=uploads --exclude=.livekit-url --exclude=.livekit-api-key --exclude=.livekit-api-secret --exclude=.livekit-server.yaml --exclude=.turn-user --exclude=.turn-pass
 
 mkdir -p data uploads
 npm ci

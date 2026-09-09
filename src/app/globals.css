@@ -5196,23 +5196,31 @@ button:active:not(:disabled) {
   box-shadow: none;
 }
 
-.call-mini__avatar {
+.call-mini .call-mini__avatar {
   display: inline-grid;
   place-items: center;
-  flex: 0 0 auto;
+  flex: 0 0 36px;
   width: 36px;
   height: 36px;
+  max-width: 36px;
+  max-height: 36px;
   aspect-ratio: 1;
   border-radius: 50%;
+  overflow: visible;
 }
 
-.call-mini__avatar.is-speaking {
-  outline: 2px solid #23a55a;
-  outline-offset: 2px;
+.call-mini .call-mini__avatar .avatar {
+  width: 36px;
+  height: 36px;
 }
 
-.call-mini__avatar.is-speaking .avatar {
-  box-shadow: none;
+.call-mini .call-mini__avatar.is-speaking {
+  outline: none;
+}
+
+.call-mini .call-mini__avatar.is-speaking .avatar {
+  outline: none;
+  box-shadow: 0 0 0 2px #23a55a;
 }
 
 .call-mini__main {
@@ -5250,7 +5258,7 @@ button:active:not(:disabled) {
   color: #fff;
 }
 
-.call-mini span {
+.call-mini__text {
   display: grid;
   flex: 1;
   min-width: 0;
@@ -8023,8 +8031,12 @@ button:active:not(:disabled) {
 }
 
 .call__tile-avatar.is-speaking {
-  outline: 3px solid #23a55a;
-  outline-offset: 4px;
+  outline: none;
+}
+
+.call__tile-avatar.is-speaking .avatar {
+  outline: none;
+  box-shadow: 0 0 0 4px #23a55a;
 }
 
 .call__tiles--duo {
@@ -8033,7 +8045,7 @@ button:active:not(:disabled) {
   justify-content: center;
   gap: clamp(28px, 8vw, 96px);
   padding: 28px 20px 24px;
-  overflow: hidden;
+  overflow: visible;
   grid-auto-rows: unset;
 }
 
@@ -8067,6 +8079,23 @@ button:active:not(:disabled) {
   width: min(180px, 44cqh, 32cqi);
   height: min(180px, 44cqh, 32cqi);
   font-size: clamp(1.5rem, 9cqh, 2.8rem);
+}
+
+.call__tiles--duo .call__tile.has-video {
+  width: min(280px, 42vw);
+  height: min(210px, 36vh);
+  background: #0a0a0c;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+.call__tiles--duo .call__tile.has-video .call__tile-name {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 4px 8px;
 }
 
 .call__tiles--solo {
@@ -8317,6 +8346,12 @@ button:active:not(:disabled) {
   grid-auto-rows: unset;
   height: 100%;
   padding: 20px 16px 22px;
+}
+
+.call__card--dock .call__tiles--duo .call__tile .avatar--xl {
+  width: min(120px, 42cqh, 28cqi);
+  height: min(120px, 42cqh, 28cqi);
+  font-size: clamp(1.3rem, 8cqh, 2rem);
 }
 
 .call__card--dock .call__stage,
