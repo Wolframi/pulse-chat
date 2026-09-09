@@ -1,0 +1,8 @@
+[Unit]
+Description=Update Pulse Chat from GitHub master if it changed
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /root/pulse-chat/scripts/auto-update.sh
+Nice=10
