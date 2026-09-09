@@ -336,7 +336,7 @@ export function CallPanel({
             </aside>
           </div>
         ) : (
-          <div className="call__tiles call__tiles--solo">
+          <div className="call__tiles call__tiles--duo">
             <div
               className={`call__tile ${
                 remoteCamera && remoteSpeaking ? "is-speaking" : ""
@@ -369,18 +369,32 @@ export function CallPanel({
                 </p>
               ) : null}
             </div>
+            <div
+              className={`call__tile call__tile--self ${
+                localCamera && localSpeaking ? "is-speaking" : ""
+              } ${localCamera ? "has-video" : ""}`}
+            >
+              <MediaVideo
+                stream={localCameraStream || localStream}
+                active={Boolean(localStream)}
+                className={`call__tile-video is-camera ${localCamera ? "" : "is-hidden"}`}
+              />
+              {!localCamera && (
+                <div
+                  className={`call__tile-avatar ${
+                    localSpeaking ? "is-speaking" : ""
+                  }`}
+                >
+                  <Avatar name="Вы" src={selfAvatarUrl} size="xl" />
+                </div>
+              )}
+              <em className="call__tile-name">
+                <span>Вы</span>
+                {muted ? <IconMicOff size={14} className="call__tile-icon" /> : null}
+              </em>
+            </div>
           </div>
         )}
-
-        {localCamera && !screenMode ? (
-          <div className="call__self-pip" aria-label="Ваша камера">
-            <MediaVideo
-              stream={localCameraStream || localStream}
-              active={Boolean(localStream)}
-              className="call__tile-video is-camera"
-            />
-          </div>
-        ) : null}
       </div>
 
       <div className="call__bar">
@@ -509,7 +523,7 @@ function CallMiniBar({
         <span className={`call-mini__avatar ${speaking ? "is-speaking" : ""}`}>
           <Avatar name={peerName} src={peerAvatarUrl} size="sm" />
         </span>
-        <span>
+        <span className="call-mini__text">
           <strong>{peerName}</strong>
           <em>
             {statusLabel}
