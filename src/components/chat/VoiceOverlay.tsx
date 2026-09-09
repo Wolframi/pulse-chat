@@ -560,7 +560,7 @@ export function VoiceOverlay({
               <span className="call-mini__avatar">
                 <IconVolume size={18} />
               </span>
-              <span>
+              <span className="call-mini__text">
                 <strong>{active.title}</strong>
                 <em>
                   {peers.length === 0

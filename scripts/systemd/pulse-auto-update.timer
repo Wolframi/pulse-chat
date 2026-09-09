@@ -1,0 +1,11 @@
+[Unit]
+Description=Check GitHub master for Pulse Chat updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
