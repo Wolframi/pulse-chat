@@ -2,6 +2,7 @@ import { hasLiveMediaSession } from "@/lib/mediaResume";
 
 const BOOT_KEY = "pulse-boot-id";
 const PENDING_KEY = "pulse-boot-pending";
+const BOOT_QUERY = "_b";
 
 function storedBootId() {
   try {
@@ -43,10 +44,25 @@ function clearPendingBootId() {
   }
 }
 
+function stripBootQuery() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has(BOOT_QUERY)) return;
+  url.searchParams.delete(BOOT_QUERY);
+  const search = url.searchParams.toString();
+  window.history.replaceState(
+    null,
+    "",
+    `${url.pathname}${search ? `?${search}` : ""}${url.hash}`,
+  );
+}
+
 function reloadNow(bootId: string) {
   writeBootId(bootId);
   clearPendingBootId();
-  window.location.reload();
+  const url = new URL(window.location.href);
+  url.searchParams.set(BOOT_QUERY, bootId.replace(/[^a-zA-Z0-9-]/g, "").slice(-12));
+  window.location.replace(`${url.pathname}${url.search}${url.hash}`);
 }
 
 /** Reload after a deploy. During a live call wait — WebRTC stays up, then reload. */
@@ -81,38 +97,52 @@ export function flushPendingBootReload() {
   reloadNow(pending);
 }
 
-export function watchAppBoot(
-  socket: {
-    on: (event: "app:boot", fn: (payload: { bootId?: string }) => void) => void;
-    off: (event: "app:boot", fn: (payload: { bootId?: string }) => void) => void;
-  } | null,
-) {
+type BootSocket = {
+  on: (event: "app:boot" | "connect", fn: (payload?: { bootId?: string }) => void) => void;
+  off: (event: "app:boot" | "connect", fn: (payload?: { bootId?: string }) => void) => void;
+};
+
+export function watchAppBoot(socket: BootSocket | null) {
+  stripBootQuery();
+
   const onBoot = (payload: { bootId?: string } | undefined) => {
     if (payload?.bootId) applyBootId(payload.bootId);
   };
 
-  socket?.on("app:boot", onBoot);
-
-  let cancelled = false;
   const poll = async () => {
     try {
       const res = await fetch("/api/health", { cache: "no-store" });
-      if (!res.ok || cancelled) return;
+      if (!res.ok) return;
       const data = (await res.json()) as { bootId?: string };
       if (data?.bootId) applyBootId(data.bootId);
+      if (!hasLiveMediaSession()) flushPendingBootReload();
     } catch {
       /* server is bouncing */
     }
   };
 
+  socket?.on("app:boot", onBoot);
+  socket?.on("connect", poll);
+
+  const onVisible = () => {
+    if (typeof document !== "undefined" && document.hidden) return;
+    void poll();
+  };
+  document.addEventListener("visibilitychange", onVisible);
+  window.addEventListener("online", onVisible);
+  window.addEventListener("focus", onVisible);
+
   void poll();
   const timer = window.setInterval(() => {
     void poll();
-  }, 8_000);
+  }, 2_000);
 
   return () => {
-    cancelled = true;
     window.clearInterval(timer);
     socket?.off("app:boot", onBoot);
+    socket?.off("connect", poll);
+    document.removeEventListener("visibilitychange", onVisible);
+    window.removeEventListener("online", onVisible);
+    window.removeEventListener("focus", onVisible);
   };
 }
