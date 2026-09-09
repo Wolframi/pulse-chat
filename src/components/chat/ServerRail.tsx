@@ -4,6 +4,7 @@ import { motion } from "motion/react";
 import type { ChatInfo } from "@/lib/types";
 import { IconPlus, IconUsers } from "@/lib/icons";
 import { popSpring } from "@/lib/motion";
+import { Avatar } from "./Avatar";
 
 /** home = inbox, dms = people, create = new group, else group chat id */
 export type RailFocus = "home" | "dms" | "create" | (string & {});
@@ -107,12 +108,11 @@ export function ServerRail({
             transition={{ type: "spring", stiffness: 300, damping: 30 }}
           >
             {group.avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                className="server-rail__avatar"
-                src={String(group.avatarUrl).split("?")[0]}
-                alt=""
-                decoding="async"
+              <Avatar
+                name={group.title}
+                src={group.avatarUrl}
+                size="md"
+                className="server-rail__face"
               />
             ) : (
               <span className="server-rail__guild-initials" aria-hidden>

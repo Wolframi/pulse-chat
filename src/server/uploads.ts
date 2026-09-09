@@ -637,6 +637,7 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
   const filePath = path.join(UPLOAD_DIR, fileName);
   if (!fileName || !existsSync(filePath)) {
     res.statusCode = 404;
+    res.setHeader("Cache-Control", "no-store");
     res.end("Not found");
     return true;
   }
@@ -664,6 +665,7 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
   if (!isInlineVisual) {
     if (!verifyUploadSignature(bare, exp, sig)) {
       res.statusCode = 403;
+      res.setHeader("Cache-Control", "no-store");
       res.end("Forbidden");
       return true;
     }

@@ -1,7 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { avatarColor, avatarInitials } from "@/lib/avatar";
+import {
+  avatarColor,
+  avatarDisplaySrc,
+  avatarInitials,
+  bareAvatarUrl,
+} from "@/lib/avatar";
 
 type AvatarProps = {
   name: string;
@@ -11,7 +16,8 @@ type AvatarProps = {
   online?: boolean;
 };
 
-const MAX_RETRIES = 3;
+const FAST_RETRIES = 5;
+const SLOW_RETRIES = 6;
 
 export function Avatar({
   name,
@@ -21,14 +27,13 @@ export function Avatar({
   online,
 }: AvatarProps) {
   const label = name || "?";
-  // Images no longer need a valid signature to display — strip ?exp&sig noise.
-  const photoSrc = src
-    ? String(src).split("?")[0].split("#")[0] || null
-    : null;
+  const photoSrc = bareAvatarUrl(src);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const failedRef = useRef(false);
+  failedRef.current = failed;
   const showPhoto = Boolean(photoSrc) && !failed;
 
   const [prevSrc, setPrevSrc] = useState(photoSrc);
@@ -49,7 +54,25 @@ export function Avatar({
     };
   }, []);
 
+  function clearRetry() {
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
+  }
+
+  function scheduleRetry(nextAttempt: number, delayMs: number) {
+    clearRetry();
+    retryTimer.current = setTimeout(() => {
+      retryTimer.current = null;
+      setAttempt(nextAttempt);
+      setLoaded(false);
+      setFailed(false);
+    }, delayMs);
+  }
+
   function markLoaded() {
+    clearRetry();
     setLoaded(true);
     setFailed(false);
   }
@@ -59,27 +82,49 @@ export function Avatar({
       setFailed(true);
       return;
     }
-    if (attempt + 1 >= MAX_RETRIES) {
-      setFailed(true);
-      setLoaded(false);
+    const next = attempt + 1;
+    if (next <= FAST_RETRIES) {
+      scheduleRetry(next, Math.min(2500, 280 * next));
       return;
     }
-    const next = attempt + 1;
-    if (retryTimer.current) clearTimeout(retryTimer.current);
-    retryTimer.current = setTimeout(() => {
-      setAttempt(next);
+    if (next <= FAST_RETRIES + SLOW_RETRIES) {
+      setFailed(true);
       setLoaded(false);
-      setFailed(false);
-    }, 400 * next);
+      scheduleRetry(next, Math.min(20_000, 3000 * (next - FAST_RETRIES)));
+      return;
+    }
+    setFailed(true);
+    setLoaded(false);
   }
 
-  /** Cached images may finish before onLoad is attached. */
+  useEffect(() => {
+    if (!photoSrc) return;
+    function revive() {
+      if (document.hidden || !failedRef.current) return;
+      clearRetry();
+      setFailed(false);
+      setLoaded(false);
+      setAttempt((n) => n + 1);
+    }
+    document.addEventListener("visibilitychange", revive);
+    window.addEventListener("focus", revive);
+    window.addEventListener("online", revive);
+    return () => {
+      document.removeEventListener("visibilitychange", revive);
+      window.removeEventListener("focus", revive);
+      window.removeEventListener("online", revive);
+    };
+  }, [photoSrc]);
+
+  /** Cached success/failure may finish before onLoad/onError is attached. */
   function bindImg(node: HTMLImageElement | null) {
     if (!node) return;
-    if (node.complete && node.naturalWidth > 0) {
-      markLoaded();
-    }
+    if (!node.complete) return;
+    if (node.naturalWidth > 0) markLoaded();
+    else handleError();
   }
+
+  const imgSrc = photoSrc ? avatarDisplaySrc(photoSrc, attempt) : "";
 
   return (
     <span
@@ -98,7 +143,7 @@ export function Avatar({
           <img
             key={`${photoSrc}::${attempt}`}
             ref={bindImg}
-            src={photoSrc || ""}
+            src={imgSrc}
             alt=""
             decoding="async"
             loading="eager"

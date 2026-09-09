@@ -23,3 +23,17 @@ export function avatarInitials(name: string) {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
 }
+
+/** Strip exp/sig so a stale signature never blocks a photo. */
+export function bareAvatarUrl(src?: string | null) {
+  if (!src) return null;
+  const bare = String(src).split("?")[0].split("#")[0];
+  return bare || null;
+}
+
+/** Cache-bust after a failed load — browsers reuse a broken-image cache for the same URL. */
+export function avatarDisplaySrc(bare: string, attempt = 0) {
+  if (attempt <= 0) return bare;
+  const sep = bare.includes("?") ? "&" : "?";
+  return `${bare}${sep}retry=${attempt}`;
+}
