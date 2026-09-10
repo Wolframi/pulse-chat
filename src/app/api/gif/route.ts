@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const GIPHY_API_KEY = process.env.GIPHY_API_KEY || 'ВАШ_КЛЮЧ_GIPHY';
 const GIPHY_BASE = 'https://api.giphy.com/v1/gifs';
+
+function giphyApiKey() {
+  return String(process.env.GIPHY_API_KEY || "").trim();
+}
 
 // ============================================
 // Серверный кэш (живёт в памяти Node.js)
@@ -70,9 +73,17 @@ export async function GET(request: NextRequest) {
 
     console.log(`🔍 Cache MISS: ${cacheKey} — fetching from GIPHY`);
 
+    const apiKey = giphyApiKey();
+    if (!apiKey) {
+      console.error("GIPHY_API_KEY is not set");
+      return NextResponse.json(getFallbackGifs(), {
+        headers: { "X-Cache": "NO_KEY" },
+      });
+    }
+
     // 2. Формируем запрос
     const params = new URLSearchParams();
-    params.set('api_key', GIPHY_API_KEY);
+    params.set('api_key', apiKey);
     params.set('limit', String(limit));
     params.set('offset', String(offset));
     params.set('rating', 'pg-13');
