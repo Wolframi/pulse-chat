@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const GIPHY_API_KEY = process.env.GIPHY_API_KEY || 'BCkrS2hlCPHeZbhkEPd1VMJY1C5EAaqW';
+const GIPHY_API_KEY = process.env.GIPHY_API_KEY || 'ВАШ_КЛЮЧ_GIPHY';
 const GIPHY_BASE = 'https://api.giphy.com/v1/gifs';
 
 // ============================================
