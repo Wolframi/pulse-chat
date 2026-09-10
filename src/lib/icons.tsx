@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { LucideProps } from "lucide-react";
 import {
+  ArrowLeft,
   Camera,
   CameraOff,
   Check,
@@ -24,11 +25,13 @@ import {
   Eye,
   EyeOff,
   Forward,
+  Gift,
   Hash,
   Image as ImageIcon,
   LogOut,
   Maximize2,
   Menu,
+  MessageCircle,
   MessageSquare,
   Mic,
   MicOff,
@@ -48,6 +51,7 @@ import {
   Send,
   Settings,
   Smile,
+  Sticker,
   User,
   UserPlus,
   Users,
@@ -59,7 +63,6 @@ import {
   Headphones,
   Sparkles,
   X,
-  Sticker,
 } from "lucide-react";
 
 type IconProps = {
@@ -82,12 +85,6 @@ function wrap(LucideIcon: ComponentType<LucideProps>, props: IconProps) {
   );
 }
 
-export function IconSticker(props: IconProps) {
-  return wrap(Sticker, props);
-}
-export function IconGif(props: IconProps) {
-  return wrap(Gift, props);
-}
 export function IconMenu(props: IconProps) {
   return wrap(Menu, props);
 }
@@ -133,6 +130,9 @@ export function IconSettings(props: IconProps) {
 export function IconLogout(props: IconProps) {
   return wrap(LogOut, props);
 }
+export function IconLogOut(props: IconProps) {
+  return wrap(LogOut, props);
+}
 export function IconUser(props: IconProps) {
   return wrap(User, props);
 }
@@ -141,6 +141,9 @@ export function IconUserPlus(props: IconProps) {
 }
 export function IconChats(props: IconProps) {
   return wrap(MessageSquare, props);
+}
+export function IconMessageCircle(props: IconProps) {
+  return wrap(MessageCircle, props);
 }
 export function IconUsers(props: IconProps) {
   return wrap(Users, props);
@@ -176,6 +179,9 @@ export function IconPlus(props: IconProps) {
   return wrap(Plus, props);
 }
 export function IconMore(props: IconProps) {
+  return wrap(MoreVertical, props);
+}
+export function IconMoreVertical(props: IconProps) {
   return wrap(MoreVertical, props);
 }
 export function IconScreen(props: IconProps) {
@@ -316,7 +322,6 @@ export function IconReply(props: IconProps) {
 export function IconCopy(props: IconProps) {
   return wrap(Copy, props);
 }
-
 export function IconTrash(props: IconProps) {
   return wrap(Trash2, props);
 }
@@ -352,4 +357,13 @@ export function IconEye(props: IconProps) {
 }
 export function IconEyeOff(props: IconProps) {
   return wrap(EyeOff, props);
+}
+export function IconArrowLeft(props: IconProps) {
+  return wrap(ArrowLeft, props);
+}
+export function IconGif(props: IconProps) {
+  return wrap(Gift, props);
+}
+export function IconSticker(props: IconProps) {
+  return wrap(Sticker, props);
 }
