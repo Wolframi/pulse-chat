@@ -32,10 +32,6 @@ import {
 import dynamic from "next/dynamic";
 import { MentionMenu } from "@/components/chat/MentionMenu";
 import type { PeopleUser } from "@/lib/types";
-import { GifPicker } from "@/components/chat/GifPicker";
-//import { StickerPicker } from "@/components/chat/StickerPicker";
-import { IconGif } from "@/lib/icons";
-import { toast } from "sonner";
 
 const EmojiPanel = dynamic(
   () => import("@/components/chat/EmojiPanel").then((mod) => mod.EmojiPanel),
@@ -78,8 +74,6 @@ type ComposerProps = {
   mentionMembers?: import("@/lib/types").PeopleUser[];
   editingText?: string | null;
   onCancelEdit?: () => void;
-  userId?: string;
-  token?: string;
 };
 
 export function Composer({
@@ -99,8 +93,6 @@ export function Composer({
   mentionMembers = [],
   editingText = null,
   onCancelEdit,
-  userId = "",
-  token = "",
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<PendingFile[]>([]);
@@ -115,9 +107,6 @@ export function Composer({
   const [voiceMode, setVoiceMode] = useState<"hold" | "click">("hold");
   const [voiceSlideX, setVoiceSlideX] = useState(0);
   const [emojiOpen, setEmojiOpen] = useState(false);
-  const [gifOpen, setGifOpen] = useState(false);
-  const [stickerOpen, setStickerOpen] = useState(false);
-  
   const typingRef = useRef(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -180,8 +169,6 @@ export function Composer({
       draftsRef.current.set(key, restored);
       setText(restored);
       setVoiceOpen(false);
-      setGifOpen(false);
-      setStickerOpen(false);
       if (typingRef.current) {
         typingRef.current = false;
         onTyping(false);
@@ -278,8 +265,6 @@ export function Composer({
     if (editingText == null) return;
     setText(editingText);
     setVoiceOpen(false);
-    setGifOpen(false);
-    setStickerOpen(false);
     requestAnimationFrame(() => {
       const node = areaRef.current;
       if (!node) return;
@@ -355,35 +340,6 @@ export function Composer({
     setSentPulse(true);
     window.setTimeout(() => setSentPulse(false), 280);
   }
-
-  // Функция для отправки GIF
-  const handleGifSelect = useCallback(async (url: string) => {
-    setGifOpen(false);
-    try {
-      const res = await fetch(url);
-      const blob = await res.blob();
-      const file = new File([blob], `gif-${Date.now()}.gif`, { type: 'image/gif' });
-      await onSendFiles([file], { caption: '' });
-    } catch {
-      toast.error('Не удалось загрузить GIF');
-    }
-  }, [onSendFiles]);
-
-  // Функция для отправки стикера
-  const handleStickerSelect = useCallback((url: string) => {
-    setStickerOpen(false);
-    // Отправляем стикер как изображение
-    fetch(url)
-      .then(res => res.blob())
-      .then(blob => {
-        const ext = url.split('.').pop()?.split('?')[0] || 'png';
-        const file = new File([blob], `sticker-${Date.now()}.${ext}`, { 
-          type: blob.type || 'image/png' 
-        });
-        onSendFiles([file], { caption: '' });
-      })
-      .catch(() => toast.error('Не удалось отправить стикер'));
-  }, [onSendFiles]);
 
   async function submit() {
     if (locked || sendingRef.current) return;
@@ -548,7 +504,8 @@ export function Composer({
     }
   }
 
-  const canSend = Boolean(text.trim() || pendingFiles.length) && !locked;
+  const canSend =
+    Boolean(text.trim() || pendingFiles.length) && !locked;
   const showMic = !canSend && !voiceOpen && !locked;
   const progressPct = Math.round(
     Math.min(1, Math.max(0, uploadProgress)) * 100,
@@ -572,8 +529,6 @@ export function Composer({
     onClearError?.();
     setLocalError(null);
     setEmojiOpen(false);
-    setGifOpen(false);
-    setStickerOpen(false);
     setVoiceMode("click");
     setVoiceSlideX(0);
     setVoiceOpen(true);
@@ -623,14 +578,13 @@ export function Composer({
 
   function handleMicPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
     if (locked || voiceOpen) return;
+    // Phone / stylus: hold-to-record + swipe cancel. Mouse uses click instead.
     if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
     event.preventDefault();
     suppressMicClickRef.current = true;
     onClearError?.();
     setLocalError(null);
     setEmojiOpen(false);
-    setGifOpen(false);
-    setStickerOpen(false);
 
     const pointerId = event.pointerId;
     const startX = event.clientX;
@@ -736,8 +690,10 @@ export function Composer({
               >
                 {item.previewUrl ? (
                   video ? (
+                     
                     <video src={item.previewUrl} muted playsInline preload="metadata" />
                   ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={item.previewUrl} alt="" />
                   )
                 ) : (
@@ -816,6 +772,8 @@ export function Composer({
             tabIndex={-1}
             onChange={handleFile}
             onClick={(event) => {
+              // Clear value on click so selecting the same file twice works,
+              // without breaking iOS Safari file references.
               (event.target as HTMLInputElement).value = "";
             }}
           />
@@ -830,25 +788,8 @@ export function Composer({
               }
             }}
           >
-            <IconAttach size={20} />
+            <IconAttach />
           </label>
-
-          {/* Кнопка GIF */}
-          <button
-            type="button"
-            className={`composer__gif ${gifOpen ? "is-active" : ""}`}
-            onClick={() => {
-              if (locked) return;
-              setGifOpen(!gifOpen);
-              setEmojiOpen(false);
-              setStickerOpen(false);
-            }}
-            aria-label="GIF"
-            title="GIF"
-          >
-            <IconGif size={22} />
-          </button>
-
           <TextareaAutosize
             ref={areaRef}
             className="composer__input"
@@ -871,20 +812,14 @@ export function Composer({
             autoComplete="off"
             disabled={locked}
           />
-
           <EmojiPanel
             showTrigger
             open={emojiOpen && !locked}
             onOpenChange={(next) => {
               if (locked) return;
               setEmojiOpen(next);
-              if (next) {
-                setGifOpen(false);
-                setStickerOpen(false);
-              }
             }}
             closeOnSelect={false}
-            emojiSize={32}
             className={`composer__emoji ${locked ? "is-disabled" : ""}`}
             onPick={(emoji) => {
               if (locked) return;
@@ -905,7 +840,6 @@ export function Composer({
               });
             }}
           />
-
           {text.length > 1600 && (
             <span
               className={`composer__count ${text.length > 1900 ? "is-warn" : ""}`}
@@ -914,7 +848,6 @@ export function Composer({
               {2000 - text.length}
             </span>
           )}
-
           {showMic ? (
             <button
               type="button"
@@ -926,7 +859,7 @@ export function Composer({
               onClick={openVoiceClick}
               onContextMenu={(event) => event.preventDefault()}
             >
-              <IconMic size={22} />
+              <IconMic />
             </button>
           ) : (
             <button
@@ -935,30 +868,11 @@ export function Composer({
               disabled={!canSend}
               aria-label="Отправить"
             >
-              <IconSend size={20} />
+              <IconSend />
             </button>
           )}
         </div>
       )}
-
-      {/* GIF Picker */}
-      <GifPicker
-        open={gifOpen}
-        onSelect={handleGifSelect}
-        onClose={() => setGifOpen(false)}
-      />
-
-      {/* Sticker Picker */}
-      {/*userId && token && (
-        { <StickerPicker
-          open={stickerOpen}
-          onSelect={handleStickerSelect}
-          onClose={() => setStickerOpen(false)}
-          userId={userId}
-          token={token}} 
-        />
-      )}*/
-      }
     </form>
   );
 }
