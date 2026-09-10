@@ -1,3 +1,19 @@
+const fs = require("fs");
+const path = require("path");
+
+function readSecret(filename) {
+  try {
+    return fs
+      .readFileSync(path.join(__dirname, filename), "utf8")
+      .replace(/\r/g, "")
+      .trim();
+  } catch {
+    return "";
+  }
+}
+
+const giphyKey = readSecret(".giphy-api-key");
+
 module.exports = {
   apps: [
     {
@@ -19,6 +35,7 @@ module.exports = {
         NEXT_PUBLIC_DEMO: "0",
         TRUST_PROXY: "1",
         UV_THREADPOOL_SIZE: "8",
+        ...(giphyKey ? { GIPHY_API_KEY: giphyKey } : {}),
       },
     },
   ],
