@@ -64,7 +64,7 @@ Deafen на сервере форсирует `muted: true` и `speaking: false`
 LiveKit Cloud не используется: URL `*.livekit.cloud` сервер отбрасывает. Локально без `.livekit-*` файлов Pulse берёт `ws://127.0.0.1:7880` и ключи `devkey` / `secret` (`livekit-server --dev`).
 
 ```bash
-npm run livekit   # docker compose -f docker-compose.livekit.yml up
+livekit-server --dev
 npm run dev
 ```
 

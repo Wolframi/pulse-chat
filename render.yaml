@@ -1,4 +1,4 @@
-﻿# Pulse Chat on Render — Docker + custom server.ts (Socket.IO).
+﻿# Pulse Chat on Render — Node + custom server.ts (Socket.IO).
 # After first deploy, set PUBLIC_ORIGIN to your service URL (https://….onrender.com).
 #
 # Persistence: free instances use ephemeral disk. Mount a Persistent Disk at /app/data
@@ -7,10 +7,10 @@
 services:
   - type: web
     name: pulse-chat
-    runtime: docker
+    runtime: node
     plan: free
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
     healthCheckPath: /
     envVars:
       - key: HOSTNAME

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Manrope, Space_Grotesk } from "next/font/google";
+import { BootPoller } from "@/components/chat/BootPoller";
 import "./globals.css";
 
 const display = Space_Grotesk({
@@ -39,6 +40,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full antialiased" suppressHydrationWarning>
+        <BootPoller />
         {children}
       </body>
     </html>
