@@ -70,8 +70,6 @@ type ComposerProps = {
   mentionMembers?: PeopleUser[];
   editingText?: string | null;
   onCancelEdit?: () => void;
-  userId?: string;
-  token?: string;
 };
 
 export function Composer({
@@ -91,8 +89,6 @@ export function Composer({
   mentionMembers = [],
   editingText = null,
   onCancelEdit,
-  userId = "",
-  token = "",
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<PendingFile[]>([]);
@@ -605,7 +601,8 @@ export function Composer({
     }
   }
 
-  const canSend = Boolean(text.trim() || pendingFiles.length) && !locked;
+  const canSend =
+    Boolean(text.trim() || pendingFiles.length) && !locked;
   const showMic = !canSend && !voiceOpen && !locked;
   const progressPct = Math.round(
     Math.min(1, Math.max(0, uploadProgress)) * 100,
@@ -678,6 +675,7 @@ export function Composer({
 
   function handleMicPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
     if (locked || voiceOpen) return;
+    // Phone / stylus: hold-to-record + swipe cancel. Mouse uses click instead.
     if (event.pointerType !== "touch" && event.pointerType !== "pen") return;
     event.preventDefault();
     suppressMicClickRef.current = true;
@@ -875,6 +873,8 @@ export function Composer({
             tabIndex={-1}
             onChange={handleFile}
             onClick={(event) => {
+              // Clear value on click so selecting the same file twice works,
+              // without breaking iOS Safari file references.
               (event.target as HTMLInputElement).value = "";
             }}
           />
@@ -893,9 +893,8 @@ export function Composer({
               }
             }}
           >
-            <IconAttach size={20} />
+            <IconAttach />
           </label>
-
           <TextareaAutosize
             ref={areaRef}
             className="composer__input"
@@ -932,7 +931,6 @@ export function Composer({
             userId={userId}
             token={token}
           />
-
           {text.length > 1600 && (
             <span
               className={`composer__count ${
@@ -943,7 +941,6 @@ export function Composer({
               {2000 - text.length}
             </span>
           )}
-
           {showMic ? (
             <button
               type="button"
@@ -955,7 +952,7 @@ export function Composer({
               onClick={openVoiceClick}
               onContextMenu={(event) => event.preventDefault()}
             >
-              <IconMic size={22} />
+              <IconMic />
             </button>
           ) : (
             <button
@@ -966,7 +963,7 @@ export function Composer({
               disabled={!canSend}
               aria-label="Отправить"
             >
-              <IconSend size={20} />
+              <IconSend />
             </button>
           )}
         </div>
