@@ -54,6 +54,8 @@ git reset --hard origin/master
 git clean -fd \
   --exclude=data \
   --exclude=uploads \
+  --exclude=.env \
+  --exclude=.giphy-api-key \
   --exclude=.livekit-url \
   --exclude=.livekit-api-key \
   --exclude=.livekit-api-secret \

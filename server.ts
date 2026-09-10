@@ -173,8 +173,8 @@ function loadLiveKitConfig() {
       apiSecret: configured.apiSecret,
     };
   }
-  // Group channels always use the LiveKit on this VM (docker --dev locally,
-  // systemd livekit on the VPS). Never return empty keys — that left clients
+  // Group channels always use the LiveKit on this VM (livekit-server --dev
+  // locally, systemd livekit on the VPS). Never return empty keys — that left clients
   // "in channel" with no SFU in production when .livekit-* files were missing.
   return LOCAL_LIVEKIT;
 }
@@ -1761,9 +1761,9 @@ app.prepare().then(() => {
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' blob: data:",
-        "media-src 'self' blob:",
-        "connect-src 'self' blob: ws: wss: stun: turn: turns:",
+        "img-src 'self' blob: data: https://*.giphy.com https://media.giphy.com https://i.giphy.com",
+        "media-src 'self' blob: https://*.giphy.com https://media.giphy.com",
+        "connect-src 'self' blob: ws: wss: stun: turn: turns: https://*.giphy.com https://media.giphy.com https://i.giphy.com",
         "font-src 'self'",
         "frame-ancestors 'none'",
         "base-uri 'self'",
@@ -1889,7 +1889,7 @@ app.prepare().then(() => {
                 JSON.stringify({
                   ok: false,
                   error:
-                    "SFU не настроен: нужен свой LiveKit на этой ВМ (не Cloud). Локально: docker compose -f docker-compose.livekit.yml up",
+                    "SFU не настроен: нужен свой LiveKit на этой ВМ (не Cloud). Локально: livekit-server --dev",
                 }),
               );
               return;
@@ -2126,6 +2126,12 @@ app.prepare().then(() => {
   onSessionRevoked(({ revokedToken }) => {
     revokeSocketSession(revokedToken);
   });
+
+  // Keep sending boot id so open tabs reload after PM2 restart even if they
+  // missed the first `connection` packet (hung polling, background tab).
+  setInterval(() => {
+    io.emit("app:boot", { bootId: APP_BOOT_ID });
+  }, 3_000);
 
   io.on("connection", (socket) => {
     socket.emit("app:boot", { bootId: APP_BOOT_ID });
