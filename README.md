@@ -41,11 +41,4 @@ SEED_DEMO=1 NEXT_PUBLIC_DEMO=1 npm start
 
 VPS (PM2 + nginx): `powershell -File scripts/deploy.ps1`
 
-Docker:
-
-```bash
-docker build -t pulse-chat .
-docker run -p 3000:3000 -e PUBLIC_ORIGIN=https://your.domain pulse-chat
-```
-
 Health check: `GET /api/health`
