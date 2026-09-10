@@ -21,9 +21,8 @@ type EmojiPanelProps = {
   showTrigger?: boolean;
   className?: string;
   closeOnSelect?: boolean;
+  /** When true (default with trigger), float panel via portal so overflow parents don't clip it. */
   portal?: boolean;
-  /** Размер эмодзи в пикселях (по умолчанию 32) */
-  emojiSize?: number;
 };
 
 export function EmojiPanel({
@@ -34,7 +33,6 @@ export function EmojiPanel({
   className = "",
   closeOnSelect = true,
   portal,
-  emojiSize = 32,
 }: EmojiPanelProps) {
   const controlled = openProp !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
@@ -63,8 +61,8 @@ export function EmojiPanel({
       const anchor = triggerRef.current || rootRef.current;
       if (!anchor) return;
       const rect = anchor.getBoundingClientRect();
-      const width = Math.min(400, window.innerWidth - 16);
-      const height = Math.min(460, window.innerHeight - 24);
+      const width = Math.min(352, window.innerWidth - 16);
+      const height = Math.min(420, window.innerHeight - 24);
       let left = rect.right - width;
       left = Math.min(Math.max(8, left), window.innerWidth - width - 8);
       let top = rect.top - height - 10;
@@ -148,8 +146,8 @@ export function EmojiPanel({
         searchPosition="sticky"
         dynamicWidth
         perLine={8}
-        emojiSize={emojiSize}
-        emojiButtonSize={emojiSize + 12}
+        emojiSize={22}
+        emojiButtonSize={36}
         emojiButtonRadius="10px"
         emojiButtonColors={["rgba(109, 138, 173, 0.28)"]}
         maxFrequentRows={2}
@@ -174,7 +172,7 @@ export function EmojiPanel({
           title="Эмодзи"
           onClick={() => setOpen(!open)}
         >
-          <IconSmile size={24} />
+          <IconSmile size={20} />
         </button>
       )}
 
