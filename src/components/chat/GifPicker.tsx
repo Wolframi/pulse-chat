@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { IconSearch, IconClose } from "@/lib/icons";
 
 type GifResult = {
@@ -19,6 +19,38 @@ type GifPickerProps = {
   open: boolean;
 };
 
+// ============================================
+// Клиентский кэш (живёт в памяти, сбрасывается при перезагрузке)
+// ============================================
+type ClientCacheEntry = {
+  results: GifResult[];
+  next: string;
+  timestamp: number;
+};
+
+const clientCache = new Map<string, ClientCacheEntry>();
+
+// TTL для клиентского кэша
+const CLIENT_TTL_TRENDING = 10 * 60 * 1000;  // 10 минут
+const CLIENT_TTL_SEARCH = 5 * 60 * 1000;      // 5 минут
+
+function getClientCacheKey(query: string, offset: number): string {
+  return `${query.toLowerCase()}:${offset}`;
+}
+
+function getClientCache(key: string, ttl: number): ClientCacheEntry | null {
+  const entry = clientCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > ttl) {
+    clientCache.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+// ============================================
+// Компонент
+// ============================================
 export function GifPicker({ onSelect, onClose, open }: GifPickerProps) {
   const [query, setQuery] = useState<string>("");
   const [gifs, setGifs] = useState<GifResult[]>([]);
@@ -26,116 +58,184 @@ export function GifPicker({ onSelect, onClose, open }: GifPickerProps) {
   const [nextPos, setNextPos] = useState<string>("");
   const [hasMore, setHasMore] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
   const gridRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const searchTimeout = useRef<NodeJS.Timeout | undefined>(undefined);
+  const lastQueryRef = useRef<string>("");
+  const isLoadingMoreRef = useRef<boolean>(false);
 
-  const loadGifs = useCallback(async (reset: boolean = false) => {
-    if (loading || (!reset && !hasMore)) return;
+  // ============================================
+  // Загрузка с кэшированием
+  // ============================================
+  const loadGifs = useCallback(
+    async (reset: boolean = false, currentQuery: string) => {
+      // Защита от параллельных запросов
+      if (loading && !reset) return;
+      if (isLoadingMoreRef.current && !reset) return;
 
-    setLoading(true);
-    setError(null);
+      const ttl = currentQuery.trim().length >= 2
+        ? CLIENT_TTL_SEARCH
+        : CLIENT_TTL_TRENDING;
 
-    try {
-      const params = new URLSearchParams();
-      if (query.trim()) {
-        params.set('q', query.trim());
+      const offset = reset ? 0 : Number(nextPos) || 0;
+      const cacheKey = getClientCacheKey(currentQuery, offset);
+
+      // 1. Проверяем клиентский кэш
+      const cached = getClientCache(cacheKey, ttl);
+      if (cached) {
+        console.log(`⚡ Client cache HIT: ${cacheKey}`);
+        if (reset) {
+          setGifs(cached.results);
+        } else {
+          setGifs(prev => {
+            // Защита от дубликатов
+            const existingIds = new Set(prev.map(g => g.id));
+            const newGifs = cached.results.filter(g => !existingIds.has(g.id));
+            return [...prev, ...newGifs];
+          });
+        }
+        setNextPos(cached.next);
+        setHasMore(Boolean(cached.next));
+        return;
       }
-      if (!reset && nextPos) {
-        params.set('pos', nextPos);
-      }
-      params.set('limit', '20');
-
-      const res = await fetch(`/api/gif?${params.toString()}`);
-      const data = await res.json();
-
-      if (!res.ok) throw new Error(data.error || 'Failed to load GIFs');
-
-      const newGifs = data.results || [];
 
       if (reset) {
-        setGifs(newGifs);
-      } else {
-        setGifs((prev: GifResult[]) => [...prev, ...newGifs]);
+        setLoading(true);
       }
+      isLoadingMoreRef.current = true;
+      setError(null);
 
-      setNextPos(data.next || '');
-      setHasMore(Boolean(data.next) && newGifs.length > 0);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка загрузки GIF');
-    } finally {
-      setLoading(false);
-    }
-  }, [query, nextPos, hasMore, loading]);
+      try {
+        const params = new URLSearchParams();
+        if (currentQuery.trim()) {
+          params.set('q', currentQuery.trim());
+        }
+        if (!reset && offset > 0) {
+          params.set('pos', String(offset));
+        }
+        params.set('limit', '20');
 
-  // Загружаем трендовые GIF при открытии
+        const res = await fetch(`/api/gif?${params.toString()}`);
+
+        if (!res.ok) {
+          throw new Error(`API error: ${res.status}`);
+        }
+
+        const data = await res.json();
+        const newGifs: GifResult[] = data.results || [];
+
+        // 2. Сохраняем в клиентский кэш
+        clientCache.set(cacheKey, {
+          results: newGifs,
+          next: data.next || '',
+          timestamp: Date.now(),
+        });
+
+        if (reset) {
+          setGifs(newGifs);
+        } else {
+          // Защита от дубликатов
+          setGifs(prev => {
+            const existingIds = new Set(prev.map(g => g.id));
+            const filtered = newGifs.filter(g => !existingIds.has(g.id));
+            return [...prev, ...filtered];
+          });
+        }
+
+        setNextPos(data.next || '');
+        setHasMore(Boolean(data.next) && newGifs.length > 0);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : 'Не удалось загрузить GIF'
+        );
+      } finally {
+        setLoading(false);
+        isLoadingMoreRef.current = false;
+      }
+    },
+    [loading, nextPos]
+  );
+
+  // ============================================
+  // Загрузка при открытии (только один раз)
+  // ============================================
   useEffect(() => {
-    if (open) {
-      setGifs([]);
-      setNextPos('');
-      setHasMore(true);
-      loadGifs(true);
+    if (open && gifs.length === 0 && !loading) {
+      lastQueryRef.current = "";
+      loadGifs(true, "");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  // Поиск с debounce
+  // ============================================
+  // Поиск с увеличенным debounce (600мс)
+  // ============================================
   useEffect(() => {
+    if (!open) return;
+
+    // Не ищем, если запрос не изменился
+    if (query === lastQueryRef.current) return;
+
     if (searchTimeout.current) {
       clearTimeout(searchTimeout.current);
     }
-    if (query.trim() && query.length > 1) {
-      searchTimeout.current = setTimeout(() => {
-        setGifs([]);
-        setNextPos('');
-        setHasMore(true);
-        loadGifs(true);
-      }, 400);
-    } else if (!query.trim()) {
+
+    // Минимум 2 символа для поиска
+    const shouldSearch = query.trim().length >= 2;
+
+    searchTimeout.current = setTimeout(() => {
+      lastQueryRef.current = query;
       setGifs([]);
-      setNextPos('');
+      setNextPos("");
       setHasMore(true);
-      loadGifs(true);
-    }
+      loadGifs(true, shouldSearch ? query : "");
+    }, 600);
+
     return () => {
       if (searchTimeout.current) {
         clearTimeout(searchTimeout.current);
       }
     };
-  }, [query]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, open]);
 
-  // Intersection Observer для бесконечной загрузки
+  // ============================================
+  // Бесконечная загрузка через Intersection Observer
+  // ============================================
   useEffect(() => {
+    if (!open || !gridRef.current) return;
+
     if (observerRef.current) {
       observerRef.current.disconnect();
     }
 
     observerRef.current = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting && !loading && hasMore && gifs.length > 0) {
-          loadGifs(false);
+        const entry = entries[0];
+        if (
+          entry?.isIntersecting &&
+          !loading &&
+          !isLoadingMoreRef.current &&
+          hasMore &&
+          gifs.length > 0
+        ) {
+          // Небольшая задержка перед загрузкой, чтобы не спамить
+          setTimeout(() => {
+            loadGifs(false, lastQueryRef.current);
+          }, 200);
         }
       },
-      { 
+      {
         threshold: 0.1,
+        rootMargin: '200px', // Начинаем грузить заранее
         root: gridRef.current,
-        rootMargin: '100px',
       }
     );
 
-    return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
-    };
-  }, [loading, hasMore, loadGifs, gifs.length]);
-
-  // Наблюдатель за последним элементом
-  useEffect(() => {
-    if (!observerRef.current || !gridRef.current) return;
-    
-    // Находим последний элемент в сетке
-    const lastChild = gridRef.current.lastElementChild as HTMLElement;
-    if (lastChild && !lastChild.classList.contains('gif-picker__loader')) {
+    // Наблюдаем за последним элементом
+    const lastChild = gridRef.current.lastElementChild;
+    if (lastChild) {
       observerRef.current.observe(lastChild);
     }
 
@@ -144,12 +244,18 @@ export function GifPicker({ onSelect, onClose, open }: GifPickerProps) {
         observerRef.current.disconnect();
       }
     };
-  }, [gifs]);
+  }, [open, gifs, loading, hasMore, loadGifs]);
 
-  const handleSelect = useCallback((url: string) => {
-    onSelect(url);
-    onClose();
-  }, [onSelect, onClose]);
+  // ============================================
+  // Обработчик выбора GIF
+  // ============================================
+  const handleSelect = useCallback(
+    (url: string) => {
+      onSelect(url);
+      onClose();
+    },
+    [onSelect, onClose]
+  );
 
   if (!open) return null;
 
@@ -172,12 +278,12 @@ export function GifPicker({ onSelect, onClose, open }: GifPickerProps) {
             autoFocus
           />
           {query && (
-            <button onClick={() => setQuery("")}>
+            <button onClick={() => setQuery("")} aria-label="Очистить">
               <IconClose size={16} />
             </button>
           )}
         </div>
-        <button className="gif-picker__close" onClick={onClose}>
+        <button className="gif-picker__close" onClick={onClose} aria-label="Закрыть">
           <IconClose size={20} />
         </button>
       </div>
@@ -191,27 +297,33 @@ export function GifPicker({ onSelect, onClose, open }: GifPickerProps) {
               key={`${gif.id}-${index}`}
               className="gif-picker__item"
               onClick={() => handleSelect(gif.url)}
-              style={{ 
-                aspectRatio: `${gif.width}/${gif.height}`,
-                position: 'relative',
-              }}
+              style={{ aspectRatio: `${gif.width}/${gif.height}` }}
+              title={gif.title}
             >
-              <img 
-                src={gif.preview} 
-                alt={gif.title || 'GIF'} 
+              <img
+                src={gif.preview}
+                alt={gif.title || 'GIF'}
                 loading="lazy"
                 className="gif-picker__item-image"
               />
             </button>
           ))}
+
           {loading && (
             <div className="gif-picker__loader">
               <span className="gif-picker__spinner" />
             </div>
           )}
-          {!loading && gifs.length === 0 && (
+
+          {!loading && gifs.length === 0 && query.length >= 2 && (
             <div className="gif-picker__empty">
-              {query ? 'Ничего не найдено' : 'Нет GIF'}
+              По запросу «{query}» ничего не найдено
+            </div>
+          )}
+
+          {!loading && gifs.length === 0 && query.length < 2 && (
+            <div className="gif-picker__empty">
+              Введите минимум 2 символа для поиска
             </div>
           )}
         </div>
