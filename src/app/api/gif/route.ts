@@ -1,126 +1,158 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Ваш ключ от Klipy
-const KLIPY_API_KEY = process.env.KLIPY_API_KEY || 'oZ5lTG1neQndpNbBN1COY0lPQ1Bu3IH4C7qonUb9jXcaxUL4dPFYLDenvbYgjpkq';
-const KLIPY_BASE = 'https://api.klipy.com/api/v1';
+const GIPHY_API_KEY = process.env.GIPHY_API_KEY || 'BCkrS2hlCPHeZbhkEPd1VMJY1C5EAaqW';
+const GIPHY_BASE = 'https://api.giphy.com/v1/gifs';
 
+// ============================================
+// Серверный кэш (живёт в памяти Node.js)
+// ============================================
+type CacheEntry = {
+  data: any;
+  expiresAt: number;
+};
+
+const serverCache = new Map<string, CacheEntry>();
+
+// TTL разный для разных типов запросов
+const TTL_TRENDING = 30 * 60 * 1000;  // 30 минут для трендов
+const TTL_SEARCH = 15 * 60 * 1000;    // 15 минут для поиска
+
+function getCacheKey(type: string, query: string, offset: number): string {
+  return `${type}:${query.toLowerCase()}:${offset}`;
+}
+
+function getFromCache(key: string): any | null {
+  const entry = serverCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) {
+    serverCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCache(key: string, data: any, ttl: number): void {
+  // Чистим старые записи, чтобы кэш не разрастался
+  if (serverCache.size > 500) {
+    const now = Date.now();
+    for (const [k, v] of serverCache) {
+      if (v.expiresAt < now) serverCache.delete(k);
+    }
+  }
+  serverCache.set(key, { data, expiresAt: Date.now() + ttl });
+}
+
+// ============================================
+// Основной обработчик
+// ============================================
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
-    const query = searchParams.get('q') || '';
+    const query = (searchParams.get('q') || '').trim();
     const offset = Number(searchParams.get('pos')) || 0;
     const limit = Math.min(Number(searchParams.get('limit')) || 20, 50);
-    
-    const isSearch = query.trim().length > 0;
-    
-    // Формируем URL для Klipy
-    let endpoint: string;
+
+    const isSearch = query.length >= 2;
+    const type = isSearch ? 'search' : 'trending';
+    const cacheKey = getCacheKey(type, query, offset);
+
+    // 1. Проверяем серверный кэш
+    const cached = getFromCache(cacheKey);
+    if (cached) {
+      console.log(`⚡ Cache HIT: ${cacheKey}`);
+      return NextResponse.json(cached, {
+        headers: {
+          'X-Cache': 'HIT',
+          'Cache-Control': 'public, max-age=300',
+        },
+      });
+    }
+
+    console.log(`🔍 Cache MISS: ${cacheKey} — fetching from GIPHY`);
+
+    // 2. Формируем запрос
     const params = new URLSearchParams();
+    params.set('api_key', GIPHY_API_KEY);
     params.set('limit', String(limit));
     params.set('offset', String(offset));
-    
+    params.set('rating', 'pg-13');
+    params.set('lang', 'ru');
+
+    let endpoint: string;
     if (isSearch) {
-      endpoint = `${KLIPY_BASE}/${KLIPY_API_KEY}/gifs/search`;
-      params.set('q', query.trim());
+      endpoint = `${GIPHY_BASE}/search`;
+      params.set('q', query);
     } else {
-      endpoint = `${KLIPY_BASE}/${KLIPY_API_KEY}/gifs/trending`;
+      endpoint = `${GIPHY_BASE}/trending`;
     }
 
-    const url = `${endpoint}?${params.toString()}`;
-    console.log('🔍 Fetching GIFs from Klipy:', url.replace(KLIPY_API_KEY, 'HIDDEN'));
-
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'PulseChat/1.0',
-      },
+    const response = await fetch(`${endpoint}?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
     });
 
-    // Проверяем статус ответа
+    // 3. Обработка ошибок GIPHY
     if (!response.ok) {
-      console.error('Klipy API error:', response.status, response.statusText);
+      const status = response.status;
+      console.error('GIPHY API error:', status);
+
+      // 429 — превышен лимит. Возвращаем кэш или fallback
+      if (status === 429) {
+        return NextResponse.json(getFallbackGifs(), {
+          headers: { 'X-Cache': 'RATE_LIMITED' },
+        });
+      }
+
       return NextResponse.json(getFallbackGifs());
     }
 
-    // Получаем текст ответа для отладки
-    const text = await response.text();
-    console.log('📦 Klipy response length:', text.length);
-    
-    // Если ответ пустой — возвращаем fallback
-    if (!text || text.trim() === '') {
-      console.warn('⚠️ Empty response from Klipy');
-      return NextResponse.json(getFallbackGifs());
-    }
+    const data = await response.json();
 
-    // Парсим JSON
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (parseError) {
-      console.error('❌ Failed to parse Klipy response:', parseError);
-      console.log('📄 Response preview:', text.slice(0, 200));
-      return NextResponse.json(getFallbackGifs());
-    }
-    
-    // Проверяем структуру ответа Klipy
-    // Klipy может возвращать данные в разных форматах
-    let results = [];
-    
-    if (data.data && Array.isArray(data.data)) {
-      // Формат как у GIPHY
-      results = data.data.map((item: any) => ({
+    // 4. Парсим
+    const results = (data.data || [])
+      .map((item: any) => ({
         id: item.id || '',
         title: item.title || '',
-        url: item.images?.original?.url || item.url || '',
-        preview: item.images?.fixed_width?.url || item.images?.original?.url || item.url || '',
+        url: item.images?.original?.url || '',
+        preview:
+          item.images?.fixed_width?.url ||
+          item.images?.downsized?.url ||
+          item.images?.original?.url ||
+          '',
         width: Number(item.images?.fixed_width?.width) || 320,
         height: Number(item.images?.fixed_width?.height) || 180,
-      }));
-    } else if (data.results && Array.isArray(data.results)) {
-      // Формат как у Tenor
-      results = data.results.map((item: any) => ({
-        id: item.id || '',
-        title: item.title || '',
-        url: item.media?.gif?.url || item.url || '',
-        preview: item.media?.gif?.url || item.url || '',
-        width: Number(item.media?.gif?.dims?.[0]) || 320,
-        height: Number(item.media?.gif?.dims?.[1]) || 180,
-      }));
-    } else if (Array.isArray(data)) {
-      // Если пришел просто массив
-      results = data.map((item: any) => ({
-        id: item.id || '',
-        title: item.title || '',
-        url: item.url || item.images?.original?.url || '',
-        preview: item.preview || item.url || '',
-        width: item.width || 320,
-        height: item.height || 180,
-      }));
-    }
+      }))
+      .filter((item: any) => item.url);
 
-    // Фильтруем пустые результаты
-    results = results.filter((item: any) => item.url);
+    const payload = {
+      results,
+      next: results.length > 0 ? String(offset + limit) : '',
+      total: data.pagination?.total_count || results.length,
+    };
 
-    console.log(`✅ Found ${results.length} GIFs`);
+    // 5. Сохраняем в кэш
+    const ttl = isSearch ? TTL_SEARCH : TTL_TRENDING;
+    setCache(cacheKey, payload, ttl);
 
-    return NextResponse.json({
-      results: results.length > 0 ? results : getFallbackGifs().results,
-      next: String(offset + limit),
-      total: data.pagination?.total_count || data.total || results.length,
+    return NextResponse.json(payload, {
+      headers: {
+        'X-Cache': 'MISS',
+        'Cache-Control': 'public, max-age=300',
+      },
     });
-    
   } catch (error) {
     console.error('💥 GIF API error:', error);
     return NextResponse.json(getFallbackGifs());
   }
 }
 
-// Fallback GIFs
+// ============================================
+// Fallback если GIPHY недоступен
+// ============================================
 function getFallbackGifs() {
   return {
     results: [
       {
-        id: 'fallback-1',
+        id: 'fb-1',
         title: 'Hello',
         url: 'https://media.giphy.com/media/3o7aD2SAalBkft6NVG/giphy.gif',
         preview: 'https://media.giphy.com/media/3o7aD2SAalBkft6NVG/giphy.gif',
@@ -128,23 +160,15 @@ function getFallbackGifs() {
         height: 270,
       },
       {
-        id: 'fallback-2',
+        id: 'fb-2',
         title: 'Cool',
         url: 'https://media.giphy.com/media/3o6Ztqnj1hYhTfL9jO/giphy.gif',
         preview: 'https://media.giphy.com/media/3o6Ztqnj1hYhTfL9jO/giphy.gif',
         width: 480,
         height: 270,
       },
-      {
-        id: 'fallback-3',
-        title: 'Funny',
-        url: 'https://media.giphy.com/media/l0HlNQ5JZLx3kYlKo/giphy.gif',
-        preview: 'https://media.giphy.com/media/l0HlNQ5JZLx3kYlKo/giphy.gif',
-        width: 480,
-        height: 270,
-      },
     ],
     next: '',
-    total: 3,
+    total: 2,
   };
 }

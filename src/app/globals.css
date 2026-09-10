@@ -10861,13 +10861,18 @@ button:active:not(:disabled) {
    GIF PICKER
    ============================================ */
 
+/* ============================================
+   GIF PICKER (полная версия)
+   ============================================ */
+
 .gif-picker {
   position: absolute;
   bottom: calc(100% + 12px);
   right: 0;
   z-index: 50;
-  width: min(420px, 90vw);
-  height: 420px;
+  width: 440px;
+  max-width: calc(100vw - 20px);
+  height: 460px;
   background: var(--surface-raised);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -10884,6 +10889,7 @@ button:active:not(:disabled) {
   padding: 10px 12px;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
+  background: var(--surface-raised);
 }
 
 .gif-picker__search {
@@ -10894,6 +10900,7 @@ button:active:not(:disabled) {
   background: var(--bg-deep);
   border-radius: 10px;
   padding: 6px 10px;
+  min-width: 0;
 }
 
 .gif-picker__search input {
@@ -10917,6 +10924,8 @@ button:active:not(:disabled) {
   cursor: pointer;
   padding: 2px;
   flex-shrink: 0;
+  display: grid;
+  place-items: center;
 }
 
 .gif-picker__close {
@@ -10926,48 +10935,58 @@ button:active:not(:disabled) {
   cursor: pointer;
   padding: 4px;
   flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
 }
 
+.gif-picker__close:hover {
+  background: var(--bg-deep);
+  color: var(--ink);
+}
+
+/* ГЛАВНОЕ: правильная сетка */
 .gif-picker__grid {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  padding: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 8px;
+  padding: 10px;
   align-content: start;
-  /* Сглаживание прокрутки на iOS */
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
 .gif-picker__item {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 140px;
+  padding: 0;
+  margin: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: 10px;
   overflow: hidden;
   cursor: pointer;
   background: var(--bg-deep);
-  padding: 0;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
-  position: relative;
-  aspect-ratio: 1 / 1;
-  min-height: 0;
-  min-width: 0;
 }
 
 .gif-picker__item:hover {
-  transform: scale(1.04);
-  z-index: 1;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  transform: scale(1.03);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .gif-picker__item-image {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
-  position: absolute;
-  inset: 0;
 }
 
 .gif-picker__loader {
@@ -10975,7 +10994,8 @@ button:active:not(:disabled) {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 16px;
+  padding: 20px;
+  height: 60px;
 }
 
 .gif-picker__spinner {
@@ -11007,49 +11027,8 @@ button:active:not(:disabled) {
   font-size: 0.9rem;
 }
 
-/* Мобильная адаптация */
-@media (max-width: 640px) {
-  .gif-picker {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    width: 100%;
-    height: 55vh;
-    max-height: 420px;
-    border-radius: 16px 16px 0 0;
-  }
-
-  .gif-picker__grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 4px;
-    padding: 6px;
-  }
-
-  .gif-picker__header {
-    padding: 8px 10px;
-  }
-
-  .gif-picker__search input {
-    font-size: 16px; /* предотвращает зум на iOS */
-  }
-}
-
-@media (max-width: 380px) {
-  .gif-picker__grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Стили для скролла */
 .gif-picker__grid::-webkit-scrollbar {
-  width: 4px;
+  width: 6px;
 }
 
 .gif-picker__grid::-webkit-scrollbar-track {
@@ -11061,7 +11040,36 @@ button:active:not(:disabled) {
   border-radius: 999px;
 }
 
-.gif-picker__grid {
-  scrollbar-width: thin;
-  scroll-behavior: smooth;
+/* Мобильная адаптация */
+@media (max-width: 640px) {
+  .gif-picker {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    width: 100%;
+    max-width: 100%;
+    height: 60vh;
+    border-radius: 16px 16px 0 0;
+    z-index: 100;
+  }
+
+  .gif-picker__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .gif-picker__item {
+    height: 120px;
+  }
+
+  .gif-picker__search input {
+    font-size: 16px; /* против зума iOS */
+  }
+}
+
+.gif-picker__item {
+  height: 140px; /* НЕ aspect-ratio */
 }
