@@ -29,18 +29,10 @@ import {
   VoiceRecorderBar,
   type VoiceRecorderControls,
 } from "@/components/chat/VoiceRecorderBar";
-import dynamic from "next/dynamic";
 import { MentionMenu } from "@/components/chat/MentionMenu";
+import { UnifiedPicker } from "@/components/chat/UnifiedPicker";
 import type { PeopleUser } from "@/lib/types";
-import { GifPicker } from "@/components/chat/GifPicker";
-//import { StickerPicker } from "@/components/chat/StickerPicker";
-import { IconGif } from "@/lib/icons";
 import { toast } from "sonner";
-
-const EmojiPanel = dynamic(
-  () => import("@/components/chat/EmojiPanel").then((mod) => mod.EmojiPanel),
-  { ssr: false }
-);
 
 type PendingFile = {
   id: string;
@@ -75,7 +67,7 @@ type ComposerProps = {
   onClearReply?: () => void;
   focusToken?: string | number;
   onAttachmentsCleared?: () => void;
-  mentionMembers?: import("@/lib/types").PeopleUser[];
+  mentionMembers?: PeopleUser[];
   editingText?: string | null;
   onCancelEdit?: () => void;
   userId?: string;
@@ -114,10 +106,8 @@ export function Composer({
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceMode, setVoiceMode] = useState<"hold" | "click">("hold");
   const [voiceSlideX, setVoiceSlideX] = useState(0);
-  const [emojiOpen, setEmojiOpen] = useState(false);
-  const [gifOpen, setGifOpen] = useState(false);
-  const [stickerOpen, setStickerOpen] = useState(false);
-  
+  const [pickerOpen, setPickerOpen] = useState(false);
+
   const typingRef = useRef(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -160,6 +150,7 @@ export function Composer({
     };
   }, [onTyping]);
 
+  // Смена чата: сохранение/загрузка черновика
   useEffect(() => {
     if (focusToken === undefined) return;
     const key = String(focusToken);
@@ -180,8 +171,7 @@ export function Composer({
       draftsRef.current.set(key, restored);
       setText(restored);
       setVoiceOpen(false);
-      setGifOpen(false);
-      setStickerOpen(false);
+      setPickerOpen(false);
       if (typingRef.current) {
         typingRef.current = false;
         onTyping(false);
@@ -278,8 +268,7 @@ export function Composer({
     if (editingText == null) return;
     setText(editingText);
     setVoiceOpen(false);
-    setGifOpen(false);
-    setStickerOpen(false);
+    setPickerOpen(false);
     requestAnimationFrame(() => {
       const node = areaRef.current;
       if (!node) return;
@@ -356,34 +345,91 @@ export function Composer({
     window.setTimeout(() => setSentPulse(false), 280);
   }
 
-  // Функция для отправки GIF
-  const handleGifSelect = useCallback(async (url: string) => {
-    setGifOpen(false);
-    try {
-      const res = await fetch(url);
-      const blob = await res.blob();
-      const file = new File([blob], `gif-${Date.now()}.gif`, { type: 'image/gif' });
-      await onSendFiles([file], { caption: '' });
-    } catch {
-      toast.error('Не удалось загрузить GIF');
-    }
-  }, [onSendFiles]);
+  // ============================================
+  // Вставка эмодзи из UnifiedPicker
+  // ============================================
+  const handleEmojiInsert = useCallback(
+    (emoji: string) => {
+      const area = areaRef.current;
+      const start = area?.selectionStart ?? text.length;
+      const end = area?.selectionEnd ?? text.length;
+      const next = `${text.slice(0, start)}${emoji}${text.slice(end)}`.slice(
+        0,
+        2000,
+      );
+      markTyping(next);
+      requestAnimationFrame(() => {
+        const node = areaRef.current;
+        if (!node) return;
+        const caret = Math.min(start + emoji.length, next.length);
+        node.focus();
+        node.setSelectionRange(caret, caret);
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [text],
+  );
 
-  // Функция для отправки стикера
-  const handleStickerSelect = useCallback((url: string) => {
-    setStickerOpen(false);
-    // Отправляем стикер как изображение
-    fetch(url)
-      .then(res => res.blob())
-      .then(blob => {
-        const ext = url.split('.').pop()?.split('?')[0] || 'png';
-        const file = new File([blob], `sticker-${Date.now()}.${ext}`, { 
-          type: blob.type || 'image/png' 
+  // ============================================
+  // Отправка GIF из UnifiedPicker
+  // ============================================
+  const handleGifSend = useCallback(
+    async (url: string) => {
+      if (locked || sendingRef.current) return;
+      sendingRef.current = true;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+        const blob = await res.blob();
+        const contentType = blob.type || "image/gif";
+        const ext = contentType.includes("png") ? "png" : "gif";
+        const file = new File([blob], `gif-${Date.now()}.${ext}`, {
+          type: contentType,
         });
-        onSendFiles([file], { caption: '' });
-      })
-      .catch(() => toast.error('Не удалось отправить стикер'));
-  }, [onSendFiles]);
+        await onSendFiles([file], {
+          caption: "",
+          replyToId: replyTo?.id,
+        });
+        onClearReply?.();
+        pulseSend();
+      } catch {
+        toast.error("Не удалось отправить GIF");
+      } finally {
+        sendingRef.current = false;
+      }
+    },
+    [locked, onSendFiles, replyTo?.id, onClearReply],
+  );
+
+  // ============================================
+  // Отправка стикера из UnifiedPicker
+  // ============================================
+  const handleStickerSend = useCallback(
+    async (url: string) => {
+      if (locked || sendingRef.current) return;
+      sendingRef.current = true;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+        const blob = await res.blob();
+        const ext = url.split(".").pop()?.split("?")[0] || "png";
+        const file = new File([blob], `sticker-${Date.now()}.${ext}`, {
+          type: blob.type || "image/png",
+        });
+        await onSendFiles([file], {
+          caption: "",
+          replyToId: replyTo?.id,
+        });
+        onClearReply?.();
+        pulseSend();
+      } catch {
+        toast.error("Не удалось отправить стикер");
+      } finally {
+        sendingRef.current = false;
+      }
+    },
+    [locked, onSendFiles, replyTo?.id, onClearReply],
+  );
 
   async function submit() {
     if (locked || sendingRef.current) return;
@@ -466,6 +512,11 @@ export function Composer({
       onClearReply?.();
       return;
     }
+    if (event.key === "Escape" && pickerOpen) {
+      event.preventDefault();
+      setPickerOpen(false);
+      return;
+    }
     if (mentionOpen) {
       const filtered = mentionMembers
         .filter((user) => {
@@ -479,7 +530,9 @@ export function Composer({
         .slice(0, 8);
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setMentionIndex((i) => Math.min(i + 1, Math.max(0, filtered.length - 1)));
+        setMentionIndex((i) =>
+          Math.min(i + 1, Math.max(0, filtered.length - 1)),
+        );
         return;
       }
       if (event.key === "ArrowUp") {
@@ -501,7 +554,11 @@ export function Composer({
         return;
       }
     }
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
       event.preventDefault();
       void submit();
     }
@@ -571,9 +628,7 @@ export function Composer({
     if (locked || voiceOpen) return;
     onClearError?.();
     setLocalError(null);
-    setEmojiOpen(false);
-    setGifOpen(false);
-    setStickerOpen(false);
+    setPickerOpen(false);
     setVoiceMode("click");
     setVoiceSlideX(0);
     setVoiceOpen(true);
@@ -628,9 +683,7 @@ export function Composer({
     suppressMicClickRef.current = true;
     onClearError?.();
     setLocalError(null);
-    setEmojiOpen(false);
-    setGifOpen(false);
-    setStickerOpen(false);
+    setPickerOpen(false);
 
     const pointerId = event.pointerId;
     const startX = event.clientX;
@@ -736,8 +789,14 @@ export function Composer({
               >
                 {item.previewUrl ? (
                   video ? (
-                    <video src={item.previewUrl} muted playsInline preload="metadata" />
+                    <video
+                      src={item.previewUrl}
+                      muted
+                      playsInline
+                      preload="metadata"
+                    />
                   ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={item.previewUrl} alt="" />
                   )
                 ) : (
@@ -821,7 +880,11 @@ export function Composer({
           />
           <label
             htmlFor={fileInputId}
-            className={`composer__attach ${locked || pending.length >= MAX_FILES_AT_ONCE ? "is-disabled" : ""}`}
+            className={`composer__attach ${
+              locked || pending.length >= MAX_FILES_AT_ONCE
+                ? "is-disabled"
+                : ""
+            }`}
             aria-label="Прикрепить файл или фото"
             title="Файл или фото"
             onClick={(event) => {
@@ -832,22 +895,6 @@ export function Composer({
           >
             <IconAttach size={20} />
           </label>
-
-          {/* Кнопка GIF */}
-          <button
-            type="button"
-            className={`composer__gif ${gifOpen ? "is-active" : ""}`}
-            onClick={() => {
-              if (locked) return;
-              setGifOpen(!gifOpen);
-              setEmojiOpen(false);
-              setStickerOpen(false);
-            }}
-            aria-label="GIF"
-            title="GIF"
-          >
-            <IconGif size={22} />
-          </button>
 
           <TextareaAutosize
             ref={areaRef}
@@ -872,43 +919,25 @@ export function Composer({
             disabled={locked}
           />
 
-          <EmojiPanel
-            showTrigger
-            open={emojiOpen && !locked}
+          {/* Единый пикер: эмодзи, GIF, стикеры */}
+          <UnifiedPicker
+            open={pickerOpen}
             onOpenChange={(next) => {
               if (locked) return;
-              setEmojiOpen(next);
-              if (next) {
-                setGifOpen(false);
-                setStickerOpen(false);
-              }
+              setPickerOpen(next);
             }}
-            closeOnSelect={false}
-            emojiSize={32}
-            className={`composer__emoji ${locked ? "is-disabled" : ""}`}
-            onPick={(emoji) => {
-              if (locked) return;
-              const area = areaRef.current;
-              const start = area?.selectionStart ?? text.length;
-              const end = area?.selectionEnd ?? text.length;
-              const next = `${text.slice(0, start)}${emoji}${text.slice(end)}`.slice(
-                0,
-                2000,
-              );
-              markTyping(next);
-              requestAnimationFrame(() => {
-                const node = areaRef.current;
-                if (!node) return;
-                const caret = Math.min(start + emoji.length, next.length);
-                node.focus();
-                node.setSelectionRange(caret, caret);
-              });
-            }}
+            onEmojiPick={handleEmojiInsert}
+            onGifPick={handleGifSend}
+            onStickerPick={handleStickerSend}
+            userId={userId}
+            token={token}
           />
 
           {text.length > 1600 && (
             <span
-              className={`composer__count ${text.length > 1900 ? "is-warn" : ""}`}
+              className={`composer__count ${
+                text.length > 1900 ? "is-warn" : ""
+              }`}
               aria-live="polite"
             >
               {2000 - text.length}
@@ -930,7 +959,9 @@ export function Composer({
             </button>
           ) : (
             <button
-              className={`composer__send ${sentPulse ? "is-sent" : ""} ${canSend ? "is-ready" : "is-idle"}`}
+              className={`composer__send ${
+                sentPulse ? "is-sent" : ""
+              } ${canSend ? "is-ready" : "is-idle"}`}
               type="submit"
               disabled={!canSend}
               aria-label="Отправить"
@@ -940,25 +971,6 @@ export function Composer({
           )}
         </div>
       )}
-
-      {/* GIF Picker */}
-      <GifPicker
-        open={gifOpen}
-        onSelect={handleGifSelect}
-        onClose={() => setGifOpen(false)}
-      />
-
-      {/* Sticker Picker */}
-      {/*userId && token && (
-        { <StickerPicker
-          open={stickerOpen}
-          onSelect={handleStickerSelect}
-          onClose={() => setStickerOpen(false)}
-          userId={userId}
-          token={token}} 
-        />
-      )}*/
-      }
     </form>
   );
 }
