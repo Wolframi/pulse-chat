@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import i18n from "@emoji-mart/data/i18n/ru.json";
@@ -22,7 +22,6 @@ type EmojiPanelProps = {
   className?: string;
   closeOnSelect?: boolean;
   portal?: boolean;
-  /** Размер эмодзи в пикселях (по умолчанию 32) */
   emojiSize?: number;
 };
 
@@ -39,11 +38,6 @@ export function EmojiPanel({
   const controlled = openProp !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlled ? Boolean(openProp) : internalOpen;
-  const [pos, setPos] = useState<{
-    top: number;
-    left: number;
-    width: number;
-  } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -53,34 +47,6 @@ export function EmojiPanel({
     if (!controlled) setInternalOpen(next);
     onOpenChange?.(next);
   }
-
-  useLayoutEffect(() => {
-    if (!open || !usePortal) {
-      setPos(null);
-      return;
-    }
-    function place() {
-      const anchor = triggerRef.current || rootRef.current;
-      if (!anchor) return;
-      const rect = anchor.getBoundingClientRect();
-      const width = Math.min(400, window.innerWidth - 16);
-      const height = Math.min(460, window.innerHeight - 24);
-      let left = rect.right - width;
-      left = Math.min(Math.max(8, left), window.innerWidth - width - 8);
-      let top = rect.top - height - 10;
-      if (top < 8) {
-        top = Math.min(rect.bottom + 10, window.innerHeight - height - 8);
-      }
-      setPos({ top, left, width });
-    }
-    place();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [open, usePortal]);
 
   useEffect(() => {
     if (!open) return;
@@ -109,32 +75,14 @@ export function EmojiPanel({
     if (closeOnSelect) setOpen(false);
   }
 
-  const showPanel = open && (!usePortal || Boolean(pos));
+  const showPanel = open;
 
   const panelBody = (
-    <motion.div
-      key="emoji-panel"
+    <div
       ref={panelRef}
-      className={`emoji-panel ${usePortal ? "emoji-panel--portal" : ""}`}
+      className="emoji-panel"
       role="dialog"
       aria-label="Панель эмодзи"
-      style={
-        usePortal && pos
-          ? {
-              position: "fixed",
-              top: pos.top,
-              left: pos.left,
-              width: pos.width,
-              bottom: "auto",
-              right: "auto",
-            }
-          : undefined
-      }
-      initial={{ opacity: 0, y: 10, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 6, scale: 0.98 }}
-      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      onPointerDown={(event) => event.stopPropagation()}
     >
       <Picker
         data={emojiMartRuData}
@@ -147,15 +95,15 @@ export function EmojiPanel({
         navPosition="top"
         searchPosition="sticky"
         dynamicWidth
-        perLine={8}
+        perLine={9}
         emojiSize={emojiSize}
         emojiButtonSize={emojiSize + 12}
-        emojiButtonRadius="10px"
+        emojiButtonRadius="8px"
         emojiButtonColors={["rgba(109, 138, 173, 0.28)"]}
-        maxFrequentRows={2}
+        maxFrequentRows={1}
         onEmojiSelect={handleSelect}
       />
-    </motion.div>
+    </div>
   );
 
   const layered = (

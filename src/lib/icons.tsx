@@ -60,6 +60,7 @@ import {
   Headphones,
   Sparkles,
   X,
+  Sticker,
 } from "lucide-react";
 
 type IconProps = {
@@ -82,6 +83,9 @@ function wrap(LucideIcon: ComponentType<LucideProps>, props: IconProps) {
   );
 }
 
+export function IconSticker(props: IconProps) {
+  return wrap(Sticker, props);
+}
 export function IconGif(props: IconProps) {
   return wrap(Gift, props);
 }
