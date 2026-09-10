@@ -21,7 +21,6 @@ type EmojiPanelProps = {
   showTrigger?: boolean;
   className?: string;
   closeOnSelect?: boolean;
-  /** When true (default with trigger), float panel via portal so overflow parents don't clip it. */
   portal?: boolean;
   emojiSize?: number;
 };
@@ -34,6 +33,7 @@ export function EmojiPanel({
   className = "",
   closeOnSelect = true,
   portal,
+  emojiSize = 32,
 }: EmojiPanelProps) {
   const controlled = openProp !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
@@ -122,7 +122,7 @@ export function EmojiPanel({
           title="Эмодзи"
           onClick={() => setOpen(!open)}
         >
-          <IconSmile size={20} />
+          <IconSmile size={24} />
         </button>
       )}
 

@@ -10460,343 +10460,10 @@ button:active:not(:disabled) {
 }
 
 /* ============================================
-   GIF PICKER
+   UNIFIED PICKER (Эмодзи / Стикеры / GIF)
    ============================================ */
 
-.gif-picker {
-  position: absolute;
-  bottom: calc(100% + 12px);
-  right: 0;
-  z-index: 50;
-  width: min(420px, 90vw);
-  height: 400px;
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.gif-picker__header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
-  flex-shrink: 0;
-}
-
-.gif-picker__search {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-deep);
-  border-radius: 10px;
-  padding: 6px 10px;
-}
-
-.gif-picker__search input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--ink);
-  font-size: 0.9rem;
-  outline: none;
-}
-
-.gif-picker__search button {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 2px;
-}
-
-.gif-picker__close {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 4px;
-}
-
-.gif-picker__grid {
-  flex: 1;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  padding: 8px;
-  align-content: start;
-}
-
-.gif-picker__item {
-  position: relative;
-  border: none;
-  border-radius: 8px;
-  overflow: hidden;
-  cursor: pointer;
-  background: var(--bg-deep);
-  aspect-ratio: 1;
-  padding: 0;
-  transition: transform 0.15s ease;
-}
-
-.gif-picker__item:hover {
-  transform: scale(1.03);
-  z-index: 1;
-}
-
-.gif-picker__item img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.gif-picker__loader {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: center;
-  padding: 20px;
-}
-
-.gif-picker__spinner {
-  width: 30px;
-  height: 30px;
-  border: 3px solid var(--line);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-.gif-picker__empty {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 40px;
-  color: var(--muted);
-}
-
-.gif-picker__error {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 40px;
-  color: var(--danger);
-}
-
-/* ============================================
-   STICKER PICKER
-   ============================================ */
-
-.sticker-picker {
-  position: absolute;
-  bottom: calc(100% + 12px);
-  right: 0;
-  z-index: 50;
-  width: min(380px, 90vw);
-  height: 420px;
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.sticker-picker__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
-  flex-shrink: 0;
-}
-
-.sticker-picker__packs {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  flex: 1;
-  padding-right: 8px;
-}
-
-.sticker-picker__pack-btn {
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  border: 2px solid transparent;
-  border-radius: 10px;
-  overflow: hidden;
-  cursor: pointer;
-  background: var(--bg-deep);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: border-color 0.15s ease;
-}
-
-.sticker-picker__pack-btn.is-active {
-  border-color: var(--accent);
-}
-
-.sticker-picker__pack-btn img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.sticker-picker__pack-btn span {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.sticker-picker__pack-btn--add {
-  border-style: dashed;
-  border-color: var(--line);
-  color: var(--muted);
-}
-
-.sticker-picker__pack-btn--add:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.sticker-picker__close {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 4px;
-  flex-shrink: 0;
-}
-
-.sticker-picker__create-pack {
-  display: flex;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
-  flex-shrink: 0;
-}
-
-.sticker-picker__create-pack input {
-  flex: 1;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg-deep);
-  color: var(--ink);
-  padding: 6px 10px;
-  font-size: 0.85rem;
-  outline: none;
-}
-
-.sticker-picker__create-pack input:focus {
-  border-color: var(--accent);
-}
-
-.sticker-picker__create-pack button {
-  border: none;
-  border-radius: 8px;
-  padding: 6px 14px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.sticker-picker__create-pack button:first-of-type {
-  background: var(--accent);
-  color: #fff;
-}
-
-.sticker-picker__create-pack button:last-of-type {
-  background: transparent;
-  color: var(--muted);
-}
-
-.sticker-picker__pack-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--line);
-  font-size: 0.8rem;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.sticker-picker__pack-info span:first-child {
-  flex: 1;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.sticker-picker__pack-info button {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 4px;
-}
-
-.sticker-picker__pack-info button:hover {
-  color: var(--danger);
-}
-
-.sticker-picker__grid {
-  flex: 1;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  padding: 8px;
-  align-content: start;
-}
-
-.sticker-picker__item {
-  position: relative;
-  border: none;
-  border-radius: 8px;
-  overflow: hidden;
-  cursor: pointer;
-  background: var(--bg-deep);
-  aspect-ratio: 1;
-  padding: 0;
-  transition: transform 0.15s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.sticker-picker__item:hover {
-  transform: scale(1.05);
-  z-index: 1;
-}
-
-.sticker-picker__item img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  padding: 4px;
-}
-
-.sticker-picker__emoji {
-  position: absolute;
-  bottom: 2px;
-  right: 2px;
-  font-size: 0.7rem;
-  background: rgba(0, 0, 0, 0.6);
-  border-radius: 4px;
-  padding: 1px 4px;
-  line-height: 1;
-}
-
-.composer__gif {
+.composer__emoji-trigger {
   width: 40px;
   height: 40px;
   display: grid;
@@ -10810,65 +10477,24 @@ button:active:not(:disabled) {
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-.composer__gif:hover {
+.composer__emoji-trigger:hover {
   background: var(--bg-deep);
   color: var(--ink);
 }
 
-.composer__gif.is-active {
+.composer__emoji-trigger.is-open {
   background: var(--accent-soft);
   color: var(--accent);
 }
 
-.composer__gif svg {
-  width: 22px;
-  height: 22px;
-}
-
-/* Мобильная адаптация */
-@media (max-width: 640px) {
-  .gif-picker {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    width: 100%;
-    height: 60vh;
-    border-radius: 16px 16px 0 0;
-  }
-
-  .gif-picker__grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .sticker-picker {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    width: 100%;
-    height: 60vh;
-    border-radius: 16px 16px 0 0;
-  }
-
-  .sticker-picker__grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-
-/* ============================================
-   GIF PICKER
-   ============================================ */
-
-.gif-picker {
+.unified-picker {
   position: absolute;
   bottom: calc(100% + 12px);
   right: 0;
   z-index: 50;
-  width: min(420px, 90vw);
-  height: 420px;
-  background: var(--surface-raised);
+  width: min(440px, calc(100vw - 20px));
+  height: min(500px, 70vh);
+  background: #1a1a1d;
   border: 1px solid var(--line);
   border-radius: 16px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
@@ -10877,26 +10503,143 @@ button:active:not(:disabled) {
   overflow: hidden;
 }
 
-.gif-picker__header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+/* Табы — как в Telegram */
+.unified-picker__tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  padding: 0 12px;
+  background: #1a1a1d;
   border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
 
-.gif-picker__search {
+.unified-picker__tab {
+  padding: 12px 8px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  position: relative;
+  transition: color 0.15s ease;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.unified-picker__tab:hover {
+  color: var(--ink);
+}
+
+.unified-picker__tab.is-active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.unified-picker__content {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.unified-picker__pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Эмодзи-панель внутри unified-picker */
+.unified-picker__pane--emoji .emoji-panel-wrap {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  position: static;
+  display: flex;
+}
+
+.unified-picker__pane--emoji .emoji-panel {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  position: static !important;
+  inset: auto !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.unified-picker__pane--emoji em-emoji-picker {
+  --rgb-background: 26, 26, 29;
+  --rgb-input: 20, 20, 22;
+  --rgb-color: 236, 236, 238;
+  --rgb-accent: 109, 138, 173;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-over: rgba(255, 255, 255, 0.14);
+  --border-radius: 0;
+  --font-family: inherit;
+  --font-size: 14px;
+  --category-icon-size: 18px;
+  --shadow: none;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  border: 0;
+  background: transparent;
+}
+
+/* GIF-панель */
+/* GIF-панель внутри unified-picker */
+.unified-picker__pane--gif .gif-picker {
+  position: static !important;
+  inset: auto !important;
+  bottom: auto !important;
+  right: auto !important;
+  top: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  display: flex;
+  flex-direction: column;
+  background: transparent !important;
+}
+
+/* Header внутри unified-picker — как у emoji-mart */
+.unified-picker__pane--gif .gif-picker__header {
+  padding: 10px 12px;
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unified-picker__pane--gif .gif-picker__search {
   flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--bg-deep);
+  background: rgba(0, 0, 0, 0.25);
   border-radius: 10px;
-  padding: 6px 10px;
+  padding: 8px 12px;
+  min-width: 0;
 }
 
-.gif-picker__search input {
+.unified-picker__pane--gif .gif-picker__search input {
   flex: 1;
   border: none;
   background: transparent;
@@ -10906,162 +10649,81 @@ button:active:not(:disabled) {
   min-width: 0;
 }
 
-.gif-picker__search input::placeholder {
+.unified-picker__pane--gif .gif-picker__search input::placeholder {
   color: var(--muted);
 }
 
-.gif-picker__search button {
+.unified-picker__pane--gif .gif-picker__search svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.unified-picker__pane--gif .gif-picker__search button {
   border: none;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   padding: 2px;
-  flex-shrink: 0;
-}
-
-.gif-picker__close {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 4px;
-  flex-shrink: 0;
-}
-
-.gif-picker__grid {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  padding: 8px;
-  align-content: start;
-  /* Сглаживание прокрутки на iOS */
-  -webkit-overflow-scrolling: touch;
+  place-items: center;
+  flex-shrink: 0;
 }
 
-.gif-picker__item {
-  border: none;
-  border-radius: 8px;
-  overflow: hidden;
-  cursor: pointer;
-  background: var(--bg-deep);
-  padding: 0;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  position: relative;
-  aspect-ratio: 1 / 1;
-  min-height: 0;
-  min-width: 0;
+/* Стикеры */
+.unified-picker__pane--stickers .sticker-picker {
+  position: static !important;
+  inset: auto !important;
+  bottom: auto !important;
+  right: auto !important;
+  top: auto !important;
+  left: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
 }
 
-.gif-picker__item:hover {
-  transform: scale(1.04);
-  z-index: 1;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-}
-
-.gif-picker__item-image {
-  width: 100%;
+.unified-picker__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   height: 100%;
-  object-fit: cover;
-  display: block;
-  position: absolute;
-  inset: 0;
-}
-
-.gif-picker__loader {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 16px;
-}
-
-.gif-picker__spinner {
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--line);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-.gif-picker__empty {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: center;
-  align-items: center;
   padding: 40px;
   color: var(--muted);
   font-size: 0.9rem;
+  text-align: center;
 }
 
-.gif-picker__error {
-  flex: 1;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  padding: 40px;
-  color: var(--danger);
-  font-size: 0.9rem;
+/* Скрываем лишние заголовки внутри emoji-mart */
+.unified-picker__pane--emoji .emoji-mart,
+.unified-picker__pane--emoji em-emoji-picker {
+  overflow: hidden !important;
 }
 
 /* Мобильная адаптация */
 @media (max-width: 640px) {
-  .gif-picker {
+  .unified-picker {
     position: fixed;
     bottom: 0;
     left: 0;
     right: 0;
+    top: auto;
     width: 100%;
-    height: 55vh;
-    max-height: 420px;
+    max-width: 100%;
+    height: 60vh;
+    max-height: 500px;
     border-radius: 16px 16px 0 0;
+    z-index: 100;
   }
 
-  .gif-picker__grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 4px;
-    padding: 6px;
+  .unified-picker__tab {
+    padding: 10px 6px;
+    font-size: 0.82rem;
   }
 
-  .gif-picker__header {
-    padding: 8px 10px;
+  .composer__emoji-trigger {
+    width: 44px;
+    height: 44px;
   }
-
-  .gif-picker__search input {
-    font-size: 16px; /* предотвращает зум на iOS */
-  }
-}
-
-@media (max-width: 380px) {
-  .gif-picker__grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Стили для скролла */
-.gif-picker__grid::-webkit-scrollbar {
-  width: 4px;
-}
-
-.gif-picker__grid::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.gif-picker__grid::-webkit-scrollbar-thumb {
-  background: var(--scroll-thumb);
-  border-radius: 999px;
-}
-
-.gif-picker__grid {
-  scrollbar-width: thin;
-  scroll-behavior: smooth;
 }
