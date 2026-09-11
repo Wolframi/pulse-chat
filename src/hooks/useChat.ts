@@ -6,7 +6,6 @@ import type {
   AuthAccount,
   ChatInfo,
   ChatMessage,
-  FileAttachment,
   GroupVisibility,
   PeopleUser,
   PublicGroupHit,
@@ -38,7 +37,6 @@ import {
 import { isChatMuted } from "@/lib/mute";
 import { compressUploadBatch } from "@/lib/compressImage";
 import { watchAppBoot } from "@/lib/liveReload";
-import { parseGiphyMediaUrl } from "@/lib/giphyMedia";
 
 const TOKEN_KEY = "pulse-chat-token";
 
@@ -1552,76 +1550,6 @@ export function useChat() {
     [sendFiles],
   );
 
-  const sendRemoteFile = useCallback(
-    async (
-      file: FileAttachment,
-      options?: { caption?: string; replyToId?: string },
-    ): Promise<boolean> => {
-      if (!account?.token) {
-        setComposerError("Нужен вход");
-        return false;
-      }
-      const chatId = sessionRef.current?.room;
-      if (
-        !chatId ||
-        !expectedRoomRef.current ||
-        expectedRoomRef.current !== chatId
-      ) {
-        setComposerError("Чат ещё открывается — подождите");
-        return false;
-      }
-      const socket = socketRef.current;
-      if (!socket?.connected) {
-        setComposerError("Нет соединения — подождите и попробуйте снова");
-        return false;
-      }
-      const remote = parseGiphyMediaUrl(file.url);
-      if (!remote) {
-        setComposerError("Нельзя отправить эту ссылку");
-        return false;
-      }
-
-      setComposerError(null);
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const timer = window.setTimeout(() => {
-            reject(new Error("Сервер не ответил на отправку файла"));
-          }, 15_000);
-
-          socket.emit(
-            "message:file",
-            {
-              chatId,
-              file: {
-                url: remote.url,
-                name: file.name || remote.name,
-                size: file.size || 0,
-                mime: remote.mime,
-              },
-              text: options?.caption || "",
-              replyToId: options?.replyToId || undefined,
-            },
-            (ack: { ok: boolean; error?: string }) => {
-              window.clearTimeout(timer);
-              if (!ack?.ok) {
-                reject(new Error(ack?.error || "Файл не отправился"));
-                return;
-              }
-              resolve();
-            },
-          );
-        });
-        return true;
-      } catch (error) {
-        setComposerError(
-          error instanceof Error ? error.message : "Не удалось отправить GIF",
-        );
-        return false;
-      }
-    },
-    [account?.token],
-  );
-
   const logCall = useCallback((chatId: string, text: string) => {
     socketRef.current?.emit("call:log", { chatId, text });
   }, []);
@@ -2032,7 +1960,6 @@ export function useChat() {
     searchPublicGroups,
     sendFile,
     sendFiles,
-    sendRemoteFile,
     cancelUpload,
     logCall,
     togglePin,

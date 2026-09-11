@@ -60,7 +60,6 @@ export type UploadedFile = {
 type FileLike = {
   mime?: string | null;
   name?: string | null;
-  url?: string | null;
 } | null | undefined;
 
 function fileMime(file?: FileLike) {
@@ -118,21 +117,7 @@ export function attachmentPreviewText(
   file?: FileLike,
   fallbackText?: string | null,
 ) {
-  if (isImageAttachment(file)) {
-    const mime = fileMime(file);
-    const name = fileNameLower(file);
-    const url = String(file?.url || "");
-    if (
-      mime === "image/gif" ||
-      /\.gif$/i.test(name) ||
-      /^gif[-_.]/i.test(name) ||
-      /giphy\.(gif|webp)$/i.test(name) ||
-      /giphy\.com/i.test(url)
-    ) {
-      return "GIF";
-    }
-    return "Фото";
-  }
+  if (isImageAttachment(file)) return "Фото";
   if (isVideoAttachment(file)) return "Видео";
   if (isVoiceNote(file)) return "Голосовое сообщение";
   if (isAudioAttachment(file)) return "Аудио";
@@ -140,7 +125,6 @@ export function attachmentPreviewText(
   const fallback = String(fallbackText || "").trim();
   if (
     fallback === "Фото" ||
-    fallback === "GIF" ||
     fallback === "Видео" ||
     fallback === "Аудио" ||
     fallback === "Голосовое сообщение"

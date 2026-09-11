@@ -31,9 +31,8 @@ import {
 } from "@/components/chat/VoiceRecorderBar";
 import { MentionMenu } from "@/components/chat/MentionMenu";
 import { UnifiedPicker } from "@/components/chat/UnifiedPicker";
-import type { FileAttachment, PeopleUser } from "@/lib/types";
+import type { PeopleUser } from "@/lib/types";
 import { toast } from "sonner";
-import { parseGiphyMediaUrl } from "@/lib/giphyMedia";
 
 type PendingFile = {
   id: string;
@@ -57,10 +56,6 @@ type ComposerProps = {
       onProgress?: (ratio: number) => void;
     },
   ) => Promise<{ ok: boolean; completed: File[] }>;
-  onSendRemoteFile?: (
-    file: FileAttachment,
-    options?: { caption?: string; replyToId?: string },
-  ) => Promise<boolean>;
   onTyping: (isTyping: boolean) => void;
   uploading?: boolean;
   disabled?: boolean;
@@ -82,7 +77,6 @@ type ComposerProps = {
 export function Composer({
   onSend,
   onSendFiles,
-  onSendRemoteFile,
   onTyping,
   uploading = false,
   disabled = false,
@@ -384,41 +378,18 @@ export function Composer({
       if (locked || sendingRef.current) return;
       sendingRef.current = true;
       try {
-        const remote = parseGiphyMediaUrl(url);
-        if (remote && onSendRemoteFile) {
-          const ok = await onSendRemoteFile(
-            {
-              url: remote.url,
-              name: remote.name,
-              mime: remote.mime,
-              size: remote.size,
-            },
-            { caption: "", replyToId: replyTo?.id },
-          );
-          if (ok) {
-            onClearReply?.();
-            pulseSend();
-            return;
-          }
-        }
-
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Ошибка ${res.status}`);
         const blob = await res.blob();
         const contentType = blob.type || "image/gif";
-        const ext = contentType.includes("webp")
-          ? "webp"
-          : contentType.includes("png")
-            ? "png"
-            : "gif";
+        const ext = contentType.includes("png") ? "png" : "gif";
         const file = new File([blob], `gif-${Date.now()}.${ext}`, {
           type: contentType,
         });
-        const uploaded = await onSendFiles([file], {
+        await onSendFiles([file], {
           caption: "",
           replyToId: replyTo?.id,
         });
-        if (!uploaded.ok) throw new Error("upload failed");
         onClearReply?.();
         pulseSend();
       } catch {
@@ -427,7 +398,7 @@ export function Composer({
         sendingRef.current = false;
       }
     },
-    [locked, onSendFiles, onSendRemoteFile, replyTo?.id, onClearReply],
+    [locked, onSendFiles, replyTo?.id, onClearReply],
   );
 
   // ============================================
