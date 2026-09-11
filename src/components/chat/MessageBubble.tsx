@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type CSSProperties,
   type TouchEvent as ReactTouchEvent,
 } from "react";
 import { motion } from "motion/react";
@@ -35,10 +36,8 @@ import {
   messageAttachments,
 } from "@/lib/files";
 import { audioTrackId, type AudioTrack } from "@/lib/audioPlayback";
-import {
-  highlightText,
-  linkifyText,
-} from "@/lib/text";
+import { renderMessageText } from "@/lib/text";
+import { soloEmojiSizePx, splitTextAndEmoji } from "@/lib/emojiText";
 import { formatMessageTime } from "@/lib/dates";
 import { VoiceBubble } from "@/components/chat/VoiceBubble";
 import { VideoThumb } from "@/components/chat/VideoThumb";
@@ -272,7 +271,9 @@ function FileBodyInner({
           );
         })}
         {showUserCaption ? (
-          <p className="bubble__text bubble__audio-caption">{caption}</p>
+          <p className="bubble__text bubble__audio-caption">
+            {renderMessageText(caption)}
+          </p>
         ) : null}
       </div>
     );
@@ -315,7 +316,9 @@ function FileBodyInner({
         );
       })}
       {userCaption ? (
-        <p className="bubble__text bubble__media-caption">{caption}</p>
+        <p className="bubble__text bubble__media-caption">
+          {renderMessageText(caption)}
+        </p>
       ) : null}
     </div>
   );
@@ -461,6 +464,11 @@ function MessageBubbleInner({
   const attachments = messageAttachments(message);
   const audioMsg = attachments.some((file) => isAudioAttachment(file));
   const mediaMsg = attachments.some((file) => isMediaAttachment(file));
+  const soloSize =
+    message.kind !== "file" && message.kind !== "invite" && !attachments.length
+      ? soloEmojiSizePx(message.text)
+      : 0;
+  const bigEmoji = soloSize > 0;
   const canCopy = !audioMsg && !mediaMsg;
   const copyText =
     message.kind === "file"
@@ -524,9 +532,12 @@ function MessageBubbleInner({
     }
   }
 
-  const textNode = searchQuery.trim()
-    ? highlightText(message.text, searchQuery)
-    : linkifyText(message.text);
+  const textNode = renderMessageText(message.text, searchQuery);
+  const soloGlyphs = bigEmoji
+    ? splitTextAndEmoji(message.text)
+        .filter((part) => part.type === "emoji")
+        .map((part) => part.value)
+    : [];
 
   const timeLabel = formatMessageTime(message.createdAt);
   const displayName = mine ? "Вы" : author.name;
@@ -548,7 +559,9 @@ function MessageBubbleInner({
           showMeta ? "" : "bubble--compact"
         } ${mediaMsg ? "bubble--media" : ""} ${
           audioMsg ? "bubble--audio" : ""
-        } ${menuOpen ? "is-actions-open" : ""} ${message.status === "pending" ? "bubble--pending" : ""} ${
+        } ${bigEmoji ? "bubble--emoji" : ""} ${
+          menuOpen ? "is-actions-open" : ""
+        } ${message.status === "pending" ? "bubble--pending" : ""} ${
           message.status === "failed" ? "bubble--failed" : ""
         }`}
         onContextMenu={(event) => {
@@ -598,15 +611,29 @@ function MessageBubbleInner({
         {message.kind === "file" ? (
           <FileBody message={message} mine={mine} onOpenImage={onOpenImage} />
         ) : (
-          <p className="bubble__text">
-            {textNode}
-            {message.editedAt ? (
+          <p
+            className={`bubble__text${bigEmoji ? " bubble__text--emoji" : ""}`}
+            style={
+              bigEmoji
+                ? ({ "--emoji-solo-size": `${soloSize}px` } as CSSProperties)
+                : undefined
+            }
+          >
+            {bigEmoji
+              ? soloGlyphs.map((glyph, index) => (
+                  <span key={`${glyph}-${index}`} className="emoji-glyph">
+                    {glyph}
+                  </span>
+                ))
+              : textNode}
+            {!bigEmoji && message.editedAt ? (
               <em className="bubble__edited"> изменено</em>
             ) : null}
           </p>
         )}
-
-
+        {bigEmoji && message.editedAt ? (
+          <em className="bubble__edited">изменено</em>
+        ) : null}
 
         {mine &&
           !message.status &&
