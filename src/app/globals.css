@@ -4023,9 +4023,14 @@ button:active:not(:disabled) {
 
 .bubble__text .emoji-glyph {
   display: inline-block;
+  margin: 0;
   font-size: 1.42em;
   line-height: 1;
   vertical-align: -0.14em;
+}
+
+.bubble__text:not(.bubble__text--emoji) {
+  letter-spacing: 0;
 }
 
 @media (max-width: 640px) {
@@ -4583,7 +4588,7 @@ button:active:not(:disabled) {
 .bubble-row--plaque .bubble__text.bubble__text--emoji {
   display: flex;
   align-items: center;
-  gap: 0.08em;
+  gap: 0.2em;
   margin: 0;
   font-family: var(--font-emoji-stack);
   font-variant-emoji: emoji;
