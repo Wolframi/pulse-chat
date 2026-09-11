@@ -30,10 +30,34 @@ type VoiceResumeInput = Omit<Extract<MediaResume, { kind: "voice" }>, "at">;
 let pageUnloading = false;
 const liveMedia = { call: false, voice: false };
 
+const persistHooks = new Set<() => void>();
+
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", () => {
     pageUnloading = true;
   });
+}
+
+/** Keep resume snapshot through a deploy reload. */
+export function markPageUnloading() {
+  pageUnloading = true;
+}
+
+export function registerMediaResumePersist(fn: () => void) {
+  persistHooks.add(fn);
+  return () => {
+    persistHooks.delete(fn);
+  };
+}
+
+export function persistLiveMediaNow() {
+  for (const fn of persistHooks) {
+    try {
+      fn();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 export function isPageUnloading() {

@@ -1,4 +1,8 @@
-import { hasLiveMediaSession } from "@/lib/mediaResume";
+import {
+  hasLiveMediaSession,
+  markPageUnloading,
+  persistLiveMediaNow,
+} from "@/lib/mediaResume";
 
 const BOOT_KEY = "pulse-boot-id";
 const PENDING_KEY = "pulse-boot-pending";
@@ -8,6 +12,8 @@ const BOOT_QUERY = "_b";
 let memoryBootId = "";
 let pollerBound = false;
 let pollInFlight: AbortController | null = null;
+let burstUntil = 0;
+let burstTimer: number | null = null;
 
 function storedBootId() {
   try {
@@ -69,6 +75,8 @@ function stripBootQuery() {
 }
 
 function reloadNow(bootId: string) {
+  persistLiveMediaNow();
+  markPageUnloading();
   writeBootId(bootId);
   clearPendingBootId();
   const url = new URL(window.location.href);
@@ -77,7 +85,7 @@ function reloadNow(bootId: string) {
     bootId.replace(/[^a-zA-Z0-9-]/g, "").slice(-12),
   );
   url.searchParams.set("_t", String(Date.now()));
-  window.location.assign(`${url.pathname}${url.search}${url.hash}`);
+  window.location.replace(`${url.pathname}${url.search}${url.hash}`);
 }
 
 /** Reload after a deploy. During a live call wait — WebRTC stays up, then reload. */
@@ -91,10 +99,6 @@ export function applyBootId(bootId: string) {
   if (prev === bootId) {
     memoryBootId = bootId;
     clearPendingBootId();
-    return;
-  }
-  if (hasLiveMediaSession()) {
-    writePendingBootId(bootId);
     return;
   }
   reloadNow(bootId);
@@ -121,6 +125,7 @@ async function pollHealth() {
   try {
     const res = await fetch("/api/health", {
       cache: "no-store",
+      headers: { "Cache-Control": "no-cache", Pragma: "no-cache" },
       signal: ac.signal,
     });
     if (!res.ok) return;
@@ -128,16 +133,30 @@ async function pollHealth() {
     if (data?.bootId) applyBootId(data.bootId);
     if (!hasLiveMediaSession()) flushPendingBootReload();
   } catch {
-    /* server is bouncing */
+    /* server is bouncing — burst poll will retry */
   } finally {
     window.clearTimeout(timeout);
     if (pollInFlight === ac) pollInFlight = null;
   }
 }
 
+function startBurstPoll() {
+  burstUntil = Date.now() + 45_000;
+  if (burstTimer != null) return;
+  const tick = () => {
+    void pollHealth();
+    if (Date.now() < burstUntil) {
+      burstTimer = window.setTimeout(tick, 400);
+    } else {
+      burstTimer = null;
+    }
+  };
+  tick();
+}
+
 function onVisible() {
   if (typeof document !== "undefined" && document.hidden) return;
-  void pollHealth();
+  startBurstPoll();
 }
 
 function ensurePoller() {
@@ -155,8 +174,14 @@ function ensurePoller() {
 }
 
 type BootSocket = {
-  on: (event: "app:boot" | "connect", fn: (payload?: { bootId?: string }) => void) => void;
-  off: (event: "app:boot" | "connect", fn: (payload?: { bootId?: string }) => void) => void;
+  on: (
+    event: "app:boot" | "connect" | "disconnect",
+    fn: (payload?: { bootId?: string }) => void,
+  ) => void;
+  off: (
+    event: "app:boot" | "connect" | "disconnect",
+    fn: (payload?: { bootId?: string }) => void,
+  ) => void;
 };
 
 export function watchAppBoot(socket: BootSocket | null) {
@@ -168,12 +193,17 @@ export function watchAppBoot(socket: BootSocket | null) {
   const onConnect = () => {
     void pollHealth();
   };
+  const onDisconnect = () => {
+    startBurstPoll();
+  };
 
   socket?.on("app:boot", onBoot);
   socket?.on("connect", onConnect);
+  socket?.on("disconnect", onDisconnect);
 
   return () => {
     socket?.off("app:boot", onBoot);
     socket?.off("connect", onConnect);
+    socket?.off("disconnect", onDisconnect);
   };
 }

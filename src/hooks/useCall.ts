@@ -61,6 +61,7 @@ import {
 import {
   clearMediaResume,
   isPageUnloading,
+  registerMediaResumePersist,
   saveMediaResume,
   setLiveMediaSession,
 } from "@/lib/mediaResume";
@@ -1085,8 +1086,12 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
         cameraOff,
       });
     persist();
+    const unbind = registerMediaResumePersist(persist);
     const timer = window.setInterval(persist, 15_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      unbind();
+      window.clearInterval(timer);
+    };
   }, [active, muted, cameraOff]);
 
   const startCall = useCallback(
