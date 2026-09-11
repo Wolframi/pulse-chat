@@ -38,7 +38,7 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
   const dragRef = useRef(false);
   const progressRef = useRef(0);
 
-  const [loadWave, setLoadWave] = useState(false);
+  const [loadWave, setLoadWave] = useState(true);
   const [ready, setReady] = useState(false);
   const [duration, setDuration] = useState(0);
   const [failed, setFailed] = useState(false);
@@ -79,7 +79,7 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
   }, []);
 
   useEffect(() => {
-    setLoadWave(false);
+    setLoadWave(true);
     setReady(false);
     setDuration(0);
     setFailed(false);
@@ -90,33 +90,9 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
   }, [src]);
 
   useEffect(() => {
-    const node = wrapRef.current;
-    let timer = 0;
-    const reveal = () => setLoadWave(true);
-    if (isCurrent) {
-      timer = window.setTimeout(reveal, track.kind === "audio" ? 120 : 40);
-    }
-    if (!node) {
-      return () => window.clearTimeout(timer);
-    }
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) reveal();
-      },
-      { rootMargin: "240px 0px", threshold: 0 },
-    );
-    io.observe(node);
-    return () => {
-      window.clearTimeout(timer);
-      io.disconnect();
-    };
-  }, [isCurrent, track.kind]);
-
-  useEffect(() => {
-    if (!loadWave) return;
+    if (!loadWave || !src) return;
     const ac = new AbortController();
-    const bars = 160;
-    void peaksFromAudioUrl(src, bars, ac.signal).then((data) => {
+    void peaksFromAudioUrl(src, 160, ac.signal).then((data) => {
       if (!mountedRef.current || ac.signal.aborted) return;
       if (!data?.peaks.length) {
         setFailed(true);
@@ -127,14 +103,13 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
         durationRef.current = data.duration;
         progressLockRef.current = data.duration;
         setDuration(data.duration);
-        if (isCurrent) lockPlaybackDuration(data.duration);
       }
       setFailed(false);
       setReady(true);
-      paint(isCurrent ? progressRef.current : 0);
+      paint(progressRef.current);
     });
     return () => ac.abort();
-  }, [isCurrent, loadWave, paint, src, track.kind]);
+  }, [loadWave, paint, src]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -265,13 +240,13 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
         >
           {failed || !ready ? (
             <span className="voice-bubble__track voice-bubble__track--fallback" aria-hidden />
-          ) : (
-            <canvas
-              ref={canvasRef}
-              className="voice-bubble__canvas"
-              aria-hidden
-            />
-          )}
+          ) : null}
+          <canvas
+            ref={canvasRef}
+            className="voice-bubble__canvas"
+            style={{ opacity: ready && !failed ? 1 : 0 }}
+            aria-hidden
+          />
         </div>
       </div>
 

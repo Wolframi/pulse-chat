@@ -122,6 +122,7 @@ export function ChatApp() {
     logCall,
     markAllRead,
     reactToMessage,
+    transcribeVoice,
     setTyping,
     clearComposerError,
     clearProfileError,
@@ -913,6 +914,14 @@ export function ChatApp() {
       reactToMessage(session.room, messageId, emoji);
     },
     [reactToMessage, session?.room],
+  );
+
+  const handleTranscribe = useCallback(
+    (messageId: string) => {
+      if (!session?.room) return;
+      transcribeVoice(session.room, messageId);
+    },
+    [session?.room, transcribeVoice],
   );
 
   const handleCopied = useCallback(() => {
@@ -1977,6 +1986,7 @@ export function ChatApp() {
                       onReply={handleReply}
                       onOpenImage={handleOpenImage}
                       onReact={handleReact}
+                      onTranscribe={handleTranscribe}
                       onJumpTo={jumpToMessage}
                       onCopied={handleCopied}
                       onRetry={retryMessage}

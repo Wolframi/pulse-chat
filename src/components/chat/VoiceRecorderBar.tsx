@@ -2,11 +2,22 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { IconClose, IconMic, IconSend, IconTrash } from "@/lib/icons";
-import {
-  captureFilteredMic,
-  stopNoiseFilter,
-  type NoiseFilterSession,
-} from "@/lib/noiseFilter";
+import { getMicDeviceId } from "@/lib/mediaDevices";
+
+async function captureVoiceNoteMic() {
+  const micId = getMicDeviceId();
+  return navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 48000 },
+      ...(micId ? { deviceId: { ideal: micId } } : {}),
+    },
+    video: false,
+  });
+}
 
 const MIN_SEND_MS = 1000;
 const CANCEL_SLIDE_PX = 64;
@@ -81,7 +92,6 @@ export function VoiceRecorderBar({
   const startedAtRef = useRef(0);
   const cancelledRef = useRef(false);
   const finishingRef = useRef(false);
-  const noiseFilterRef = useRef<NoiseFilterSession | null>(null);
   const smoothLevelsRef = useRef<number[]>([]);
   const levelSmoothRef = useRef(0);
   const onReadyRef = useRef(onReady);
@@ -106,9 +116,6 @@ export function VoiceRecorderBar({
       /* ignore */
     }
     recorderRef.current = null;
-    const filter = noiseFilterRef.current;
-    noiseFilterRef.current = null;
-    void stopNoiseFilter(filter);
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     void audioCtxRef.current?.close().catch(() => undefined);
@@ -264,13 +271,11 @@ export function VoiceRecorderBar({
         if (!navigator.mediaDevices?.getUserMedia) {
           throw new Error("Микрофон недоступен в этом браузере");
         }
-        const { filter, stream } = await captureFilteredMic();
+        const stream = await captureVoiceNoteMic();
         if (!mounted || cancelledRef.current) {
-          await stopNoiseFilter(filter);
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
-        noiseFilterRef.current = filter;
 
         streamRef.current = stream;
         const mime = pickMime();
@@ -280,10 +285,10 @@ export function VoiceRecorderBar({
         // resume can be slow on iOS/Android and used to cut off the first words.
         const recorderOptions: MediaRecorderOptions[] = mime
           ? [
-              { mimeType: mime, audioBitsPerSecond: 48_000 },
+              { mimeType: mime, audioBitsPerSecond: 128_000 },
               { mimeType: mime },
             ]
-          : [{ audioBitsPerSecond: 48_000 }];
+          : [{ audioBitsPerSecond: 128_000 }];
         let recorder: MediaRecorder | null = null;
         for (const options of recorderOptions) {
           try {
