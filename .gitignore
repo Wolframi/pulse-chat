@@ -61,6 +61,10 @@ yarn-error.log*
 
 # env files
 .env*
+.giphy-api-key
+.groq-api-key
+.groq-proxy-url
+.groq-bridge-secret
 .turn-user
 .turn-pass
 .livekit-url

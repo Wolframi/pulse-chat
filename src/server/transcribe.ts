@@ -28,7 +28,24 @@ function groqApiKey() {
   return match[1].trim().replace(/^["']|["']$/g, "");
 }
 
+function groqProxyUrl() {
+  return (
+    readSecretFile(".groq-proxy-url") ||
+    String(process.env.GROQ_PROXY_URL || "").trim()
+  );
+}
+
+function groqBridgeSecret() {
+  return (
+    readSecretFile(".groq-bridge-secret") ||
+    String(process.env.GROQ_BRIDGE_SECRET || "").trim()
+  );
+}
+
 export function hasGroqKey() {
+  const proxy = groqProxyUrl();
+  const secret = groqBridgeSecret();
+  if (proxy && secret) return true;
   return Boolean(groqApiKey());
 }
 
@@ -81,8 +98,11 @@ export async function transcribeAudioFile(
   fileName: string,
   mime?: string,
 ) {
+  const proxy = groqProxyUrl();
+  const bridgeSecret = groqBridgeSecret();
+  const useProxy = Boolean(proxy && bridgeSecret);
   const key = groqApiKey();
-  if (!key) {
+  if (!useProxy && !key) {
     throw new Error("GROQ_API_KEY не задан");
   }
   if (!existsSync(filePath)) {
@@ -116,9 +136,11 @@ export async function transcribeAudioFile(
     form.append("temperature", "0");
     form.append("response_format", "json");
 
-    const response = await fetch(GROQ_URL, {
+    const response = await fetch(useProxy ? proxy : GROQ_URL, {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}` },
+      headers: useProxy
+        ? { "x-bridge-secret": bridgeSecret }
+        : { Authorization: `Bearer ${key}` },
       body: form,
     });
     if (!response.ok) {
