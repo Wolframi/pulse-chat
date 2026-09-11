@@ -7,6 +7,7 @@ import { useVoiceChannelLiveKit } from "@/hooks/useVoiceChannelLiveKit";
 import {
   clearMediaResume,
   peekMediaResume,
+  registerMediaResumePersist,
   saveMediaResume,
   setLiveMediaSession,
 } from "@/lib/mediaResume";
@@ -326,8 +327,10 @@ export function useVoiceChannel({
         cameraOff: sfu.cameraOff,
       });
     persist();
+    const unbind = registerMediaResumePersist(persist);
     const timer = window.setInterval(persist, 15_000);
     return () => {
+      unbind();
       window.clearInterval(timer);
       setLiveMediaSession("voice", false);
     };
