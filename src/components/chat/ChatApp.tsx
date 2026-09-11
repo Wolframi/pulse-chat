@@ -117,7 +117,6 @@ export function ChatApp() {
     deleteGroup,
     leaveGroup,
     sendFiles,
-    sendRemoteFile,
     cancelUpload,
     logCall,
     markAllRead,
@@ -650,26 +649,6 @@ export function ChatApp() {
       }
     },
     [sendFiles, setReplyDraft],
-  );
-
-  const handleSendRemoteFile = useCallback(
-    async (
-      file: {
-        url: string;
-        name: string;
-        size: number;
-        mime: string;
-      },
-      options?: { caption?: string; replyToId?: string },
-    ) => {
-      const ok = await sendRemoteFile(file, {
-        caption: options?.caption,
-        replyToId: options?.replyToId,
-      });
-      if (ok) setReplyDraft(null);
-      return ok;
-    },
-    [sendRemoteFile, setReplyDraft],
   );
 
   const handleSaveProfile = useCallback(
@@ -2013,7 +1992,6 @@ export function ChatApp() {
                   <Composer
                     onSend={handleComposerSend}
                     onSendFiles={handleSendFiles}
-                    onSendRemoteFile={handleSendRemoteFile}
                     onTyping={setTyping}
                     uploading={uploading}
                     disabled={historyLoading && !messages.length}

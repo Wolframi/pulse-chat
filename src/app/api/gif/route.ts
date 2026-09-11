@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { pickGiphyPreviewUrl, pickGiphySendAsset } from '@/lib/giphyMedia';
 
 const GIPHY_BASE = 'https://api.giphy.com/v1/gifs';
-const GIPHY_FETCH_MS = 8_000;
 
 function giphyApiKey() {
   return String(process.env.GIPHY_API_KEY || "").trim();
@@ -99,17 +97,9 @@ export async function GET(request: NextRequest) {
       endpoint = `${GIPHY_BASE}/trending`;
     }
 
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), GIPHY_FETCH_MS);
-    let response: Response;
-    try {
-      response = await fetch(`${endpoint}?${params.toString()}`, {
-        headers: { Accept: 'application/json' },
-        signal: ac.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
+    const response = await fetch(`${endpoint}?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+    });
 
     // 3. Обработка ошибок GIPHY
     if (!response.ok) {
@@ -130,23 +120,19 @@ export async function GET(request: NextRequest) {
 
     // 4. Парсим
     const results = (data.data || [])
-      .map((item: any) => {
-        const send = pickGiphySendAsset(item.images);
-        if (!send) return null;
-        return {
-          id: item.id || '',
-          title: item.title || '',
-          url: send.url,
-          preview: pickGiphyPreviewUrl(item.images) || send.url,
-          width: Number(item.images?.fixed_width?.width) || 320,
-          height: Number(item.images?.fixed_width?.height) || 180,
-          size: send.size,
-          mime: send.mime,
-        };
-      })
-      .filter((item: { url: string } | null): item is { url: string } =>
-        Boolean(item?.url),
-      );
+      .map((item: any) => ({
+        id: item.id || '',
+        title: item.title || '',
+        url: item.images?.original?.url || '',
+        preview:
+          item.images?.fixed_width?.url ||
+          item.images?.downsized?.url ||
+          item.images?.original?.url ||
+          '',
+        width: Number(item.images?.fixed_width?.width) || 320,
+        height: Number(item.images?.fixed_width?.height) || 180,
+      }))
+      .filter((item: any) => item.url);
 
     const payload = {
       results,
@@ -179,16 +165,16 @@ function getFallbackGifs() {
       {
         id: 'fb-1',
         title: 'Hello',
-        url: 'https://media.giphy.com/media/3o7aD2SAalBkft6NVG/giphy.webp',
-        preview: 'https://media.giphy.com/media/3o7aD2SAalBkft6NVG/giphy.webp',
+        url: 'https://media.giphy.com/media/3o7aD2SAalBkft6NVG/giphy.gif',
+        preview: 'https://media.giphy.com/media/3o7aD2SAalBkft6NVG/giphy.gif',
         width: 480,
         height: 270,
       },
       {
         id: 'fb-2',
         title: 'Cool',
-        url: 'https://media.giphy.com/media/3o6Ztqnj1hYhTfL9jO/giphy.webp',
-        preview: 'https://media.giphy.com/media/3o6Ztqnj1hYhTfL9jO/giphy.webp',
+        url: 'https://media.giphy.com/media/3o6Ztqnj1hYhTfL9jO/giphy.gif',
+        preview: 'https://media.giphy.com/media/3o6Ztqnj1hYhTfL9jO/giphy.gif',
         width: 480,
         height: 270,
       },

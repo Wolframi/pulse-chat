@@ -95,7 +95,6 @@ import {
   isVideoAttachment,
   messageAttachments,
 } from "./src/lib/files";
-import { parseGiphyMediaUrl } from "./src/lib/giphyMedia";
 import type { RoomMediaItem } from "./src/lib/types";
 import {
   isDevAccessibleHost,
@@ -3483,25 +3482,6 @@ app.prepare().then(() => {
 
         for (const file of rawList) {
           const url = String(file?.url || "");
-          const remote = parseGiphyMediaUrl(url);
-          if (remote) {
-            const safeFileName = String(file?.name || remote.name)
-              .replace(/[\u0000-\u001F\u007F]/g, "")
-              .slice(0, 120) || remote.name;
-            if (isBlockedUpload(safeFileName, remote.mime)) {
-              ack?.({ ok: false, error: "Этот тип файла запрещён" });
-              return;
-            }
-            resolved.push({
-              url: remote.url,
-              name: safeFileName,
-              size: Math.max(0, Math.min(Number(file?.size) || 0, 20 * 1024 * 1024)),
-              mime: remote.mime,
-              isAudio: false,
-            });
-            continue;
-          }
-
           const diskPath = uploadPathFromUrl(url);
           if (!file?.name || !diskPath) {
             ack?.({ ok: false, error: "Файл не передан" });
