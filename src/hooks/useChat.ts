@@ -1758,6 +1758,30 @@ export function useChat() {
     [],
   );
 
+  const transcribeVoice = useCallback((chatId: string, messageId: string) => {
+    const patch = (list: ChatMessage[]) =>
+      list.map((item) =>
+        item.id === messageId && !item.transcription
+          ? { ...item, transcriptionStatus: "pending" as const }
+          : item,
+      );
+    const cached = historyCacheRef.current.get(chatId);
+    if (cached) historyCacheRef.current.set(chatId, patch(cached));
+    const currentRoom = expectedRoomRef.current || sessionRef.current?.room;
+    if (currentRoom === chatId) {
+      setMessages(patch);
+    }
+    socketRef.current?.emit(
+      "message:transcribe",
+      { chatId, messageId },
+      (result: { ok?: boolean; error?: string }) => {
+        if (!result?.ok) {
+          setComposerError(result?.error || "Не удалось расшифровать");
+        }
+      },
+    );
+  }, []);
+
   const pinMessage = useCallback((chatId: string, messageId: string) => {
     socketRef.current?.emit(
       "message:pin",
@@ -2039,6 +2063,7 @@ export function useChat() {
     reconnect,
     markAllRead,
     reactToMessage,
+    transcribeVoice,
     setTyping,
     clearComposerError,
     clearProfileError,

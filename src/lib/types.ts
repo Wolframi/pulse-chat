@@ -54,6 +54,9 @@ export type ChatMessage = {
   invite?: GroupInvite;
   reactions?: MessageReaction[];
   status?: MessageStatus;
+  /** Whisper transcript for voice notes. */
+  transcription?: string;
+  transcriptionStatus?: "pending" | "ready" | "error";
 };
 
 export type TypingEvent = {

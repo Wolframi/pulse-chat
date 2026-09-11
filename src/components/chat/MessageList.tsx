@@ -28,6 +28,7 @@ type MessageListProps = {
   onEdit?: (message: ChatMessage) => void;
   onForward?: (message: ChatMessage) => void;
   onInviteRespond?: (messageId: string, accept: boolean) => void;
+  onTranscribe?: (messageId: string) => void;
   onMarkRead?: () => void;
   peerReadAt?: number | null;
   canModerate?: boolean;
@@ -93,6 +94,7 @@ export function MessageList({
   onEdit,
   onForward,
   onInviteRespond,
+  onTranscribe,
   onMarkRead,
   peerReadAt = null,
   canModerate = false,
@@ -400,6 +402,7 @@ export function MessageList({
                     onEdit={onEdit}
                     onForward={onForward}
                     onInviteRespond={onInviteRespond}
+                    onTranscribe={onTranscribe}
                     canEdit={mine}
                     canForward
                     canDelete={

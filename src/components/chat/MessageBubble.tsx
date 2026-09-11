@@ -40,6 +40,7 @@ import { renderMessageText } from "@/lib/text";
 import { soloEmojiSizePx, splitTextAndEmoji } from "@/lib/emojiText";
 import { formatMessageTime } from "@/lib/dates";
 import { VoiceBubble } from "@/components/chat/VoiceBubble";
+import { VoiceTranscript } from "@/components/chat/VoiceTranscript";
 import { VideoThumb } from "@/components/chat/VideoThumb";
 import { MessageMenu } from "@/components/chat/MessageMenu";
 
@@ -64,6 +65,7 @@ type MessageBubbleProps = {
   onEdit?: (message: ChatMessage) => void;
   onForward?: (message: ChatMessage) => void;
   onInviteRespond?: (messageId: string, accept: boolean) => void;
+  onTranscribe?: (messageId: string) => void;
   canDelete?: boolean;
   canEdit?: boolean;
   canForward?: boolean;
@@ -101,10 +103,12 @@ function FileBodyInner({
   message,
   mine,
   onOpenImage,
+  onTranscribe,
 }: {
   message: ChatMessage;
   mine?: boolean;
   onOpenImage?: (src: string, name: string, kind?: "image" | "video") => void;
+  onTranscribe?: (messageId: string) => void;
 }) {
   const attachments = messageAttachments(message);
   if (!attachments.length) return null;
@@ -267,6 +271,13 @@ function FileBodyInner({
                 </div>
               )}
               <VoiceBubble src={src} mine={mine} track={track} />
+              {voice ? (
+                <VoiceTranscript
+                  message={message}
+                  mine={mine}
+                  onTranscribe={onTranscribe}
+                />
+              ) : null}
             </div>
           );
         })}
@@ -329,7 +340,10 @@ const FileBody = memo(FileBodyInner, (prev, next) => {
   if (
     prev.mine !== next.mine ||
     prev.onOpenImage !== next.onOpenImage ||
+    prev.onTranscribe !== next.onTranscribe ||
     prev.message.text !== next.message.text ||
+    prev.message.transcription !== next.message.transcription ||
+    prev.message.transcriptionStatus !== next.message.transcriptionStatus ||
     prev.message.id !== next.message.id ||
     prev.message.clientKey !== next.message.clientKey ||
     prev.message.room !== next.message.room ||
@@ -370,6 +384,7 @@ function MessageBubbleInner({
   onEdit,
   onForward,
   onInviteRespond,
+  onTranscribe,
   canDelete = false,
   canEdit = false,
   canForward = false,
@@ -609,7 +624,12 @@ function MessageBubbleInner({
         )}
 
         {message.kind === "file" ? (
-          <FileBody message={message} mine={mine} onOpenImage={onOpenImage} />
+          <FileBody
+            message={message}
+            mine={mine}
+            onOpenImage={onOpenImage}
+            onTranscribe={onTranscribe}
+          />
         ) : (
           <p
             className={`bubble__text${bigEmoji ? " bubble__text--emoji" : ""}`}
@@ -770,7 +790,7 @@ function MessageBubbleInner({
     title: "Удержите для действий",
     onDoubleClick: (event: { target: EventTarget }) => {
       const node = event.target instanceof Element ? event.target : null;
-      if (node?.closest(".voice-bubble, .bubble__audio, button, [role='slider']")) {
+      if (node?.closest(".voice-bubble, .voice-transcript, .bubble__audio, button, [role='slider']")) {
         return;
       }
       onReply?.(message);

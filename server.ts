@@ -93,8 +93,14 @@ import {
   isAudioAttachment,
   isImageAttachment,
   isVideoAttachment,
+  isVoiceNote,
   messageAttachments,
 } from "./src/lib/files";
+import {
+  hasGroqKey,
+  queueTranscription,
+  transcribeAudioFile,
+} from "./src/server/transcribe";
 import { parseGiphyMediaUrl } from "./src/lib/giphyMedia";
 import type { RoomMediaItem } from "./src/lib/types";
 import {
@@ -360,6 +366,8 @@ type ChatMessage = {
     status: "pending" | "accepted" | "declined" | "expired";
   };
   reactions?: MessageReaction[];
+  transcription?: string;
+  transcriptionStatus?: "pending" | "ready" | "error";
 };
 
 function isAllowedReaction(emoji: string) {
@@ -1526,6 +1534,65 @@ function pushMessage(io: Server, chat: ChatMeta, message: ChatMessage) {
       }
     }
   }
+}
+
+function voiceAttachmentOf(message: ChatMessage) {
+  return messageAttachments(message).find((file) => isVoiceNote(file)) || null;
+}
+
+function startVoiceTranscription(
+  io: Server,
+  chat: ChatMeta,
+  message: ChatMessage,
+  options?: { force?: boolean },
+) {
+  const voice = voiceAttachmentOf(message);
+  if (!voice) return;
+  if (
+    !options?.force &&
+    message.transcriptionStatus === "ready" &&
+    typeof message.transcription === "string"
+  ) {
+    return;
+  }
+  if (!hasGroqKey()) {
+    message.transcriptionStatus = "error";
+    persistMessages();
+    io.to(chat.id).emit("message:update", publicMessage(message));
+    return;
+  }
+
+  const diskPath = uploadPathFromUrl(voice.url);
+  if (!diskPath) {
+    message.transcriptionStatus = "error";
+    persistMessages();
+    io.to(chat.id).emit("message:update", publicMessage(message));
+    return;
+  }
+
+  message.transcriptionStatus = "pending";
+  persistMessages();
+  io.to(chat.id).emit("message:update", publicMessage(message));
+
+  void queueTranscription(message.id, () =>
+    transcribeAudioFile(diskPath, voice.name, voice.mime),
+  )
+    .then((text) => {
+      const current = messagesFor(chat.id).find((item) => item.id === message.id);
+      if (!current) return;
+      current.transcription = text;
+      current.transcriptionStatus = "ready";
+      persistMessages();
+      io.to(chat.id).emit("message:update", publicMessage(current));
+    })
+    .catch((error) => {
+      console.warn("[transcribe]", message.id, error);
+      const current = messagesFor(chat.id).find((item) => item.id === message.id);
+      if (!current) return;
+      current.transcriptionStatus = "error";
+      persistMessages();
+      io.to(chat.id).emit("message:update", publicMessage(current));
+    });
 }
 
 function chatsForUser(userId: string) {
@@ -3413,6 +3480,8 @@ app.prepare().then(() => {
           kind: source.kind || "text",
           file: source.file,
           files: source.files,
+          transcription: source.transcription,
+          transcriptionStatus: source.transcriptionStatus,
           forwardedFrom: {
             author: source.author,
             text: source.text?.slice(0, 120),
@@ -3600,7 +3669,7 @@ app.prepare().then(() => {
           mime,
         }));
 
-        pushMessage(io, chat, {
+        const saved: ChatMessage = {
           id: randomUUID(),
           room: chatId,
           author: labelOf(account),
@@ -3611,6 +3680,48 @@ app.prepare().then(() => {
           file: attachments[0],
           files: attachments.length > 1 ? attachments : undefined,
           replyTo: resolveReply(chatId, payload?.replyToId),
+        };
+        pushMessage(io, chat, saved);
+        if (voiceAttachmentOf(saved)) {
+          startVoiceTranscription(io, chat, saved);
+        }
+        ack?.({ ok: true });
+      },
+    );
+
+    socket.on(
+      "message:transcribe",
+      (
+        payload: { chatId?: string; messageId?: string },
+        ack?: (result: { ok: boolean; error?: string }) => void,
+      ) => {
+        const account = requireAccount(socket);
+        const chatId = String(payload?.chatId || "");
+        const messageId = String(payload?.messageId || "");
+        if (!account || !chatId || !messageId) {
+          ack?.({ ok: false, error: "Некорректный запрос" });
+          return;
+        }
+        if (!rateLimit(`msg-transcribe:${account.userId}`, 20, 60_000)) {
+          ack?.({ ok: false, error: "Слишком часто" });
+          return;
+        }
+        const chat = getChat(chatId);
+        if (!chat || !canAccessChat(chat, account.userId)) {
+          ack?.({ ok: false, error: "Нет доступа" });
+          return;
+        }
+        const message = messagesFor(chatId).find((item) => item.id === messageId);
+        if (!message || !voiceAttachmentOf(message)) {
+          ack?.({ ok: false, error: "Голосовое не найдено" });
+          return;
+        }
+        if (!hasGroqKey()) {
+          ack?.({ ok: false, error: "Расшифровка недоступна" });
+          return;
+        }
+        startVoiceTranscription(io, chat, message, {
+          force: message.transcriptionStatus === "error",
         });
         ack?.({ ok: true });
       },
