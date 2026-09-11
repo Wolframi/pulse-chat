@@ -59,6 +59,7 @@ git clean -fd \
   --exclude=.groq-api-key \
   --exclude=.groq-proxy-url \
   --exclude=.groq-bridge-secret \
+  --exclude=.groq-egress-proxy \
   --exclude=.livekit-url \
   --exclude=.livekit-api-key \
   --exclude=.livekit-api-secret \

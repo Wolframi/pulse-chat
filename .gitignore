@@ -65,6 +65,7 @@ yarn-error.log*
 .groq-api-key
 .groq-proxy-url
 .groq-bridge-secret
+.groq-egress-proxy
 .turn-user
 .turn-pass
 .livekit-url

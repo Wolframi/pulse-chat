@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -35,6 +36,17 @@ function groqProxyUrl() {
   );
 }
 
+function groqEgressProxy() {
+  const raw =
+    readSecretFile(".groq-egress-proxy") ||
+    String(process.env.GROQ_EGRESS_PROXY || "").trim();
+  const first = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return first && /^https?:\/\//i.test(first) ? first : "";
+}
+
 function groqBridgeSecret() {
   return (
     readSecretFile(".groq-bridge-secret") ||
@@ -43,6 +55,7 @@ function groqBridgeSecret() {
 }
 
 function transcriptionEndpoint() {
+  if (groqEgressProxy()) return GROQ_URL;
   const proxy = groqProxyUrl();
   if (!proxy) return GROQ_URL;
   if (/\/openai\//.test(proxy) || /\/transcribe\/?$/.test(proxy)) return proxy;
@@ -144,13 +157,22 @@ export async function transcribeAudioFile(
     form.append("temperature", "0");
     form.append("response_format", "json");
 
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: useVercelBridge
-        ? { "x-bridge-secret": bridgeSecret }
-        : { Authorization: `Bearer ${key}` },
-      body: form,
-    });
+    const egress = groqEgressProxy();
+    const headers = useVercelBridge
+      ? { "x-bridge-secret": bridgeSecret }
+      : { Authorization: `Bearer ${key}` };
+    const response = egress
+      ? await undiciFetch(endpoint, {
+          method: "POST",
+          headers,
+          body: form,
+          dispatcher: new ProxyAgent(egress),
+        })
+      : await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: form,
+        });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       if (/audio_too_short|too short/i.test(detail)) {
