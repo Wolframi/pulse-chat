@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -28,7 +29,43 @@ function groqApiKey() {
   return match[1].trim().replace(/^["']|["']$/g, "");
 }
 
+function groqProxyUrl() {
+  return (
+    readSecretFile(".groq-proxy-url") ||
+    String(process.env.GROQ_PROXY_URL || "").trim()
+  );
+}
+
+function groqEgressProxy() {
+  const raw =
+    readSecretFile(".groq-egress-proxy") ||
+    String(process.env.GROQ_EGRESS_PROXY || "").trim();
+  const first = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return first && /^https?:\/\//i.test(first) ? first : "";
+}
+
+function groqBridgeSecret() {
+  return (
+    readSecretFile(".groq-bridge-secret") ||
+    String(process.env.GROQ_BRIDGE_SECRET || "").trim()
+  );
+}
+
+function transcriptionEndpoint() {
+  if (groqEgressProxy()) return GROQ_URL;
+  const proxy = groqProxyUrl();
+  if (!proxy) return GROQ_URL;
+  if (/\/openai\//.test(proxy) || /\/transcribe\/?$/.test(proxy)) return proxy;
+  return `${proxy.replace(/\/$/, "")}/openai/v1/audio/transcriptions`;
+}
+
 export function hasGroqKey() {
+  const proxy = groqProxyUrl();
+  const secret = groqBridgeSecret();
+  if (proxy && secret) return true;
   return Boolean(groqApiKey());
 }
 
@@ -81,8 +118,12 @@ export async function transcribeAudioFile(
   fileName: string,
   mime?: string,
 ) {
+  const proxy = groqProxyUrl();
+  const bridgeSecret = groqBridgeSecret();
   const key = groqApiKey();
-  if (!key) {
+  const endpoint = transcriptionEndpoint();
+  const useVercelBridge = Boolean(proxy && bridgeSecret && !key);
+  if (!useVercelBridge && !key) {
     throw new Error("GROQ_API_KEY не задан");
   }
   if (!existsSync(filePath)) {
@@ -116,11 +157,22 @@ export async function transcribeAudioFile(
     form.append("temperature", "0");
     form.append("response_format", "json");
 
-    const response = await fetch(GROQ_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}` },
-      body: form,
-    });
+    const egress = groqEgressProxy();
+    const headers = useVercelBridge
+      ? { "x-bridge-secret": bridgeSecret }
+      : { Authorization: `Bearer ${key}` };
+    const response = egress
+      ? await undiciFetch(endpoint, {
+          method: "POST",
+          headers,
+          body: form,
+          dispatcher: new ProxyAgent(egress),
+        })
+      : await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: form,
+        });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       if (/audio_too_short|too short/i.test(detail)) {

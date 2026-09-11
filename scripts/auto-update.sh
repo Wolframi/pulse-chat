@@ -56,6 +56,10 @@ git clean -fd \
   --exclude=uploads \
   --exclude=.env \
   --exclude=.giphy-api-key \
+  --exclude=.groq-api-key \
+  --exclude=.groq-proxy-url \
+  --exclude=.groq-bridge-secret \
+  --exclude=.groq-egress-proxy \
   --exclude=.livekit-url \
   --exclude=.livekit-api-key \
   --exclude=.livekit-api-secret \

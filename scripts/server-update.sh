@@ -13,7 +13,7 @@ git fetch origin
 git checkout -f master
 git reset --hard origin/master
 # Drop leftover untracked sources; keep data/uploads/secrets (gitignored).
-git clean -fd --exclude=data --exclude=uploads --exclude=.env --exclude=.giphy-api-key --exclude=.livekit-url --exclude=.livekit-api-key --exclude=.livekit-api-secret --exclude=.livekit-server.yaml --exclude=.turn-user --exclude=.turn-pass
+git clean -fd --exclude=data --exclude=uploads --exclude=.env --exclude=.giphy-api-key --exclude=.groq-api-key --exclude=.groq-proxy-url --exclude=.groq-bridge-secret --exclude=.groq-egress-proxy --exclude=.livekit-url --exclude=.livekit-api-key --exclude=.livekit-api-secret --exclude=.livekit-server.yaml --exclude=.turn-user --exclude=.turn-pass
 
 mkdir -p data uploads
 npm ci
