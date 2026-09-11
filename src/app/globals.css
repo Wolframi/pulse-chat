@@ -4021,6 +4021,13 @@ button:active:not(:disabled) {
   font-variant-emoji: emoji;
 }
 
+.bubble__text .emoji-glyph {
+  display: inline-block;
+  font-size: 1.42em;
+  line-height: 1;
+  vertical-align: -0.14em;
+}
+
 @media (max-width: 640px) {
   .emoji-panel {
     position: fixed;
@@ -4535,6 +4542,75 @@ button:active:not(:disabled) {
   max-width: min(100%, 420px);
   border: 0 !important;
   overflow: visible;
+}
+
+/* Telegram-style lone emoji: no text plaque, no selection */
+.bubble-row--plaque .bubble--emoji,
+.bubble-row--plaque .bubble--emoji.bubble--mine,
+.bubble-row--plaque .bubble--emoji.bubble--theirs,
+.bubble-row--plaque .bubble--emoji.bubble--compact,
+.bubble-row--plaque .bubble--emoji.bubble--compact.bubble--mine,
+.bubble-row--plaque .bubble--emoji.bubble--compact.bubble--theirs {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  padding: 2px 0 0;
+  max-width: min(100%, 360px);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.bubble--emoji,
+.bubble--emoji.bubble--mine,
+.bubble--emoji.bubble--theirs {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.bubble--emoji ::selection,
+.bubble--emoji .emoji-glyph::selection,
+.bubble__text--emoji::selection {
+  background: transparent;
+  color: inherit;
+}
+
+.bubble__text--emoji,
+.bubble-row--plaque .bubble__text.bubble__text--emoji {
+  display: flex;
+  align-items: center;
+  gap: 0.08em;
+  margin: 0;
+  font-family: var(--font-emoji-stack);
+  font-variant-emoji: emoji;
+  font-size: var(--emoji-solo-size, 80px) !important;
+  line-height: 1 !important;
+  letter-spacing: 0;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.bubble__text--emoji .emoji-glyph,
+.bubble-row--plaque .bubble__text.bubble__text--emoji .emoji-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  font-size: 1em !important;
+  line-height: 1;
+  vertical-align: baseline;
+}
+
+.bubble--emoji .bubble__edited {
+  display: block;
+  margin: 4px 0 0;
+  font-size: 0.7rem;
 }
 
 /* Voice/audio keep a visible bubble in plaque rows (unlike bare photo/video) */
@@ -8913,6 +8989,11 @@ button:active:not(:disabled) {
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
   }
 
+  .bubble-row:hover .bubble--emoji,
+  .bubble-row:hover .bubble--media {
+    box-shadow: none !important;
+  }
+
   .bubble-row--plaque:hover .bubble {
     box-shadow: none;
   }
@@ -9423,6 +9504,11 @@ button:active:not(:disabled) {
   .bubble-row--plaque .bubble__text {
     font-size: 0.9rem;
     line-height: 1.4;
+  }
+
+  .bubble__text--emoji,
+  .bubble-row--plaque .bubble__text.bubble__text--emoji {
+    font-size: calc(var(--emoji-solo-size, 80px) * 0.85) !important;
   }
 
   .bubble-row--plaque .bubble__author {
