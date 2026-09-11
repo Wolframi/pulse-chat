@@ -11,8 +11,8 @@ const LINKIFY_OPTIONS = {
   validate: {
     url: (value: string) => /^https?:\/\//i.test(value),
   },
-  ignoreTags: ["a", "script", "style"],
-} as const;
+  ignoreTags: ["a", "script", "style"] as string[],
+};
 
 export function linkifyText(text: string): ReactNode {
   return <Linkify options={LINKIFY_OPTIONS}>{text}</Linkify>;
