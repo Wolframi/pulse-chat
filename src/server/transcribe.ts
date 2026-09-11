@@ -42,6 +42,13 @@ function groqBridgeSecret() {
   );
 }
 
+function transcriptionEndpoint() {
+  const proxy = groqProxyUrl();
+  if (!proxy) return GROQ_URL;
+  if (/\/openai\//.test(proxy) || /\/transcribe\/?$/.test(proxy)) return proxy;
+  return `${proxy.replace(/\/$/, "")}/openai/v1/audio/transcriptions`;
+}
+
 export function hasGroqKey() {
   const proxy = groqProxyUrl();
   const secret = groqBridgeSecret();
@@ -100,9 +107,10 @@ export async function transcribeAudioFile(
 ) {
   const proxy = groqProxyUrl();
   const bridgeSecret = groqBridgeSecret();
-  const useProxy = Boolean(proxy && bridgeSecret);
   const key = groqApiKey();
-  if (!useProxy && !key) {
+  const endpoint = transcriptionEndpoint();
+  const useVercelBridge = Boolean(proxy && bridgeSecret && !key);
+  if (!useVercelBridge && !key) {
     throw new Error("GROQ_API_KEY не задан");
   }
   if (!existsSync(filePath)) {
@@ -136,9 +144,9 @@ export async function transcribeAudioFile(
     form.append("temperature", "0");
     form.append("response_format", "json");
 
-    const response = await fetch(useProxy ? proxy : GROQ_URL, {
+    const response = await fetch(endpoint, {
       method: "POST",
-      headers: useProxy
+      headers: useVercelBridge
         ? { "x-bridge-secret": bridgeSecret }
         : { Authorization: `Bearer ${key}` },
       body: form,
