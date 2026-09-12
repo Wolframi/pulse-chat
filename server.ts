@@ -3178,38 +3178,27 @@ app.prepare().then(() => {
 
   socket.on(
   "sticker:pack:install",
-  (
-    payload: { packId?: string },
-    ack?: (r: { ok: boolean; already?: boolean; error?: string }) => void,
-  ) => {
-    const account = requireAccount(socket);
-    if (!account) {
-      ack?.({ ok: false, error: "Нужен вход" });
-      return;
-    }
-    const result = installStickerPack(
-      account.userId,
-      String(payload?.packId || ""),
-    );
-    if (result.ok === false) {
-      ack?.({ ok: false, error: result.error });
-      return;
-    }
-    ack?.({ ok: true, already: result.already });
-  },
-);
-
-  socket.on(
-    "sticker:pack:uninstall",
     (
       payload: { packId?: string },
-      ack?: (r: { ok: boolean; error?: string }) => void,
+      ack?: (r: { ok: boolean; already?: boolean; error?: string }) => void,
     ) => {
       const account = requireAccount(socket);
-      if (!account) { ack?.({ ok: false, error: "Нужен вход" }); return; }
-      const result = uninstallStickerPack(account.userId, String(payload?.packId || ""));
-      if (!result.ok) { ack?.({ ok: false, error: result.error }); return; }
-      ack?.({ ok: true });
+      if (!account) {
+        ack?.({ ok: false, error: "Нужен вход" });
+        return;
+      }
+
+      // Жёсткий cast снимает любые расхождения типов между файлами.
+      const result = installStickerPack(
+        account.userId,
+        String(payload?.packId || ""),
+      ) as { ok: boolean; already?: boolean; error?: string };
+
+      if (!result.ok) {
+        ack?.({ ok: false, error: result.error || "Не удалось добавить пак" });
+        return;
+      }
+      ack?.({ ok: true, already: Boolean(result.already) });
     },
   );
 
