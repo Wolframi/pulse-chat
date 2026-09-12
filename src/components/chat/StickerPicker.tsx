@@ -1,324 +1,486 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { motion } from "motion/react";
-import { IconPlus, IconTrash } from "@/lib/icons";
-
-type Sticker = {
-  id: string;
-  url: string;
-  emoji?: string;
-};
-
-type StickerPack = {
-  id: string;
-  name: string;
-  stickers: Sticker[];
-};
+import { toast } from "sonner";
+import {
+  IconClose,
+  IconPlus,
+  IconSticker,
+  IconTrash,
+  IconUpload,
+} from "@/lib/icons";
+import type { StickerPack } from "@/lib/types";
+import { MAX_STICKER_BYTES } from "@/lib/files";
 
 type StickerPickerProps = {
-  onSelect: (url: string) => void;
-  onClose: () => void;
   open: boolean;
-  userId?: string;
-  token?: string;
-  /** Встроенный режим (без внешней рамки и кнопки закрытия) */
-  embedded?: boolean;
+  onClose: () => void;
+  onSend: (packId: string, stickerId: string) => void;
+  packs: StickerPack[];
+  refreshPacks: () => Promise<StickerPack[]>;
+  onCreatePack: (
+    title: string,
+  ) => Promise<{ ok: boolean; pack?: StickerPack; error?: string }>;
+  onDeletePack: (packId: string) => Promise<boolean>;
+  onRenamePack: (packId: string, title: string) => Promise<boolean>;
+  onAddSticker: (
+    packId: string,
+    file: File,
+    extra?: {
+      emoji?: string;
+      width?: number;
+      height?: number;
+      animated?: boolean;
+    },
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onRemoveSticker: (packId: string, stickerId: string) => Promise<boolean>;
 };
+/** Разрешённые растровые картинки для стикеров (кроме GIF). */
+const STATIC_MIME = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/pjpeg",
+  "image/webp",
+  "image/avif",
+]);
+const STATIC_EXT = /\.(png|jpe?g|jfif|webp|avif)$/i;
 
-const MAX_STICKERS_PER_PACK = 15;
-const STORAGE_KEY = "pulse-sticker-packs";
+const PICKER_CELL = 72;
+const PICKER_PAD = 6;
+const PICKER_INNER = PICKER_CELL - PICKER_PAD * 2;
 
-// ============================================
-// Встроенные паки стикеров (большие эмодзи)
-// ============================================
-const EMOJI_STICKERS: string[][] = [
-  // Реакции
-  ["😀", "😂", "🤣", "😊", "😍", "🥰", "😎", "🤩", "😇", "🥳", "😭", "😡", "🤔", "😴", "🤯"],
-  // Жесты
-  ["👍", "👎", "👏", "🙌", "🤝", "✌️", "🤞", "👌", "🤙", "💪", "🙏", "👋", "🤚", "✋", "🖐️"],
-  // Сердца и символы
-  ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "💔", "💯", "🔥", "⭐", "✨", "💫", "⚡"],
-  // Животные
-  ["🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵"],
-];
-
-const DEFAULT_PACKS: StickerPack[] = [
-  {
-    id: "reactions",
-    name: "Реакции",
-    stickers: EMOJI_STICKERS[0].map((emoji, i) => ({
-      id: `r-${i}`,
-      url: emoji,
-      emoji,
-    })),
-  },
-  {
-    id: "gestures",
-    name: "Жесты",
-    stickers: EMOJI_STICKERS[1].map((emoji, i) => ({
-      id: `g-${i}`,
-      url: emoji,
-      emoji,
-    })),
-  },
-  {
-    id: "hearts",
-    name: "Символы",
-    stickers: EMOJI_STICKERS[2].map((emoji, i) => ({
-      id: `h-${i}`,
-      url: emoji,
-      emoji,
-    })),
-  },
-  {
-    id: "animals",
-    name: "Животные",
-    stickers: EMOJI_STICKERS[3].map((emoji, i) => ({
-      id: `a-${i}`,
-      url: emoji,
-      emoji,
-    })),
-  },
-];
-
-// ============================================
-// Утилиты для localStorage
-// ============================================
-function loadLocalPacks(): StickerPack[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const data = JSON.parse(raw) as StickerPack[];
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
+function readImageSize(file: File): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    img.src = url;
+  });
 }
 
-function saveLocalPacks(packs: StickerPack[]) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(packs));
-  } catch {
-    /* ignore */
-  }
+function readVideoSize(file: File): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      const size = { width: video.videoWidth, height: video.videoHeight };
+      URL.revokeObjectURL(url);
+      resolve(size);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    video.src = url;
+  });
 }
 
-// ============================================
-// Компонент
-// ============================================
+function isSupportedStickerFile(file: File) {
+  const mime = (file.type || "").toLowerCase().split(";")[0].trim();
+  const name = file.name.toLowerCase();
+  // Анимированные — только WebM (VP9/VP8 с альфой).
+  if (mime === "video/webm" || /\.webm$/i.test(name)) return true;
+  // Статические: PNG / JPEG / WebP / AVIF (+ jfif).
+  if (STATIC_MIME.has(mime) || STATIC_EXT.test(name)) return true;
+  return false;
+}
+
 export function StickerPicker({
-  onSelect,
-  onClose,
   open,
-  embedded = false,
+  onClose,
+  onSend,
+  packs,
+  refreshPacks,
+  onCreatePack,
+  onDeletePack,
+  onRenamePack,
+  onAddSticker,
+  onRemoveSticker,
 }: StickerPickerProps) {
-  const [packs, setPacks] = useState<StickerPack[]>(DEFAULT_PACKS);
-  const [localPacks, setLocalPacks] = useState<StickerPack[]>([]);
-  const [selectedPack, setSelectedPack] = useState<string>(DEFAULT_PACKS[0].id);
+  const [activePackId, setActivePackId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [packName, setPackName] = useState("");
+  const [packTitle, setPackTitle] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Загружаем локальные паки при открытии
   useEffect(() => {
     if (!open) return;
-    const stored = loadLocalPacks();
-    setLocalPacks(stored);
-    if (stored.length > 0 && !stored.some((p) => p.id === selectedPack)) {
-      setSelectedPack(stored[0].id);
+    void refreshPacks();
+  }, [open, refreshPacks]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (packs.length === 0) {
+      setActivePackId(null);
+      return;
     }
-  }, [open]);
+    if (!activePackId || !packs.some((p) => p.id === activePackId)) {
+      setActivePackId(packs[0].id);
+    }
+  }, [open, packs, activePackId]);
 
-  const allPacks = [...DEFAULT_PACKS, ...localPacks];
-  const currentPack = allPacks.find((p) => p.id === selectedPack);
+  const activePack = useMemo(
+    () => packs.find((p) => p.id === activePackId) ?? null,
+    [packs, activePackId],
+  );
 
-  const createPack = useCallback(() => {
-    if (!packName.trim()) return;
-    const newPack: StickerPack = {
-      id: `user-${Date.now()}`,
-      name: packName.trim().slice(0, 20),
-      stickers: [],
-    };
-    const next = [...localPacks, newPack];
-    setLocalPacks(next);
-    saveLocalPacks(next);
-    setSelectedPack(newPack.id);
-    setPackName("");
+  const handleCreatePack = useCallback(async () => {
+    const title = packTitle.trim();
+    if (!title) return;
+    const result = await onCreatePack(title);
+    if (!result.ok || !result.pack) {
+      toast.error(result.error || "Не удалось создать пак");
+      return;
+    }
+    setActivePackId(result.pack.id);
+    setPackTitle("");
     setCreating(false);
-  }, [packName, localPacks]);
+  }, [onCreatePack, packTitle]);
 
-  const deletePack = useCallback(
-    (packId: string) => {
-      if (!confirm("Удалить пак?")) return;
-      const next = localPacks.filter((p) => p.id !== packId);
-      setLocalPacks(next);
-      saveLocalPacks(next);
-      if (selectedPack === packId) {
-        setSelectedPack(DEFAULT_PACKS[0].id);
-      }
-    },
-    [localPacks, selectedPack]
-  );
-
-  const addStickerToPack = useCallback(
-    (packId: string, emoji: string) => {
-      const pack = localPacks.find((p) => p.id === packId);
-      if (!pack) return;
-      if (pack.stickers.length >= MAX_STICKERS_PER_PACK) {
-        alert(`Максимум ${MAX_STICKERS_PER_PACK} стикеров`);
+  const handlePickFiles = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const input = event.target;
+      const list = input.files ? Array.from(input.files) : [];
+      input.value = "";
+      if (!activePack || !activePack.canEdit || !list.length || uploading)
         return;
+      setUploading(true);
+      try {
+        for (const file of list) {
+          if (!isSupportedStickerFile(file)) {
+            toast.error(
+              `${file.name}: нужен PNG, JPG, WebP, AVIF или WebM`,
+            );
+            continue;
+          }
+          if (file.size > MAX_STICKER_BYTES) {
+            toast.error(`${file.name}: файл больше 6 МБ`);
+            continue;
+          }
+          const animated =
+            /\.webm$/i.test(file.name) || file.type === "video/webm";
+          const size = animated
+            ? await readVideoSize(file)
+            : await readImageSize(file);
+          const result = await onAddSticker(activePack.id, file, {
+            animated,
+            width: size?.width,
+            height: size?.height,
+          });
+          if (!result.ok) {
+            toast.error(result.error || "Не удалось добавить стикер");
+          }
+        }
+      } finally {
+        setUploading(false);
       }
-      const sticker: Sticker = {
-        id: `s-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        url: emoji,
-        emoji,
-      };
-      const next = localPacks.map((p) =>
-        p.id === packId ? { ...p, stickers: [...p.stickers, sticker] } : p
-      );
-      setLocalPacks(next);
-      saveLocalPacks(next);
     },
-    [localPacks]
+    [activePack, onAddSticker, uploading],
   );
 
-  const removeSticker = useCallback(
-    (packId: string, stickerId: string) => {
-      const next = localPacks.map((p) =>
-        p.id === packId
-          ? { ...p, stickers: p.stickers.filter((s) => s.id !== stickerId) }
-          : p
-      );
-      setLocalPacks(next);
-      saveLocalPacks(next);
-    },
-    [localPacks]
-  );
+  const handleDeletePack = useCallback(async () => {
+    if (!activePack) return;
+    if (!confirm(`Удалить пак «${activePack.title}»?`)) return;
+    const ok = await onDeletePack(activePack.id);
+    if (!ok) {
+      toast.error("Не удалось удалить пак");
+      return;
+    }
+    toast("Пак удалён");
+    setActivePackId(null);
+  }, [activePack, onDeletePack]);
 
-  const handlePick = useCallback(
-    (sticker: Sticker) => {
-      onSelect(sticker.url);
-      onClose();
-    },
-    [onSelect, onClose]
-  );
+  const handleSaveRename = useCallback(async () => {
+    if (!activePack) return;
+    const next = renameValue.trim();
+    if (!next || next === activePack.title) {
+      setRenaming(false);
+      return;
+    }
+    const ok = await onRenamePack(activePack.id, next);
+    if (!ok) {
+      toast.error("Не удалось переименовать");
+      return;
+    }
+    setRenaming(false);
+  }, [activePack, onRenamePack, renameValue]);
 
   if (!open) return null;
 
   return (
     <motion.div
-      className={`sticker-picker ${embedded ? "sticker-picker--embedded" : ""}`}
-      initial={{ opacity: 0, y: 10, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 10, scale: 0.95 }}
-      transition={{ duration: 0.2 }}
+      className="sticker-picker"
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 6 }}
+      transition={{ duration: 0.18 }}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        overflow: "hidden",
+      }}
     >
-      {/* Паки — сверху */}
-      <div className="sticker-picker__packs">
-        {allPacks.map((pack) => (
+      <div className="sticker-picker__packs" role="tablist" aria-label="Паки стикеров">
+        {packs.map((pack) => (
           <button
             key={pack.id}
             type="button"
+            role="tab"
+            aria-selected={activePackId === pack.id}
             className={`sticker-picker__pack ${
-              selectedPack === pack.id ? "is-active" : ""
+              activePackId === pack.id ? "is-active" : ""
             }`}
-            onClick={() => setSelectedPack(pack.id)}
-            title={pack.name}
+            onClick={() => {
+              setActivePackId(pack.id);
+              setRenaming(false);
+            }}
+            title={pack.title}
           >
-            {pack.stickers.length > 0 ? (
-              <span className="sticker-picker__pack-icon">
-                {pack.stickers[0].emoji || "🎨"}
-              </span>
+            {pack.coverUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={pack.coverUrl} alt="" draggable={false} />
             ) : (
-              <span className="sticker-picker__pack-icon">📦</span>
+              <IconSticker size={18} />
             )}
           </button>
         ))}
         <button
           type="button"
           className="sticker-picker__pack sticker-picker__pack--add"
-          onClick={() => setCreating(true)}
-          title="Создать пак"
+          onClick={() => {
+            setCreating((v) => !v);
+            setRenaming(false);
+          }}
+          title={creating ? "Отмена" : "Создать пак"}
+          aria-label={creating ? "Отмена" : "Создать пак"}
         >
-          <IconPlus size={18} />
+          {creating ? <IconClose size={18} /> : <IconPlus size={18} />}
         </button>
       </div>
 
-      {/* Создание пака */}
       {creating && (
         <div className="sticker-picker__create">
           <input
             type="text"
-            value={packName}
-            onChange={(e) => setPackName(e.target.value)}
+            value={packTitle}
+            onChange={(e) => setPackTitle(e.target.value)}
             placeholder="Название пака"
-            maxLength={20}
+            maxLength={40}
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === "Enter") createPack();
-              if (e.key === "Escape") setCreating(false);
+              if (e.key === "Enter") void handleCreatePack();
+              if (e.key === "Escape") {
+                setCreating(false);
+                setPackTitle("");
+              }
             }}
           />
           <button
             type="button"
-            onClick={createPack}
-            disabled={!packName.trim()}
+            onClick={() => void handleCreatePack()}
+            disabled={!packTitle.trim()}
           >
             Создать
           </button>
-          <button type="button" onClick={() => setCreating(false)}>
-            Отмена
-          </button>
         </div>
       )}
 
-      {/* Инфо о паке */}
-      {currentPack && !creating && (
-        <div className="sticker-picker__info">
-          <span className="sticker-picker__name">{currentPack.name}</span>
-          {localPacks.some((p) => p.id === currentPack.id) && (
+      {activePack && !creating && (
+        <div className="sticker-picker__head">
+          {renaming ? (
+            <input
+              className="sticker-picker__rename"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              maxLength={40}
+              autoFocus
+              onBlur={() => void handleSaveRename()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleSaveRename();
+                if (e.key === "Escape") setRenaming(false);
+              }}
+            />
+          ) : (
             <button
               type="button"
-              className="sticker-picker__delete-pack"
-              onClick={() => deletePack(currentPack.id)}
-              title="Удалить пак"
+              className="sticker-picker__title"
+              disabled={!activePack.canEdit}
+              onClick={() => {
+                if (!activePack.canEdit) return;
+                setRenameValue(activePack.title);
+                setRenaming(true);
+              }}
+              title={activePack.canEdit ? "Переименовать" : activePack.title}
             >
-              <IconTrash size={14} />
+              {activePack.title}
+              <span className="sticker-picker__count">
+                {activePack.stickerCount} стикеров
+              </span>
             </button>
           )}
+
+          <div className="sticker-picker__head-actions">
+            {activePack.canEdit && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".png,.jpg,.jpeg,.jfif,.webp,.avif,.webm,image/png,image/jpeg,image/webp,image/avif,video/webm"
+                  multiple
+                  hidden
+                  onChange={(e) => void handlePickFiles(e)}
+                />
+                <button
+                  type="button"
+                  className="sticker-picker__action"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  title={uploading ? "Загрузка…" : "Добавить стикеры"}
+                >
+                  <IconUpload size={16} />
+                  {uploading ? "…" : "Добавить"}
+                </button>
+                <button
+                  type="button"
+                  className="sticker-picker__action sticker-picker__action--danger"
+                  onClick={() => void handleDeletePack()}
+                  title="Удалить пак"
+                  aria-label="Удалить пак"
+                >
+                  <IconTrash size={16} />
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Сетка стикеров */}
-      <div className="sticker-picker__grid">
-        {currentPack?.stickers.map((sticker) => (
-          <button
-            key={sticker.id}
-            type="button"
-            className="sticker-picker__item"
-            onClick={() => handlePick(sticker)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              if (localPacks.some((p) => p.id === currentPack.id)) {
-                removeSticker(currentPack.id, sticker.id);
-              }
-            }}
-            title="Клик — отправить"
-          >
-            {sticker.emoji ? (
-              <span className="sticker-picker__emoji">{sticker.emoji}</span>
-            ) : (
-              <img src={sticker.url} alt="sticker" />
-            )}
-          </button>
-        ))}
-
-        {currentPack && currentPack.stickers.length === 0 && (
+      {/* Сетка стикеров — inline-размеры, чтобы ничего не растягивалось */}
+      <div
+        className="sticker-picker__grid"
+        style={{
+          flex: "1 1 0",
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          display: "grid",
+          gridTemplateColumns: `repeat(auto-fill, ${PICKER_CELL}px)`,
+          gridAutoRows: `${PICKER_CELL}px`,
+          gap: 6,
+          padding: "10px 12px 14px",
+          alignContent: "start",
+          justifyContent: "start",
+        }}
+      >
+        {activePack?.stickers.length ? (
+          activePack.stickers.map((sticker) => (
+            <button
+              key={sticker.id}
+              type="button"
+              className="sticker-picker__item"
+              onClick={() => onSend(activePack.id, sticker.id)}
+              title={sticker.name || "Стикер"}
+              style={{
+                position: "relative",
+                width: PICKER_CELL,
+                height: PICKER_CELL,
+                padding: PICKER_PAD,
+                border: 0,
+                borderRadius: 10,
+                background: "transparent",
+                cursor: "pointer",
+                overflow: "hidden",
+                boxSizing: "border-box",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "background 0.15s ease",
+              }}
+            >
+              {sticker.animated ? (
+                <video
+                  src={sticker.url}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  preload="metadata"
+                  aria-hidden
+                  style={{
+                    width: PICKER_INNER,
+                    height: PICKER_INNER,
+                    objectFit: "contain",
+                    objectPosition: "center",
+                    display: "block",
+                    pointerEvents: "none",
+                  }}
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={sticker.url}
+                  alt=""
+                  loading="lazy"
+                  draggable={false}
+                  style={{
+                    width: PICKER_INNER,
+                    height: PICKER_INNER,
+                    objectFit: "contain",
+                    objectPosition: "center",
+                    display: "block",
+                    pointerEvents: "none",
+                  }}
+                />
+              )}
+              {activePack.canEdit && (
+                <span
+                  className="sticker-picker__item-remove"
+                  role="button"
+                  aria-label="Удалить стикер"
+                  title="Удалить стикер"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (!confirm("Удалить этот стикер?")) return;
+                    void onRemoveSticker(activePack.id, sticker.id).then(
+                      (ok) => {
+                        if (!ok) toast.error("Не удалось удалить");
+                      },
+                    );
+                  }}
+                >
+                  <IconClose size={12} />
+                </span>
+              )}
+            </button>
+          ))
+        ) : (
           <div className="sticker-picker__empty">
-            Пак пуст. Добавьте стикеры через ПКМ по эмодзи в этом пане
-            или используйте встроенные.
+            {activePack?.canEdit
+              ? "PNG, JPG, WebP, AVIF — статические. WebM/VP9 с альфой — анимированные. GIF не поддерживается."
+              : "В паке пока нет стикеров"}
           </div>
         )}
       </div>

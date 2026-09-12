@@ -31,7 +31,7 @@ import {
 } from "@/components/chat/VoiceRecorderBar";
 import { MentionMenu } from "@/components/chat/MentionMenu";
 import { UnifiedPicker } from "@/components/chat/UnifiedPicker";
-import type { FileAttachment, PeopleUser } from "@/lib/types";
+import type { FileAttachment, PeopleUser, StickerPack } from "@/lib/types";
 import { toast } from "sonner";
 import { parseGiphyMediaUrl } from "@/lib/giphyMedia";
 
@@ -77,6 +77,23 @@ type ComposerProps = {
   onCancelEdit?: () => void;
   userId?: string;
   token?: string;
+
+  /* ─── Стикеры ─────────────────────────────────────────── */
+  stickerPacks: StickerPack[];
+  refreshStickerPacks: () => Promise<StickerPack[]>;
+  onCreateStickerPack: (
+    title: string,
+  ) => Promise<{ ok: boolean; pack?: StickerPack; error?: string }>;
+  onDeleteStickerPack: (packId: string) => Promise<boolean>;
+  onRenameStickerPack: (packId: string, title: string) => Promise<boolean>;
+  onAddSticker: (
+    packId: string,
+    file: File,
+    extra?: { emoji?: string; width?: number; height?: number; animated?: boolean },
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onRemoveSticker: (packId: string, stickerId: string) => Promise<boolean>;
+  onStickerPick?: (packId: string, stickerId: string) => void;
+  /* ─────────────────────────────────────────────────────── */
 };
 
 export function Composer({
@@ -99,6 +116,14 @@ export function Composer({
   onCancelEdit,
   userId = "",
   token = "",
+  stickerPacks,
+  refreshStickerPacks,
+  onCreateStickerPack,
+  onDeleteStickerPack,
+  onRenameStickerPack,
+  onAddSticker,
+  onRemoveSticker,
+  onStickerPick,
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<PendingFile[]>([]);
@@ -351,9 +376,7 @@ export function Composer({
     window.setTimeout(() => setSentPulse(false), 280);
   }
 
-  // ============================================
-  // Вставка эмодзи из UnifiedPicker
-  // ============================================
+  // Вставка эмодзи
   const handleEmojiInsert = useCallback(
     (emoji: string) => {
       const area = areaRef.current;
@@ -376,9 +399,7 @@ export function Composer({
     [text],
   );
 
-  // ============================================
-  // Отправка GIF из UnifiedPicker
-  // ============================================
+  // Отправка GIF
   const handleGifSend = useCallback(
     async (url: string) => {
       if (locked || sendingRef.current) return;
@@ -428,36 +449,6 @@ export function Composer({
       }
     },
     [locked, onSendFiles, onSendRemoteFile, replyTo?.id, onClearReply],
-  );
-
-  // ============================================
-  // Отправка стикера из UnifiedPicker
-  // ============================================
-  const handleStickerSend = useCallback(
-    async (url: string) => {
-      if (locked || sendingRef.current) return;
-      sendingRef.current = true;
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`Ошибка ${res.status}`);
-        const blob = await res.blob();
-        const ext = url.split(".").pop()?.split("?")[0] || "png";
-        const file = new File([blob], `sticker-${Date.now()}.${ext}`, {
-          type: blob.type || "image/png",
-        });
-        await onSendFiles([file], {
-          caption: "",
-          replyToId: replyTo?.id,
-        });
-        onClearReply?.();
-        pulseSend();
-      } catch {
-        toast.error("Не удалось отправить стикер");
-      } finally {
-        sendingRef.current = false;
-      }
-    },
-    [locked, onSendFiles, replyTo?.id, onClearReply],
   );
 
   async function submit() {
@@ -957,9 +948,19 @@ export function Composer({
             }}
             onEmojiPick={handleEmojiInsert}
             onGifPick={handleGifSend}
-            onStickerPick={handleStickerSend}
+            onStickerPick={(packId, stickerId) => {
+              onStickerPick?.(packId, stickerId);
+              setPickerOpen(false);
+            }}
             userId={userId}
             token={token}
+            stickerPacks={stickerPacks}
+            refreshStickerPacks={refreshStickerPacks}
+            onCreateStickerPack={onCreateStickerPack}
+            onDeleteStickerPack={onDeleteStickerPack}
+            onRenameStickerPack={onRenameStickerPack}
+            onAddSticker={onAddSticker}
+            onRemoveSticker={onRemoveSticker}
           />
 
           {text.length > 1600 && (

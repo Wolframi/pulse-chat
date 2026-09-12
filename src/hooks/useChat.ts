@@ -10,6 +10,7 @@ import type {
   GroupVisibility,
   PeopleUser,
   PublicGroupHit,
+  StickerPack,
   RoomMediaItem,
   Session,
   TypingEvent,
@@ -30,6 +31,7 @@ import {
   validateAvatarFile,
   validateFile,
 } from "@/lib/files";
+
 import {
   playMessageBeep,
   showDesktopNotify,
@@ -62,11 +64,17 @@ export function useChat() {
   const [session, setSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [online, setOnline] = useState<string[]>([]);
+  
   const [chats, setChats] = useState<ChatInfo[]>([]);
   const [people, setPeople] = useState<PeopleUser[]>([]);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [peerReadAt, setPeerReadAt] = useState<number | null>(null);
   const [chatMembers, setChatMembers] = useState<PeopleUser[]>([]);
+  const [stickerPacks, setStickerPacks] = useState<StickerPack[]>([]);
+  const stickerPacksRef = useRef<StickerPack[]>([]);
+  useEffect(() => {
+    stickerPacksRef.current = stickerPacks;
+  }, [stickerPacks]);
   const [authError, setAuthError] = useState<string | null>(null);
   const [sidebarError, setSidebarError] = useState<string | null>(null);
   const [composerError, setComposerError] = useState<string | null>(null);
@@ -112,6 +120,30 @@ export function useChat() {
       /* ignore */
     }
   }, []);
+  // Загрузка стикер-паков после логина и после реконнекта сокета.
+  useEffect(() => {
+    if (!authReady || !account?.userId) return;
+    const s = socketRef.current;
+    if (!s) return;
+
+    const loadPacks = () => {
+      s.emit(
+        "sticker:list",
+        {},
+        (result: { ok?: boolean; packs?: StickerPack[] }) => {
+          if (result?.ok && Array.isArray(result.packs)) {
+            setStickerPacks(result.packs);
+          }
+        },
+      );
+    };
+
+    loadPacks();
+    s.on("connect", loadPacks);
+    return () => {
+      s.off("connect", loadPacks);
+    };
+  }, [authReady, account?.userId]);
 
   const authEpochRef = useRef(0);
 
@@ -338,6 +370,7 @@ export function useChat() {
       setTypingUsers([]);
       setAuthError("Сессия завершена. Войдите снова.");
       setAuthReady(true);
+      setStickerPacks([]);
     });
 
     socket.on(
@@ -653,6 +686,7 @@ export function useChat() {
     setSidebarError(null);
     setComposerError(null);
     setProfileError(null);
+    setStickerPacks([]);
   }, [persistAccount]);
 
   const updateProfile = useCallback(
@@ -2000,6 +2034,232 @@ export function useChat() {
       );
     });
   }, []);
+const refreshStickerPacks = useCallback(() => {
+  return new Promise<StickerPack[]>((resolve) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) { resolve([]); return; }
+    socket.emit("sticker:list", {}, (result: { ok?: boolean; packs?: StickerPack[] }) => {
+      const packs = result?.ok && Array.isArray(result.packs) ? result.packs : [];
+      setStickerPacks(packs);
+      resolve(packs);
+    });
+  });
+}, []);
+
+const fetchStickerPack = useCallback((packId: string) => {
+  return new Promise<StickerPack | null>((resolve) => {
+    const socket = socketRef.current;
+    if (!socket?.connected || !packId) { resolve(null); return; }
+    socket.emit(
+      "sticker:pack:get",
+      { packId },
+      (result: { ok?: boolean; pack?: StickerPack; error?: string }) => {
+        if (!result?.ok || !result.pack) { resolve(null); return; }
+        resolve(result.pack);
+      },
+    );
+  });
+}, []);
+
+const createStickerPack = useCallback((title: string) => {
+  return new Promise<{ ok: boolean; pack?: StickerPack; error?: string }>((resolve) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) { resolve({ ok: false, error: "Нет соединения" }); return; }
+    socket.emit(
+      "sticker:pack:create",
+      { title },
+      (result: { ok?: boolean; pack?: StickerPack; error?: string }) => {
+        if (!result?.ok || !result.pack) {
+          resolve({ ok: false, error: result?.error || "Не удалось создать пак" });
+          return;
+        }
+        setStickerPacks((prev) => {
+          const next = [result.pack!, ...prev.filter((p) => p.id !== result.pack!.id)];
+          return next;
+        });
+        resolve({ ok: true, pack: result.pack });
+      },
+    );
+  });
+}, []);
+
+const renameStickerPack = useCallback((packId: string, title: string) => {
+  return new Promise<boolean>((resolve) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) { resolve(false); return; }
+    socket.emit(
+      "sticker:pack:update",
+      { packId, title },
+      (result: { ok?: boolean; pack?: StickerPack; error?: string }) => {
+        if (!result?.ok || !result.pack) { resolve(false); return; }
+        setStickerPacks((prev) =>
+          prev.map((p) => (p.id === packId ? result.pack! : p)),
+        );
+        resolve(true);
+      },
+    );
+  });
+}, []);
+
+const deleteStickerPack = useCallback((packId: string) => {
+  return new Promise<boolean>((resolve) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) { resolve(false); return; }
+    socket.emit(
+      "sticker:pack:delete",
+      { packId },
+      (result: { ok?: boolean; error?: string }) => {
+        if (!result?.ok) { resolve(false); return; }
+        setStickerPacks((prev) => prev.filter((p) => p.id !== packId));
+        resolve(true);
+      },
+    );
+  });
+}, []);
+
+const uploadStickerFile = useCallback(
+  async (
+    packId: string,
+    file: File,
+    extra?: { emoji?: string; width?: number; height?: number; animated?: boolean },
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (!account?.token) return { ok: false, error: "Нужен вход" };
+    try {
+      const uploaded = await uploadFileWithRetry(file, account.token, {
+        retries: 2,
+      });
+      return await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        const socket = socketRef.current;
+        if (!socket?.connected) { resolve({ ok: false, error: "Нет соединения" }); return; }
+        socket.emit(
+          "sticker:pack:add",
+          {
+            packId,
+            url: uploaded.url,
+            name: file.name,
+            emoji: extra?.emoji,
+            animated: extra?.animated ?? /\.webm$/i.test(file.name),
+            width: extra?.width,
+            height: extra?.height,
+            size: uploaded.size || file.size,
+          },
+          (result: { ok?: boolean; error?: string }) => {
+            if (!result?.ok) {
+              resolve({ ok: false, error: result?.error || "Не удалось добавить стикер" });
+              return;
+            }
+            // Refresh the pack in-place
+            void fetchStickerPack(packId).then((pack) => {
+              if (!pack) return;
+              setStickerPacks((prev) =>
+                prev.map((p) => (p.id === packId ? pack : p)),
+              );
+            });
+            resolve({ ok: true });
+          },
+        );
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : "Не удалось загрузить",
+      };
+    }
+  },
+  [account?.token, fetchStickerPack],
+);
+
+const removeStickerFromPack = useCallback((packId: string, stickerId: string) => {
+  return new Promise<boolean>((resolve) => {
+    const socket = socketRef.current;
+    if (!socket?.connected) { resolve(false); return; }
+    socket.emit(
+      "sticker:pack:remove",
+      { packId, stickerId },
+      (result: { ok?: boolean; error?: string }) => {
+        if (!result?.ok) { resolve(false); return; }
+        setStickerPacks((prev) =>
+          prev.map((p) =>
+            p.id === packId
+              ? { ...p, stickers: p.stickers.filter((s) => s.id !== stickerId), stickerCount: p.stickerCount - 1 }
+              : p,
+          ),
+        );
+        resolve(true);
+      },
+    );
+  });
+}, []);
+
+  const installStickerPack = useCallback((packId: string) => {
+    return new Promise<boolean>((resolve) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) { resolve(false); return; }
+      socket.emit(
+        "sticker:pack:install",
+        { packId },
+        async (result: { ok?: boolean; error?: string }) => {
+          if (!result?.ok) { resolve(false); return; }
+          await refreshStickerPacks();
+          resolve(true);
+        },
+      );
+    });
+  }, [refreshStickerPacks]);
+
+  const uninstallStickerPack = useCallback((packId: string) => {
+    return new Promise<boolean>((resolve) => {
+      const socket = socketRef.current;
+      if (!socket?.connected) { resolve(false); return; }
+      socket.emit(
+        "sticker:pack:uninstall",
+        { packId },
+        (result: { ok?: boolean; error?: string }) => {
+          if (!result?.ok) { resolve(false); return; }
+          setStickerPacks((prev) => prev.filter((p) => p.id !== packId));
+          resolve(true);
+        },
+      );
+    });
+  }, []);
+
+  const sendSticker = useCallback(
+    (packId: string, stickerId: string, replyToId?: string) => {
+      const socket = socketRef.current;
+      const session = sessionRef.current;
+      if (!socket?.connected || !session?.room) {
+        setComposerError("Нет соединения");
+        return false;
+      }
+      if (
+        historyLoading ||
+        !expectedRoomRef.current ||
+        expectedRoomRef.current !== session.room
+      ) {
+        setComposerError("Чат ещё открывается — подождите");
+        return false;
+      }
+      setComposerError(null);
+      socket.emit(
+        "message:sticker",
+        { chatId: session.room, packId, stickerId, replyToId },
+        (ack: { ok?: boolean; message?: ChatMessage; error?: string }) => {
+          if (!ack?.ok) {
+            setComposerError(ack?.error || "Не удалось отправить стикер");
+            return;
+          }
+          if (ack.message) {
+            setMessages((prev) => {
+              if (prev.some((item) => item.id === ack.message!.id)) return prev;
+              return [...prev, ack.message!];
+            });
+          }
+        },
+      );
+      return true;
+    },
+    [historyLoading],
+  );
 
   return {
     socket,
@@ -2067,6 +2327,17 @@ export function useChat() {
     setTyping,
     clearComposerError,
     clearProfileError,
+    stickerPacks,
+    refreshStickerPacks,
+    fetchStickerPack,
+    createStickerPack,
+    renameStickerPack,
+    deleteStickerPack,
+    uploadStickerFile,
+    removeStickerFromPack,
+    installStickerPack,
+    uninstallStickerPack,
+    sendSticker,
   };
 }
 

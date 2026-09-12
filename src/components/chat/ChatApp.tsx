@@ -56,6 +56,7 @@ import { flushPendingBootReload } from "@/lib/liveReload";
 import { peekLastRoom, peekMediaResume, saveLastRoom } from "@/lib/mediaResume";
 import { getSavedRingtone, prefetchRingtone } from "@/lib/ringtone";
 import { Toaster, toast } from "sonner";
+import { StickerPackViewer } from "@/components/chat/StickerPackViewer";
 
 type SidebarPanel = RailFocus;
 
@@ -126,6 +127,17 @@ export function ChatApp() {
     setTyping,
     clearComposerError,
     clearProfileError,
+    stickerPacks,
+    refreshStickerPacks,
+    fetchStickerPack,
+    createStickerPack,
+    renameStickerPack,
+    deleteStickerPack,
+    uploadStickerFile,
+    removeStickerFromPack,
+    installStickerPack,
+    uninstallStickerPack,
+    sendSticker,
   } = useChat();
 
   const {
@@ -216,6 +228,9 @@ export function ChatApp() {
     name: string;
     kind: "image" | "video";
   } | null>(null);
+  const [stickerViewer, setStickerViewer] = useState<
+    { packId: string; stickerId: string | null } | null
+  >(null);
   const [flashOnline, setFlashOnline] = useState(false);
   const [roomSearchOpen, setRoomSearchOpen] = useState(false);
   const [roomSearch, setRoomSearch] = useState("");
@@ -282,7 +297,20 @@ export function ChatApp() {
     },
     [chats, openChat],
   );
+  const handleOpenStickerPack = useCallback((packId: string, stickerId: string) => {
+    setStickerViewer({ packId, stickerId });
+  }, []);
 
+  const handleSendSticker = useCallback(
+    (packId: string, stickerId: string) => {
+      const ok = sendSticker(packId, stickerId, replyTo?.id);
+      if (ok) {
+        setReplyDraft(null);
+        setStickerViewer(null);
+      }
+    },
+    [replyTo?.id, sendSticker, setReplyDraft],
+  );
   const triedResumeKeyRef = useRef<string | null>(null);
   const restoreRoomRef = useRef<string | null>(null);
   const restoreTriesRef = useRef(0);
@@ -1218,6 +1246,16 @@ export function ChatApp() {
         item={lightbox}
         onClose={() => setLightbox(null)}
       />
+      
+      <StickerPackViewer
+        open={Boolean(stickerViewer)}
+        packId={stickerViewer?.packId ?? null}
+        focusStickerId={stickerViewer?.stickerId ?? null}
+        fetchPack={fetchStickerPack}
+        onSend={handleSendSticker}
+        onInstall={installStickerPack}
+        onClose={() => setStickerViewer(null)}
+      />
 
       <ChatInfoPanel
         open={chatInfoOpen && showChatInfo}
@@ -1983,6 +2021,7 @@ export function ChatApp() {
                       loading={historyLoading}
                       unreadAtOpen={unreadAtOpen}
                       peerReadAt={peerReadAt}
+                      onOpenStickerPack={handleOpenStickerPack}
                       onReply={handleReply}
                       onOpenImage={handleOpenImage}
                       onReact={handleReact}
@@ -2034,11 +2073,22 @@ export function ChatApp() {
                     replyTo={replyTo}
                     onClearReply={() => setReplyDraft(null)}
                     focusToken={session.room}
+                    userId={account.userId}
+                    token={account.token}
+                    stickerPacks={stickerPacks}
+                    refreshStickerPacks={refreshStickerPacks}
+                    onCreateStickerPack={createStickerPack}
+                    onDeleteStickerPack={deleteStickerPack}
+                    onRenameStickerPack={renameStickerPack}
+                    onAddSticker={uploadStickerFile}
+                    onRemoveSticker={removeStickerFromPack}
+                    onStickerPick={handleSendSticker}
                     mentionMembers={chatMembers}
                     editingText={editingMessage?.text || null}
                     onCancelEdit={() => setEditingMessage(null)}
                     onAttachmentsCleared={() =>
                       toast("Вложения сброшены при смене чата")
+                    
                     }
                   />
 
