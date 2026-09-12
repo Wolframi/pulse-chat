@@ -29,6 +29,8 @@ type MessageListProps = {
   onForward?: (message: ChatMessage) => void;
   onInviteRespond?: (messageId: string, accept: boolean) => void;
   onTranscribe?: (messageId: string) => void;
+  /** Клик по стикеру → открыть пак, из которого он был отправлен. */
+  onOpenStickerPack?: (packId: string, stickerId: string) => void;
   onMarkRead?: () => void;
   peerReadAt?: number | null;
   canModerate?: boolean;
@@ -95,6 +97,7 @@ export function MessageList({
   onForward,
   onInviteRespond,
   onTranscribe,
+  onOpenStickerPack,
   onMarkRead,
   peerReadAt = null,
   canModerate = false,
@@ -277,13 +280,10 @@ export function MessageList({
 
     if (searchQuery.trim() || activeMatchId) return;
 
-    // Only auto-scroll when the thread actually grew / got a new tail.
-    // Edits, reactions, and status updates must not yank the viewport.
     if (grewBy === 0 && !tailChanged) return;
 
     const newestIsMine = Boolean(newest && isMine(newest, account));
 
-    // Own sends always pin to bottom; others only if already near bottom.
     if (!nearBottomRef.current && !newestIsMine) {
       if (grewBy > 0) {
         setPendingNew((count) => count + grewBy);
@@ -403,6 +403,7 @@ export function MessageList({
                     onForward={onForward}
                     onInviteRespond={onInviteRespond}
                     onTranscribe={onTranscribe}
+                    onOpenStickerPack={onOpenStickerPack}
                     canEdit={mine}
                     canForward
                     canDelete={
@@ -410,6 +411,7 @@ export function MessageList({
                       message.kind !== "system" &&
                       message.kind !== "call" &&
                       message.kind !== "invite" &&
+                      message.kind !== "sticker" &&
                       message.status !== "pending" &&
                       message.status !== "failed"
                     }

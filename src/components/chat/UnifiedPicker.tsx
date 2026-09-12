@@ -3,9 +3,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import dynamic from "next/dynamic";
-import { IconSmile, IconGif, IconSticker } from "@/lib/icons";
+import { IconSmile } from "@/lib/icons";
 import { GifPicker } from "@/components/chat/GifPicker";
 import { StickerPicker } from "@/components/chat/StickerPicker";
+import type { StickerPack } from "@/lib/types";
 
 const EmojiPanel = dynamic(
   () => import("@/components/chat/EmojiPanel").then((mod) => mod.EmojiPanel),
@@ -19,9 +20,20 @@ type UnifiedPickerProps = {
   onOpenChange: (open: boolean) => void;
   onEmojiPick: (emoji: string) => void;
   onGifPick: (url: string) => void;
-  onStickerPick: (url: string) => void;
+  onStickerPick: (packId: string, stickerId: string) => void;
   userId?: string;
   token?: string;
+  stickerPacks: StickerPack[];
+  refreshStickerPacks: () => Promise<StickerPack[]>;
+  onCreateStickerPack: (title: string) => Promise<{ ok: boolean; pack?: StickerPack; error?: string }>;
+  onDeleteStickerPack: (packId: string) => Promise<boolean>;
+  onRenameStickerPack: (packId: string, title: string) => Promise<boolean>;
+  onAddSticker: (
+    packId: string,
+    file: File,
+    extra?: { emoji?: string; width?: number; height?: number; animated?: boolean },
+  ) => Promise<{ ok: boolean; error?: string }>;
+  onRemoveSticker: (packId: string, stickerId: string) => Promise<boolean>;
 };
 
 export function UnifiedPicker({
@@ -32,6 +44,13 @@ export function UnifiedPicker({
   onStickerPick,
   userId = "",
   token = "",
+  stickerPacks,
+  refreshStickerPacks,
+  onCreateStickerPack,
+  onDeleteStickerPack,
+  onRenameStickerPack,
+  onAddSticker,
+  onRemoveSticker,
 }: UnifiedPickerProps) {
   const [tab, setTab] = useState<PickerTab>("emoji");
   const rootRef = useRef<HTMLDivElement>(null);
@@ -65,7 +84,7 @@ export function UnifiedPicker({
     (emoji: string) => {
       onEmojiPick(emoji);
     },
-    [onEmojiPick]
+    [onEmojiPick],
   );
 
   const handleGifPick = useCallback(
@@ -73,15 +92,15 @@ export function UnifiedPicker({
       onGifPick(url);
       onOpenChange(false);
     },
-    [onGifPick, onOpenChange]
+    [onGifPick, onOpenChange],
   );
 
-  const handleStickerPick = useCallback(
-    (url: string) => {
-      onStickerPick(url);
+  const handleStickerSend = useCallback(
+    (packId: string, stickerId: string) => {
+      onStickerPick(packId, stickerId);
       onOpenChange(false);
     },
-    [onStickerPick, onOpenChange]
+    [onStickerPick, onOpenChange],
   );
 
   return (
@@ -107,7 +126,6 @@ export function UnifiedPicker({
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
             transition={{ duration: 0.2 }}
           >
-            {/* Табы */}
             <div className="unified-picker__tabs" role="tablist">
               <button
                 type="button"
@@ -138,7 +156,6 @@ export function UnifiedPicker({
               </button>
             </div>
 
-            {/* Контент */}
             <div className="unified-picker__content">
               {tab === "emoji" && (
                 <div className="unified-picker__pane unified-picker__pane--emoji">
@@ -158,10 +175,15 @@ export function UnifiedPicker({
                   {userId && token ? (
                     <StickerPicker
                       open={true}
-                      onSelect={handleStickerPick}
                       onClose={() => onOpenChange(false)}
-                      userId={userId}
-                      token={token}
+                      onSend={handleStickerSend}
+                      packs={stickerPacks}
+                      refreshPacks={refreshStickerPacks}
+                      onCreatePack={onCreateStickerPack}
+                      onDeletePack={onDeleteStickerPack}
+                      onRenamePack={onRenameStickerPack}
+                      onAddSticker={onAddSticker}
+                      onRemoveSticker={onRemoveSticker}
                     />
                   ) : (
                     <div className="unified-picker__empty">

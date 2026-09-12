@@ -469,3 +469,25 @@ export async function runPool<T, R>(
   await Promise.all(Array.from({ length: workers }, () => worker()));
   return out;
 }
+
+
+/** Sticker attachments (WebP/PNG static or WebM/VP9 animated). */
+export function isStickerMedia(file?: {
+  mime?: string | null;
+  name?: string | null;
+} | null): "animated" | "static" | null {
+  if (!file) return null;
+  const name = String(file.name || "").toLowerCase();
+  const mime = String(file.mime || "").split(";")[0].trim().toLowerCase();
+  if (mime === "video/webm" || /\.webm$/i.test(name)) return "animated";
+  if (
+    mime === "image/webp" ||
+    mime === "image/png" ||
+    /\.(webp|png)$/i.test(name)
+  ) {
+    return "static";
+  }
+  return null;
+}
+
+export const MAX_STICKER_BYTES = 6 * 1024 * 1024;

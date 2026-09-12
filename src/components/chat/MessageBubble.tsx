@@ -66,6 +66,8 @@ type MessageBubbleProps = {
   onForward?: (message: ChatMessage) => void;
   onInviteRespond?: (messageId: string, accept: boolean) => void;
   onTranscribe?: (messageId: string) => void;
+  /** Клик по стикеру — открыть пак, из которого он отправлен. */
+  onOpenStickerPack?: (packId: string, stickerId: string) => void;
   canDelete?: boolean;
   canEdit?: boolean;
   canForward?: boolean;
@@ -385,6 +387,7 @@ function MessageBubbleInner({
   onForward,
   onInviteRespond,
   onTranscribe,
+  onOpenStickerPack,
   canDelete = false,
   canEdit = false,
   canForward = false,
@@ -476,6 +479,109 @@ function MessageBubbleInner({
   }
 
   const author = resolveAuthor(message, peopleById);
+
+  // ─── Стикер ──────────────────────────────────────────────────────────
+  if (message.kind === "sticker" && message.sticker) {
+    const sticker = message.sticker;
+    const stickerClassName = `bubble-row bubble-row--plaque bubble-row--sticker ${
+      mine ? "bubble-row--mine" : ""
+    } ${showMeta ? "" : "bubble-row--compact"}`;
+    const stickerInner = (
+      <>
+        {showMeta ? (
+          <Avatar name={author.name} src={author.avatarUrl} size="md" />
+        ) : (
+          <span className="bubble-row__spacer" aria-hidden />
+        )}
+        <button
+          type="button"
+          className="sticker-bubble"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenStickerPack?.(sticker.packId, sticker.stickerId);
+          }}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            onReply?.(message);
+          }}
+          title="Нажмите, чтобы открыть пак"
+          aria-label="Открыть пак стикеров"
+          style={{
+            position: "relative",
+            display: "block",
+            width: 140,
+            height: 140,
+            maxWidth: "min(60vw, 220px)",
+            maxHeight: "min(60vw, 220px)",
+            padding: 0,
+            border: 0,
+            background: "transparent",
+            cursor: "pointer",
+            flex: "0 0 auto",
+          }}
+        >
+          {sticker.animated ? (
+            <video
+              src={sticker.url}
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="metadata"
+              draggable={false}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                objectPosition: "center",
+                display: "block",
+                pointerEvents: "none",
+              }}
+            />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={sticker.url}
+              alt="Стикер"
+              draggable={false}
+              loading="lazy"
+              decoding="async"
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                objectPosition: "center",
+                display: "block",
+                pointerEvents: "none",
+              }}
+            />
+          )}
+        </button>
+      </>
+    );
+
+    if (!animate) {
+      return (
+        <article id={`msg-${message.id}`} className={stickerClassName}>
+          {stickerInner}
+        </article>
+      );
+    }
+
+    return (
+      <motion.article
+        id={`msg-${message.id}`}
+        className={stickerClassName}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+      >
+        {stickerInner}
+      </motion.article>
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
   const attachments = messageAttachments(message);
   const audioMsg = attachments.some((file) => isAudioAttachment(file));
   const mediaMsg = attachments.some((file) => isMediaAttachment(file));

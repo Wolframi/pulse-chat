@@ -66,6 +66,19 @@ import {
   type ChatMeta,
 } from "./src/server/chats";
 import {
+  addSticker as addStickerToPack,
+  canSendSticker,
+  createPack as createStickerPack,
+  deletePack as deleteStickerPack,
+  findSticker,
+  getPack as getStickerPack,
+  installPack as installStickerPack,
+  listPacksForUser,
+  removeSticker as removeStickerFromPack,
+  uninstallPack as uninstallStickerPack,
+  updatePackTitle,
+} from "./src/server/stickers";
+import {
   handleUpload,
   tryServeUpload,
   uploadPathFromUrl,
@@ -342,7 +355,7 @@ type ChatMessage = {
   createdAt: number;
   editedAt?: number;
   pinned?: boolean;
-  kind?: "text" | "system" | "file" | "call" | "invite";
+  kind?: "text" | "system" | "file" | "call" | "invite" | "sticker";
   file?: {
     url: string;
     name: string;
@@ -364,6 +377,14 @@ type ChatMessage = {
     groupId: string;
     groupTitle: string;
     status: "pending" | "accepted" | "declined" | "expired";
+  };
+  sticker?: {
+    packId: string;
+    stickerId: string;
+    url: string;
+    animated?: boolean;
+    width?: number;
+    height?: number;
   };
   reactions?: MessageReaction[];
   transcription?: string;
@@ -552,10 +573,20 @@ function writeMessagesSnapshot() {
   const payload: Record<string, ChatMessage[]> = {};
   for (const [chatId, list] of chatMessages) {
     payload[chatId] = list.map((message) => {
-      if (!message.file?.url) return message;
+      let next: ChatMessage = message;
+      if (message.sticker?.url) {
+        next = {
+          ...next,
+          sticker: {
+            ...message.sticker,
+            url: bareUploadUrl(message.sticker.url),
+          },
+        };
+      }
+      if (!next.file?.url) return next;
       return {
-        ...message,
-        file: { ...message.file, url: bareUploadUrl(message.file.url) },
+        ...next,
+        file: { ...next.file, url: bareUploadUrl(next.file.url) },
       };
     });
   }
@@ -625,12 +656,22 @@ function loadPersistedState() {
         chatMessages.set(
           chatId,
           list.map((message) => {
-            if (!message.file?.url) return message;
+            let next: ChatMessage = message;
+            if (message.sticker?.url) {
+              next = {
+                ...next,
+                sticker: {
+                  ...message.sticker,
+                  url: bareUploadUrl(message.sticker.url),
+                },
+              };
+            }
+            if (!next.file?.url) return next;
             return {
-              ...message,
+              ...next,
               file: {
-                ...message.file,
-                url: bareUploadUrl(message.file.url),
+                ...next.file,
+                url: bareUploadUrl(next.file.url),
               },
             };
           }),
@@ -863,7 +904,9 @@ function resolveReply(
   const text =
     source.kind === "file"
       ? `Файл: ${source.file?.name || source.text}`
-      : source.text;
+      : source.kind === "sticker"
+        ? "Стикер"
+        : source.text;
   return {
     id: source.id,
     author: source.author,
@@ -1140,14 +1183,24 @@ function publicAccount(account: AuthAccount): AuthAccount {
 }
 
 function publicMessage(message: ChatMessage): ChatMessage {
-  const attachments = messageAttachments(message);
-  if (!attachments.length) return message;
+  let next = message;
+  if (message.sticker?.url) {
+    next = {
+      ...next,
+      sticker: {
+        ...message.sticker,
+        url: signUploadUrl(bareUploadUrl(message.sticker.url)),
+      },
+    };
+  }
+  const attachments = messageAttachments(next);
+  if (!attachments.length) return next;
   const signed = attachments.map((file) => ({
     ...file,
     url: signUploadUrl(bareUploadUrl(file.url)),
   }));
   return {
-    ...message,
+    ...next,
     file: signed[0],
     files: signed.length > 1 ? signed : undefined,
   };
@@ -2999,6 +3052,215 @@ app.prepare().then(() => {
       },
     );
 
+  socket.on("sticker:list", (_payload: unknown, ack?: (r: { ok: boolean; packs?: unknown[] }) => void) => {
+    const account = requireAccount(socket);
+    if (!account) { ack?.({ ok: false }); return; }
+    ack?.({ ok: true, packs: listPacksForUser(account.userId) });
+  });
+
+  socket.on(
+    "sticker:pack:get",
+    (
+      payload: { packId?: string },
+      ack?: (r: { ok: boolean; pack?: unknown; error?: string }) => void,
+    ) => {
+      const account = requireAccount(socket);
+      if (!account) { ack?.({ ok: false, error: "Нужен вход" }); return; }
+      const pack = getStickerPack(String(payload?.packId || ""), account.userId);
+      if (!pack) { ack?.({ ok: false, error: "Пак не найден" }); return; }
+      ack?.({ ok: true, pack });
+    },
+  );
+
+  socket.on(
+    "sticker:pack:create",
+    (
+      payload: { title?: string },
+      ack?: (r: { ok: boolean; pack?: unknown; error?: string }) => void,
+    ) => {
+      const account = requireAccount(socket);
+      if (!account) { ack?.({ ok: false, error: "Нужен вход" }); return; }
+      if (!rateLimit(`sticker-pack:${account.userId}`, 20, 60_000)) {
+        ack?.({ ok: false, error: "Слишком часто" }); return;
+      }
+      const result = createStickerPack(account.userId, String(payload?.title || ""));
+      if (!result.ok) { ack?.({ ok: false, error: result.error }); return; }
+      ack?.({ ok: true, pack: result.pack });
+    },
+  );
+
+  socket.on(
+    "sticker:pack:update",
+    (
+      payload: { packId?: string; title?: string },
+      ack?: (r: { ok: boolean; pack?: unknown; error?: string }) => void,
+    ) => {
+      const account = requireAccount(socket);
+      if (!account) { ack?.({ ok: false, error: "Нужен вход" }); return; }
+      const result = updatePackTitle(
+        String(payload?.packId || ""),
+        account.userId,
+        String(payload?.title || ""),
+      );
+      if (!result.ok) { ack?.({ ok: false, error: result.error }); return; }
+      ack?.({ ok: true, pack: result.pack });
+    },
+  );
+
+  socket.on(
+    "sticker:pack:delete",
+    (
+      payload: { packId?: string },
+      ack?: (r: { ok: boolean; error?: string }) => void,
+    ) => {
+      const account = requireAccount(socket);
+      if (!account) { ack?.({ ok: false, error: "Нужен вход" }); return; }
+      const result = deleteStickerPack(
+        String(payload?.packId || ""),
+        account.userId,
+      );
+      if (!result.ok) { ack?.({ ok: false, error: result.error }); return; }
+      ack?.({ ok: true });
+    },
+  );
+
+  socket.on(
+    "sticker:pack:add",
+    (
+      payload: {
+        packId?: string;
+        url?: string;
+        name?: string;
+        emoji?: string;
+        animated?: boolean;
+        width?: number;
+        height?: number;
+        size?: number;
+      },
+      ack?: (r: { ok: boolean; sticker?: unknown; error?: string }) => void,
+    ) => {
+      const account = requireAccount(socket);
+      if (!account) { ack?.({ ok: false, error: "Нужен вход" }); return; }
+      if (!rateLimit(`sticker-add:${account.userId}`, 60, 60_000)) {
+        ack?.({ ok: false, error: "Слишком часто" }); return;
+      }
+      const result = addStickerToPack(String(payload?.packId || ""), account.userId, {
+        url: String(payload?.url || ""),
+        name: payload?.name,
+        emoji: payload?.emoji,
+        animated: payload?.animated,
+        width: payload?.width,
+        height: payload?.height,
+        size: Number(payload?.size) || 0,
+      });
+      if (!result.ok) { ack?.({ ok: false, error: result.error }); return; }
+      ack?.({ ok: true, sticker: result.sticker });
+    },
+  );
+
+  socket.on(
+    "sticker:pack:remove",
+    (
+      payload: { packId?: string; stickerId?: string },
+      ack?: (r: { ok: boolean; error?: string }) => void,
+    ) => {
+      const account = requireAccount(socket);
+      if (!account) { ack?.({ ok: false, error: "Нужен вход" }); return; }
+      const result = removeStickerFromPack(
+        String(payload?.packId || ""),
+        account.userId,
+        String(payload?.stickerId || ""),
+      );
+      if (!result.ok) { ack?.({ ok: false, error: result.error }); return; }
+      ack?.({ ok: true });
+    },
+  );
+
+  socket.on(
+  "sticker:pack:install",
+    (
+      payload: { packId?: string },
+      ack?: (r: { ok: boolean; already?: boolean; error?: string }) => void,
+    ) => {
+      const account = requireAccount(socket);
+      if (!account) {
+        ack?.({ ok: false, error: "Нужен вход" });
+        return;
+      }
+
+      // Жёсткий cast снимает любые расхождения типов между файлами.
+      const result = installStickerPack(
+        account.userId,
+        String(payload?.packId || ""),
+      ) as { ok: boolean; already?: boolean; error?: string };
+
+      if (!result.ok) {
+        ack?.({ ok: false, error: result.error || "Не удалось добавить пак" });
+        return;
+      }
+      ack?.({ ok: true, already: Boolean(result.already) });
+    },
+  );
+
+  socket.on(
+    "message:sticker",
+    (
+      payload: {
+        chatId?: string;
+        packId?: string;
+        stickerId?: string;
+        replyToId?: string;
+      },
+      ack?: (result: { ok: boolean; message?: ChatMessage; error?: string }) => void,
+    ) => {
+      const presence = usersBySocket.get(socket.id);
+      const account = requireAccount(socket);
+      if (!account) { ack?.({ ok: false, error: "Нужен вход" }); return; }
+      if (!rateLimit(`msg:${account.userId}`, 60, 60_000)) {
+        ack?.({ ok: false, error: "Слишком много сообщений" }); return;
+      }
+      const chatId = String(payload?.chatId || presence?.room || "");
+      if (!chatId || !presence?.room || presence.room !== chatId) {
+        ack?.({ ok: false, error: "Нет активного чата" }); return;
+      }
+      const chat = getChat(chatId);
+      if (!chat || !canAccessChat(chat, account.userId)) {
+        ack?.({ ok: false, error: "Нет доступа" }); return;
+      }
+      const packId = String(payload?.packId || "");
+      const stickerId = String(payload?.stickerId || "");
+      if (!packId || !stickerId) {
+        ack?.({ ok: false, error: "Стикер не найден" }); return;
+      }
+      if (!canSendSticker(account.userId, packId)) {
+        ack?.({ ok: false, error: "Сначала добавьте пак" }); return;
+      }
+      const found = findSticker(packId, stickerId);
+      if (!found) { ack?.({ ok: false, error: "Стикер не найден" }); return; }
+
+      const message: ChatMessage = {
+        id: randomUUID(),
+        room: chatId,
+        author: labelOf(account),
+        authorId: account.userId,
+        text: "Стикер",
+        createdAt: Date.now(),
+        kind: "sticker",
+        sticker: {
+          packId,
+          stickerId,
+          url: bareUploadUrl(found.sticker.url),
+          animated: Boolean(found.sticker.animated),
+          width: found.sticker.width,
+          height: found.sticker.height,
+        },
+        replyTo: resolveReply(chatId, payload?.replyToId),
+      };
+      pushMessage(io, chat, message);
+      ack?.({ ok: true, message: publicMessage(message) });
+    },
+  );
+
     socket.on(
       "room:media",
       (
@@ -3480,6 +3742,7 @@ app.prepare().then(() => {
           kind: source.kind || "text",
           file: source.file,
           files: source.files,
+          sticker: source.sticker,
           transcription: source.transcription,
           transcriptionStatus: source.transcriptionStatus,
           forwardedFrom: {
@@ -3712,8 +3975,13 @@ app.prepare().then(() => {
           return;
         }
         const message = messagesFor(chatId).find((item) => item.id === messageId);
-        if (!message || !voiceAttachmentOf(message)) {
-          ack?.({ ok: false, error: "Голосовое не найдено" });
+        if (
+          !message ||
+          message.kind === "system" ||
+          message.kind === "call" ||
+          message.kind === "sticker"
+        ) {
+          ack?.({ ok: false, error: "Сообщение не найдено" });
           return;
         }
         if (!hasGroqKey()) {

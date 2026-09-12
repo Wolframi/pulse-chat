@@ -41,7 +41,8 @@ export type ChatMessage = {
   createdAt: number;
   editedAt?: number;
   pinned?: boolean;
-  kind?: "text" | "system" | "file" | "call" | "invite";
+  kind?: "text" | "system" | "file" | "call" | "invite" | "sticker";
+  sticker?: MessageSticker;
   /** Primary / first attachment (legacy + album[0]). */
   file?: FileAttachment;
   /** Media album (Telegram-style). When set, `file` mirrors the first item. */
@@ -170,4 +171,40 @@ export type IncomingCall = {
   mode: CallMode;
   chatId: string;
   reconnect?: boolean;
+};
+
+
+export type Sticker = {
+  id: string;
+  url: string;
+  name?: string;
+  emoji?: string;
+  animated?: boolean;
+  width?: number;
+  height?: number;
+  size: number;
+  addedAt: number;
+};
+
+export type StickerPack = {
+  id: string;
+  title: string;
+  createdBy: string;
+  createdAt: number;
+  updatedAt: number;
+  stickers: Sticker[];
+  stickerCount: number;
+  coverUrl?: string;
+  installed: boolean;
+  canEdit: boolean;
+  ownerName?: string;
+};
+
+export type MessageSticker = {
+  packId: string;
+  stickerId: string;
+  url: string;
+  animated?: boolean;
+  width?: number;
+  height?: number;
 };
