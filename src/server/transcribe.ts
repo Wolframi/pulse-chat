@@ -173,7 +173,12 @@ export async function transcribeAudioFile(
     const headers: Record<string, string> = useVercelBridge
       ? { "x-bridge-secret": bridgeSecret }
       : { Authorization: `Bearer ${key}` };
-    let response: Response;
+    let response: {
+      ok: boolean;
+      status: number;
+      text: () => Promise<string>;
+      json: () => Promise<unknown>;
+    };
     if (useVercelBridge) {
       const form = new FormData();
       form.append(
