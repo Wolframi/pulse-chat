@@ -2,7 +2,14 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { File } from "node:buffer";
+import { FormData as UndiciFormData } from "undici";
+import {
+  groqFetch,
+  invalidateGroqEgress,
+  markGroqEgressOk,
+  resolveGroqEgress,
+} from "./groqEgress";
 
 const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -36,17 +43,6 @@ function groqProxyUrl() {
   );
 }
 
-function groqEgressProxy() {
-  const raw =
-    readSecretFile(".groq-egress-proxy") ||
-    String(process.env.GROQ_EGRESS_PROXY || "").trim();
-  const first = raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean);
-  return first && /^https?:\/\//i.test(first) ? first : "";
-}
-
 function groqBridgeSecret() {
   return (
     readSecretFile(".groq-bridge-secret") ||
@@ -55,7 +51,6 @@ function groqBridgeSecret() {
 }
 
 function transcriptionEndpoint() {
-  if (groqEgressProxy()) return GROQ_URL;
   const proxy = groqProxyUrl();
   if (!proxy) return GROQ_URL;
   if (/\/openai\//.test(proxy) || /\/transcribe\/?$/.test(proxy)) return proxy;
@@ -113,6 +108,34 @@ function uploadName(fileName: string, filePath: string, mime?: string) {
   return `voice${ext}`;
 }
 
+async function postGroqWithProxy(
+  form: UndiciFormData,
+  headers: Record<string, string>,
+) {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const egress = await resolveGroqEgress(attempt > 0);
+    try {
+      const response = await groqFetch(
+        GROQ_URL,
+        { method: "POST", headers, body: form },
+        egress,
+      );
+      if (response.status === 403 || response.status === 407) {
+        invalidateGroqEgress(egress);
+        lastError = new Error(`Groq ${response.status} через прокси`);
+        continue;
+      }
+      markGroqEgressOk(egress);
+      return response;
+    } catch (error) {
+      invalidateGroqEgress(egress);
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+  throw lastError || new Error("Не удалось достучаться до Groq через прокси");
+}
+
 export async function transcribeAudioFile(
   filePath: string,
   fileName: string,
@@ -147,32 +170,34 @@ export async function transcribeAudioFile(
       throw new Error("Файл слишком большой для расшифровки");
     }
 
-    const form = new FormData();
-    form.append(
-      "file",
-      new Blob([new Uint8Array(bytes)], { type: sendMime }),
-      sendName,
-    );
-    form.append("model", "whisper-large-v3");
-    form.append("temperature", "0");
-    form.append("response_format", "json");
-
-    const egress = groqEgressProxy();
-    const headers = useVercelBridge
+    const headers: Record<string, string> = useVercelBridge
       ? { "x-bridge-secret": bridgeSecret }
       : { Authorization: `Bearer ${key}` };
-    const response = egress
-      ? await undiciFetch(endpoint, {
-          method: "POST",
-          headers,
-          body: form,
-          dispatcher: new ProxyAgent(egress),
-        })
-      : await fetch(endpoint, {
-          method: "POST",
-          headers,
-          body: form,
-        });
+    let response: {
+      ok: boolean;
+      status: number;
+      text: () => Promise<string>;
+      json: () => Promise<unknown>;
+    };
+    if (useVercelBridge) {
+      const form = new FormData();
+      form.append(
+        "file",
+        new Blob([new Uint8Array(bytes)], { type: sendMime }),
+        sendName,
+      );
+      form.append("model", "whisper-large-v3");
+      form.append("temperature", "0");
+      form.append("response_format", "json");
+      response = await fetch(endpoint, { method: "POST", headers, body: form });
+    } else {
+      const form = new UndiciFormData();
+      form.append("file", new File([bytes], sendName, { type: sendMime }));
+      form.append("model", "whisper-large-v3");
+      form.append("temperature", "0");
+      form.append("response_format", "json");
+      response = await postGroqWithProxy(form, headers);
+    }
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       if (/audio_too_short|too short/i.test(detail)) {

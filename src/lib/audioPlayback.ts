@@ -50,6 +50,10 @@ const warmers = new Map<string, HTMLAudioElement>();
 const MAX_PREFETCH = 1;
 
 let audioEl: HTMLAudioElement | null = null;
+let playbackCtx: AudioContext | null = null;
+let mediaSource: MediaElementAudioSourceNode | null = null;
+let voiceGain: GainNode | null = null;
+let musicGain: GainNode | null = null;
 let pendingSeek: number | null = null;
 let lastTimeEmit = 0;
 let bound = false;
@@ -332,6 +336,53 @@ function applyPendingSeek(audio: HTMLAudioElement) {
   resetPlaybackClock(time);
 }
 
+function audioContextCtor() {
+  return window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+}
+
+function ensurePlaybackGraph(audio: HTMLAudioElement) {
+  if (mediaSource || typeof window === "undefined") return;
+  const Ctor = audioContextCtor();
+  if (!Ctor) return;
+  try {
+    const ctx = new Ctor();
+    const source = ctx.createMediaElementSource(audio);
+    const splitter = ctx.createChannelSplitter(2);
+    const merger = ctx.createChannelMerger(2);
+    const voice = ctx.createGain();
+    const music = ctx.createGain();
+    voice.gain.value = 0;
+    music.gain.value = 1;
+    source.connect(music);
+    music.connect(ctx.destination);
+    source.connect(splitter);
+    splitter.connect(merger, 0, 0);
+    splitter.connect(merger, 0, 1);
+    splitter.connect(merger, 1, 0);
+    splitter.connect(merger, 1, 1);
+    merger.connect(voice);
+    voice.connect(ctx.destination);
+    playbackCtx = ctx;
+    mediaSource = source;
+    voiceGain = voice;
+    musicGain = music;
+  } catch {
+    playbackCtx = null;
+    mediaSource = null;
+    voiceGain = null;
+    musicGain = null;
+  }
+}
+
+function setVoiceBothEars(on: boolean) {
+  if (voiceGain) voiceGain.gain.value = on ? 1 : 0;
+  if (musicGain) musicGain.gain.value = on ? 0 : 1;
+  if (on && playbackCtx?.state === "suspended") {
+    void playbackCtx.resume().catch(() => undefined);
+  }
+}
+
 function bindAudio(audio: HTMLAudioElement) {
   if (bound) return;
   bound = true;
@@ -360,6 +411,9 @@ function bindAudio(audio: HTMLAudioElement) {
   });
   audio.addEventListener("play", () => {
     if (closing) return;
+    if (playbackCtx?.state === "suspended") {
+      void playbackCtx.resume().catch(() => undefined);
+    }
     resetPlaybackClock();
     patch({ playing: true, visible: true });
   });
@@ -399,6 +453,7 @@ function getAudio() {
   if (!audioEl) {
     audioEl = new Audio();
     bindAudio(audioEl);
+    ensurePlaybackGraph(audioEl);
     audioEl.playbackRate = state.playbackRate;
     audioEl.volume = state.volume;
   }
@@ -479,6 +534,11 @@ export async function playAudioTrack(track: AudioTrack, opts?: { time?: number }
   closing = false;
   const audio = getAudio();
   if (!audio) return;
+  ensurePlaybackGraph(audio);
+  setVoiceBothEars(track.kind === "voice");
+  if (playbackCtx?.state === "suspended") {
+    void playbackCtx.resume().catch(() => undefined);
+  }
 
   const same =
     state.current &&

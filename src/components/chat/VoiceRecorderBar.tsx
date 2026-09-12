@@ -4,6 +4,26 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { IconClose, IconMic, IconSend, IconTrash } from "@/lib/icons";
 import { getMicDeviceId } from "@/lib/mediaDevices";
 
+function mixMicToBothEars(stream: MediaStream) {
+  const Ctor =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!Ctor) return { stream, ctx: null as AudioContext | null };
+  const ctx = new Ctor();
+  const source = ctx.createMediaStreamSource(stream);
+  const merger = ctx.createChannelMerger(2);
+  source.connect(merger, 0, 0);
+  source.connect(merger, 0, 1);
+  const dest = ctx.createMediaStreamDestination();
+  dest.channelCount = 2;
+  merger.connect(dest);
+  if (ctx.state === "suspended") {
+    void ctx.resume().catch(() => undefined);
+  }
+  return { stream: dest.stream, ctx };
+}
+
 async function captureVoiceNoteMic() {
   const micId = getMicDeviceId();
   return navigator.mediaDevices.getUserMedia({
@@ -86,6 +106,7 @@ export function VoiceRecorderBar({
   const chunksRef = useRef<Blob[]>([]);
   const mimeRef = useRef("");
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const mixCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -120,6 +141,8 @@ export function VoiceRecorderBar({
     streamRef.current = null;
     void audioCtxRef.current?.close().catch(() => undefined);
     audioCtxRef.current = null;
+    void mixCtxRef.current?.close().catch(() => undefined);
+    mixCtxRef.current = null;
     analyserRef.current = null;
   }
 
@@ -280,6 +303,14 @@ export function VoiceRecorderBar({
         streamRef.current = stream;
         const mime = pickMime();
         mimeRef.current = mime;
+        let recordStream = stream;
+        try {
+          const mixed = mixMicToBothEars(stream);
+          mixCtxRef.current = mixed.ctx;
+          recordStream = mixed.stream;
+        } catch {
+          recordStream = stream;
+        }
 
         // Start MediaRecorder before setting up visualization. AudioContext
         // resume can be slow on iOS/Android and used to cut off the first words.
@@ -292,13 +323,13 @@ export function VoiceRecorderBar({
         let recorder: MediaRecorder | null = null;
         for (const options of recorderOptions) {
           try {
-            recorder = new MediaRecorder(stream, options);
+            recorder = new MediaRecorder(recordStream, options);
             break;
           } catch {
             /* try a looser option */
           }
         }
-        if (!recorder) recorder = new MediaRecorder(stream);
+        if (!recorder) recorder = new MediaRecorder(recordStream);
         recorderRef.current = recorder;
         chunksRef.current = [];
         recorder.ondataavailable = (event) => {
