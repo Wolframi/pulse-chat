@@ -158,7 +158,7 @@ export async function transcribeAudioFile(
     form.append("response_format", "json");
 
     const egress = groqEgressProxy();
-    const headers = useVercelBridge
+    const headers: Record<string, string> = useVercelBridge
       ? { "x-bridge-secret": bridgeSecret }
       : { Authorization: `Bearer ${key}` };
     const response = egress
@@ -167,7 +167,7 @@ export async function transcribeAudioFile(
           headers,
           body: form,
           dispatcher: new ProxyAgent(egress),
-        })
+        } as Parameters<typeof undiciFetch>[1])
       : await fetch(endpoint, {
           method: "POST",
           headers,
