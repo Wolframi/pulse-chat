@@ -353,6 +353,8 @@ type ChatMessage = {
   room: string;
   author: string;
   authorId?: string;
+  /** Sender-generated idempotency key — survives server restarts. */
+  clientId?: string;
   text: string;
   createdAt: number;
   editedAt?: number;
@@ -3422,9 +3424,27 @@ app.prepare().then(() => {
           return;
         }
 
+        const rawClientId = String(payload?.clientId || "").slice(0, 80);
+        const clientId = /^[a-zA-Z0-9_-]+$/.test(rawClientId)
+          ? rawClientId
+          : "";
+        // Cross-restart dedupe: the in-memory idempotency map dies with the
+        // process, so also match persisted messages by clientId.
+        if (clientId) {
+          const duplicate = messagesFor(presence.room!).find(
+            (item) =>
+              item.clientId === clientId &&
+              item.authorId === account.userId,
+          );
+          if (duplicate) {
+            ack?.({ ok: true, message: publicMessage(duplicate) });
+            return;
+          }
+        }
+
         const { id, existing } = resolveClientMessageId(
           account.userId,
-          String(payload?.clientId || ""),
+          rawClientId,
           (messageId) =>
             messagesFor(presence.room!).find((item) => item.id === messageId),
         );
@@ -3441,6 +3461,7 @@ app.prepare().then(() => {
           text,
           createdAt: Date.now(),
           kind: "text",
+          clientId: clientId || undefined,
           replyTo: resolveReply(presence.room, payload?.replyToId),
         };
         pushMessage(io, chat, message);
@@ -3791,6 +3812,7 @@ app.prepare().then(() => {
       (
         payload: {
           chatId?: string;
+          clientId?: string;
           file?: {
             url?: string;
             name?: string;
@@ -3834,6 +3856,22 @@ app.prepare().then(() => {
         if (!chat || !canAccessChat(chat, account.userId)) {
           ack?.({ ok: false, error: "Нет доступа" });
           return;
+        }
+
+        const rawClientId = String(payload?.clientId || "").slice(0, 80);
+        const clientId = /^[a-zA-Z0-9_-]+$/.test(rawClientId)
+          ? rawClientId
+          : "";
+        if (clientId) {
+          const duplicate = messagesFor(chatId).find(
+            (item) =>
+              item.clientId === clientId &&
+              item.authorId === account.userId,
+          );
+          if (duplicate) {
+            ack?.({ ok: true });
+            return;
+          }
         }
 
         const rawList =
@@ -3988,6 +4026,7 @@ app.prepare().then(() => {
           author: labelOf(account),
           authorId: account.userId,
           text: text.slice(0, 200),
+          clientId: clientId || undefined,
           createdAt: Date.now(),
           kind: "file",
           file: attachments[0],

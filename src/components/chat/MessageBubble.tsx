@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type SyntheticEvent,
   type TouchEvent as ReactTouchEvent,
 } from "react";
 import { motion } from "motion/react";
@@ -23,6 +24,7 @@ import {
   IconFileKind,
   fileIconKind,
   IconPlay,
+  IconImage,
 } from "@/lib/icons";
 import { ConfirmDialog } from "@/components/chat/ConfirmDialog";
 import {
@@ -315,13 +317,8 @@ function AlbumMosaic({
                 </span>
               </>
             ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
+              <PhotoImage
                 src={src}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                fetchPriority="low"
                 onLoad={(event) => {
                   if (known) return;
                   rememberSize(
@@ -377,14 +374,9 @@ function GifMedia({
       aria-label="Открыть GIF"
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <PhotoImage
         src={src}
-        alt=""
         className="bubble__image bubble__image--gif"
-        loading="lazy"
-        decoding="async"
-        fetchPriority="low"
-        referrerPolicy="no-referrer"
         onLoad={(event) => {
           const next = parseMediaSize({
             width: event.currentTarget.naturalWidth,
@@ -401,6 +393,66 @@ function GifMedia({
         }}
       />
     </button>
+  );
+}
+
+/** Image with one cache-busted retry and a clickable broken placeholder. */
+function PhotoImage({
+  src,
+  alt = "",
+  className,
+  loading = "lazy",
+  onLoad,
+}: {
+  src: string;
+  alt?: string;
+  className?: string;
+  loading?: "lazy" | "eager";
+  onLoad?: (event: SyntheticEvent<HTMLImageElement>) => void;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  const [broken, setBroken] = useState(false);
+
+  if (broken) {
+    return (
+      <button
+        type="button"
+        className="bubble__media-retry"
+        aria-label="Повторить загрузку"
+        onClick={(event) => {
+          // Don't let the outer bubble button open the lightbox.
+          event.stopPropagation();
+          setBroken(false);
+          setAttempt((value) => value + 1);
+        }}
+      >
+        <IconImage size={22} />
+        <span>Не удалось загрузить</span>
+      </button>
+    );
+  }
+
+  const url =
+    attempt > 0
+      ? `${src}${src.includes("?") ? "&" : "?"}r=${attempt}`
+      : src;
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={alt}
+      className={className}
+      loading={loading}
+      decoding="async"
+      fetchPriority="low"
+      referrerPolicy="no-referrer"
+      onLoad={onLoad}
+      onError={() => {
+        if (attempt < 1) setAttempt((value) => value + 1);
+        else setBroken(true);
+      }}
+    />
   );
 }
 
@@ -484,15 +536,7 @@ function FileBodyInner({
             aria-label="Открыть фото"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={src}
-              alt=""
-              className="bubble__image"
-              loading="lazy"
-              decoding="async"
-              fetchPriority="low"
-              referrerPolicy="no-referrer"
-            />
+            <PhotoImage src={src} className="bubble__image" />
           </button>
         )}
         <MediaCaption
