@@ -130,6 +130,8 @@ export function flushPendingBootReload() {
 
 async function pollHealth() {
   if (pollInFlight) return;
+  // Hidden tabs don't need the reload-deploy ping every 1.5s.
+  if (typeof document !== "undefined" && document.hidden) return;
   const ac = new AbortController();
   pollInFlight = ac;
   const timeout = window.setTimeout(() => ac.abort(), 2500);

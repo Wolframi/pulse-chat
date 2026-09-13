@@ -852,6 +852,11 @@ setInterval(() => {
     if (changed && ioServer) emitVoiceState(ioServer, found.group);
   }
   if (callsById.size || voiceByChannel.size) persistLiveMedia();
+  // Prune expired call-log allowances (entries expire after 90s anyway).
+  const sweepNow = Date.now();
+  for (const [key, expires] of callLogAllow) {
+    if (expires < sweepNow) callLogAllow.delete(key);
+  }
 }, 20_000).unref();
 
 function allowCallLog(userId: string, chatId: string) {
@@ -4700,6 +4705,10 @@ app.prepare().then(() => {
           ack?.({ ok: false });
           return;
         }
+        if (!rateLimit(`voice-mute:${account.userId}`, 12, 10_000)) {
+          ack?.({ ok: false });
+          return;
+        }
         const channelId = voiceByUser.get(account.userId);
         if (!channelId) {
           ack?.({ ok: false });
@@ -4731,6 +4740,10 @@ app.prepare().then(() => {
           ack?.({ ok: false });
           return;
         }
+        if (!rateLimit(`voice-deafen:${account.userId}`, 12, 10_000)) {
+          ack?.({ ok: false });
+          return;
+        }
         const channelId = voiceByUser.get(account.userId);
         if (!channelId) {
           ack?.({ ok: false });
@@ -4759,6 +4772,9 @@ app.prepare().then(() => {
       (payload: { speaking?: boolean }) => {
         const account = requireAccount(socket);
         if (!account) return;
+        if (!rateLimit(`voice-speaking:${account.userId}`, 20, 10_000)) {
+          return;
+        }
         const channelId = voiceByUser.get(account.userId);
         if (!channelId) return;
         const room = voiceByChannel.get(channelId);

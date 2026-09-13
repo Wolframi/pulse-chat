@@ -43,6 +43,7 @@ const VOLUME_KEY = "pulse-audio-volume";
 const listeners = new Set<() => void>();
 const roomTracks = new Map<string, AudioTrack[]>();
 const failedSrcs = new Set<string>();
+const FAILED_SRCS_MAX = 300;
 const warmedSrcs = new Set<string>();
 const prefetching = new Set<string>();
 const prefetchQueue: string[] = [];
@@ -438,7 +439,14 @@ function bindAudio(audio: HTMLAudioElement) {
   audio.addEventListener("error", () => {
     if (closing) return;
     const current = state.current;
-    if (current?.src) failedSrcs.add(current.src);
+    if (current?.src) {
+      failedSrcs.add(current.src);
+      if (failedSrcs.size > FAILED_SRCS_MAX) {
+        // Evict the oldest failure so the set never grows unbounded.
+        const oldest = failedSrcs.values().next().value;
+        if (oldest) failedSrcs.delete(oldest);
+      }
+    }
     const next = peekAdjacentTrack(1);
     if (next && next.src !== current?.src && !failedSrcs.has(next.src)) {
       void playAudioTrack(next);
