@@ -791,6 +791,22 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
 
   // Thumbnail proxy: ?w=… serves a cached resized JPEG (photos only).
   const wantW = parsed.searchParams.get("w");
+  if (wantW) {
+    console.log(
+      "[thumbs] request",
+      fileName,
+      "w=",
+      wantW,
+      "okW:",
+      THUMB_WIDTHS.has(wantW),
+      "img:",
+      looksImage,
+      "ext:",
+      ext,
+      "size:",
+      size,
+    );
+  }
   if (
     wantW &&
     THUMB_WIDTHS.has(wantW) &&
