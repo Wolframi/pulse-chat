@@ -28,9 +28,9 @@ import {
   Gift,
   Hash,
   Image as ImageIcon,
+  Keyboard,
   LogOut,
   Maximize2,
-  Menu,
   MessageCircle,
   MessageSquare,
   Mic,
@@ -86,7 +86,18 @@ function wrap(LucideIcon: ComponentType<LucideProps>, props: IconProps) {
 }
 
 export function IconMenu(props: IconProps) {
-  return wrap(Menu, props);
+  const size = props.size ?? 18;
+  return (
+    <span
+      className={`icon-menu${props.className ? ` ${props.className}` : ""}`}
+      style={{ width: size, height: size }}
+      aria-hidden
+    >
+      <i />
+      <i />
+      <i />
+    </span>
+  );
 }
 export function IconClose(props: IconProps) {
   return wrap(X, props);
@@ -337,8 +348,45 @@ export function IconForward(props: IconProps) {
 export function IconCheckDouble(props: IconProps) {
   return wrap(CheckCheck, props);
 }
+
+/** Telegram Web `check` tick — sent (one). */
+export function IconTgSent({ size = 12, className }: IconProps) {
+  const height = Math.round((size * 11) / 12);
+  return (
+    <svg
+      width={size}
+      height={height}
+      viewBox="1.2 2.2 11.6 9.6"
+      fill="currentColor"
+      className={className}
+      aria-hidden
+    >
+      <path d="M4.968 10.049 11.511 2.572c.236-.27.647-.298.917-.061.243.213.29.567.124.832l-.063.085-7 8c-.223.255-.598.292-.864.103l-.085-.071-3-3c-.254-.254-.254-.666 0-.92.228-.228.585-.251.839-.068l.08.068 2.509 2.509Z" />
+    </svg>
+  );
+}
+
+/** Telegram Web `2checks` — read (two overlapping ticks). */
+export function IconTgRead({ size = 16, className }: IconProps) {
+  const height = Math.round((size * 14) / 19);
+  return (
+    <svg
+      width={size}
+      height={height}
+      viewBox="0 2 19 12"
+      fill="currentColor"
+      className={className}
+      aria-hidden
+    >
+      <path d="M4.968 10.049 11.511 2.572c.236-.27.647-.298.917-.061.243.213.29.567.124.832l-.063.085-7 8c-.223.255-.598.292-.864.103l-.085-.071-3-3c-.254-.254-.254-.666 0-.92.228-.228.585-.251.839-.068l.08.068 2.509 2.509Zm5 0 6.543-7.477c.236-.27.647-.298.917-.061.243.213.29.567.124.832l-.063.085-7 8c-.223.255-.598.292-.864.103l-.085-.071-1-1c-.254-.254-.254-.666 0-.92.228-.228.585-.251.839-.068l.08.068.509.509Z" />
+    </svg>
+  );
+}
 export function IconSmile(props: IconProps) {
   return wrap(Smile, props);
+}
+export function IconKeyboard(props: IconProps) {
+  return wrap(Keyboard, props);
 }
 export function IconChevronUp(props: IconProps) {
   return wrap(ChevronUp, props);

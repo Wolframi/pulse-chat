@@ -46,7 +46,19 @@ export function displayFileName(name?: string | null) {
 }
 
 export const MAX_FILE_BYTES = 500 * 1024 * 1024;
+/** Media items in one album message (Telegram limit). */
 export const MAX_FILES_AT_ONCE = 10;
+/** Composer queue — extras go out as the next message(s). */
+export const MAX_PENDING_FILES = 50;
+
+export function chunkItems<T>(items: T[], size: number): T[][] {
+  if (size < 1) return items.length ? [items] : [];
+  const out: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    out.push(items.slice(index, index + size));
+  }
+  return out;
+}
 const UPLOAD_TIMEOUT_MS = 600_000;
 const UPLOAD_RETRIES = 3;
 
@@ -55,7 +67,41 @@ export type UploadedFile = {
   name: string;
   size: number;
   mime: string;
+  width?: number;
+  height?: number;
 };
+
+/** tdesktop `st::maxGifSize` — GIFs sit in a 320 box, photos stay at 430. */
+export const GIF_MAX_SIDE = 320;
+
+/** Scale GIF into Telegram's max box; never upscale. */
+export function fitGifDisplaySize(
+  width: number,
+  height: number,
+  maxSide = GIF_MAX_SIDE,
+) {
+  const safeWidth = Math.max(1, width);
+  const safeHeight = Math.max(1, height);
+  const scale = Math.min(1, maxSide / Math.max(safeWidth, safeHeight));
+  return {
+    width: Math.max(1, Math.round(safeWidth * scale)),
+    height: Math.max(1, Math.round(safeHeight * scale)),
+  };
+}
+
+/** Clamp client/server media pixel size for album layout. */
+export function parseMediaSize(file?: {
+  width?: unknown;
+  height?: unknown;
+} | null) {
+  const width = Math.round(Number(file?.width));
+  const height = Math.round(Number(file?.height));
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return undefined;
+  if (width < 1 || height < 1 || width > 16000 || height > 16000) {
+    return undefined;
+  }
+  return { width, height };
+}
 
 type FileLike = {
   mime?: string | null;
@@ -85,6 +131,20 @@ export function isAudioAttachment(file?: FileLike) {
   if (/^voice[-_]/.test(name)) return true;
   if (/\.(mp3|wav|m4a|aac|ogg|opus|flac|weba)$/i.test(name)) return true;
   return false;
+}
+
+export function isGifAttachment(file?: FileLike) {
+  if (!file) return false;
+  const mime = fileMime(file);
+  const name = fileNameLower(file);
+  const url = String(file.url || "");
+  return (
+    mime === "image/gif" ||
+    /\.gif$/i.test(name) ||
+    /^gif[-_.]/i.test(name) ||
+    /giphy\.(gif|webp)$/i.test(name) ||
+    /giphy\.com/i.test(url)
+  );
 }
 
 /** Image attachments — framed media block, no filename caption. */
@@ -119,18 +179,7 @@ export function attachmentPreviewText(
   fallbackText?: string | null,
 ) {
   if (isImageAttachment(file)) {
-    const mime = fileMime(file);
-    const name = fileNameLower(file);
-    const url = String(file?.url || "");
-    if (
-      mime === "image/gif" ||
-      /\.gif$/i.test(name) ||
-      /^gif[-_.]/i.test(name) ||
-      /giphy\.(gif|webp)$/i.test(name) ||
-      /giphy\.com/i.test(url)
-    ) {
-      return "GIF";
-    }
+    if (isGifAttachment(file)) return "GIF";
     return "Фото";
   }
   if (isVideoAttachment(file)) return "Видео";
@@ -163,18 +212,93 @@ export function messageAttachments(message: {
   return [];
 }
 
+const GENERIC_PREVIEW_LABELS = new Set([
+  "фото",
+  "gif",
+  "видео",
+  "аудио",
+  "музыка",
+  "медиафайл",
+  "стикер",
+  "голосовое сообщение",
+  "файл",
+]);
+
+export function isGenericPreviewLabel(value?: string | null) {
+  const text = String(value || "").trim();
+  if (!text) return true;
+  if (GENERIC_PREVIEW_LABELS.has(text.toLowerCase())) return true;
+  if (/^\d+\s+(файл|файла|файлов)$/i.test(text)) return true;
+  if (/^\d+\s+(фото|видео)$/i.test(text)) return true;
+  if (/^(альбом|файлы)\s*·/i.test(text)) return true;
+  if (/^музыка\s*·/i.test(text)) return true;
+  if (/^файл:/i.test(text)) return true;
+  return false;
+}
+
+export function ruFileCountLabel(count: number) {
+  const n = Math.max(0, Math.floor(count));
+  const n10 = n % 10;
+  const n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return `${n} файл`;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return `${n} файла`;
+  return `${n} файлов`;
+}
+
 export function albumPreviewText(
   files: FileAttachment[],
   fallbackText?: string | null,
 ) {
-  if (!files.length) return String(fallbackText || "").trim() || "Файл";
-  if (files.length === 1) return attachmentPreviewText(files[0], fallbackText);
-  const images = files.filter((f) => isImageAttachment(f)).length;
-  const videos = files.filter((f) => isVideoAttachment(f)).length;
-  if (images && !videos) return `${files.length} фото`;
-  if (videos && !images) return `${files.length} видео`;
-  if (images || videos) return `Альбом · ${files.length}`;
-  return `Файлы · ${files.length}`;
+  const caption = isGenericPreviewLabel(fallbackText)
+    ? ""
+    : String(fallbackText || "").trim();
+
+  if (!files.length) return caption || "Файл";
+
+  if (files.length === 1) {
+    const file = files[0];
+    if (isVoiceNote(file)) return "Голосовое сообщение";
+    if (isAudioAttachment(file)) {
+      const name = audioDisplayName(file);
+      if (name && name !== "Аудио" && name !== "Голосовое сообщение") {
+        return `Музыка · ${name}`;
+      }
+      return "Музыка";
+    }
+    if (isGifAttachment(file)) return caption || "GIF";
+    if (isMediaAttachment(file)) return caption || "Медиафайл";
+    return caption || attachmentPreviewText(file, fallbackText);
+  }
+
+  return caption || ruFileCountLabel(files.length);
+}
+
+export function chatListPreview(message: {
+  kind?: string | null;
+  text?: string | null;
+  sticker?: { url?: string; animated?: boolean } | null;
+  file?: FileAttachment | null;
+  files?: FileAttachment[] | null;
+}): { text: string; thumbUrl?: string; thumbAnimated?: boolean } {
+  if (message.kind === "sticker" && message.sticker?.url) {
+    return {
+      text: String(message.text || "").trim() || "Стикер",
+      thumbUrl: message.sticker.url,
+      thumbAnimated: Boolean(message.sticker.animated),
+    };
+  }
+
+  if (message.kind === "file") {
+    const files = messageAttachments(message);
+    const text = albumPreviewText(files, message.text);
+    const first = files[0];
+    if (files.length === 1 && first?.url && isGifAttachment(first)) {
+      return { text, thumbUrl: first.url, thumbAnimated: true };
+    }
+    return { text };
+  }
+
+  return { text: String(message.text || "").trim() };
 }
 
 /** Recorded in-app voice note (not a file the user picked). */

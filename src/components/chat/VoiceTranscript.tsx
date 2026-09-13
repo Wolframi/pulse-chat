@@ -1,18 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { ChatMessage } from "@/lib/types";
 import { IconChevronDown, IconFileText } from "@/lib/icons";
 
 type VoiceTranscriptProps = {
   message: ChatMessage;
   mine?: boolean;
+  clock?: ReactNode;
   onTranscribe?: (messageId: string) => void;
 };
 
 export function VoiceTranscript({
   message,
   mine = false,
+  clock,
   onTranscribe,
 }: VoiceTranscriptProps) {
   const [open, setOpen] = useState(false);
@@ -23,7 +25,13 @@ export function VoiceTranscript({
   const ready = status === "ready";
   const failedSend = message.status === "pending" || message.status === "failed";
 
-  if (failedSend) return null;
+  if (failedSend) {
+    return clock ? (
+      <div className="voice-transcript__bar voice-transcript__bar--clock-only">
+        {clock}
+      </div>
+    ) : null;
+  }
 
   const label = pending
     ? "Расшифровываю…"
@@ -89,6 +97,8 @@ export function VoiceTranscript({
           {text ? <p className="voice-transcript__text">{text}</p> : null}
         </div>
       </div>
+
+      {clock ? <div className="voice-transcript__clock">{clock}</div> : null}
     </div>
   );
 }

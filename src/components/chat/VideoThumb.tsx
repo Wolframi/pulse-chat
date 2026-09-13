@@ -39,6 +39,11 @@ export function VideoThumb({ url, onOpen }: VideoThumbProps) {
         muted
         playsInline
         preload="metadata"
+        controls={false}
+        disablePictureInPicture
+        onPlay={(event) => {
+          event.currentTarget.pause();
+        }}
         onLoadedData={(event) => {
           const video = event.currentTarget;
           if (video.videoWidth > 0) return;

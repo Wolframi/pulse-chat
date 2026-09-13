@@ -9,11 +9,16 @@ import {
   type TouchEvent as ReactTouchEvent,
 } from "react";
 import { motion } from "motion/react";
-import type { ChatMessage, FileAttachment, PeopleUser } from "@/lib/types";
+import type {
+  ChatMessage,
+  FileAttachment,
+  MessageStatus,
+  PeopleUser,
+} from "@/lib/types";
 import { Avatar } from "@/components/chat/Avatar";
 import {
-  IconCheck,
-  IconCheckDouble,
+  IconTgRead,
+  IconTgSent,
   IconDownload,
   IconFileKind,
   fileIconKind,
@@ -22,7 +27,9 @@ import {
 import { ConfirmDialog } from "@/components/chat/ConfirmDialog";
 import {
   formatBytes,
+  fitGifDisplaySize,
   isAudioAttachment,
+  isGifAttachment,
   isImageAttachment,
   isMediaAttachment,
   isVideoAttachment,
@@ -34,7 +41,9 @@ import {
   downloadHref,
   displayFileName,
   messageAttachments,
+  parseMediaSize,
 } from "@/lib/files";
+import { albumBounds, layoutMediaGroup } from "@/lib/albumLayout";
 import { audioTrackId, type AudioTrack } from "@/lib/audioPlayback";
 import { renderMessageText } from "@/lib/text";
 import { soloEmojiSizePx, splitTextAndEmoji } from "@/lib/emojiText";
@@ -49,6 +58,10 @@ type MessageBubbleProps = {
   mine: boolean;
   peopleById?: Map<string, PeopleUser>;
   showMeta?: boolean;
+  showAvatar?: boolean;
+  /** tdesktop isBubbleAttachedToPrevious / isBubbleAttachedToNext */
+  attachPrev?: boolean;
+  attachNext?: boolean;
   animate?: boolean;
   selfId?: string;
   searchQuery?: string;
@@ -80,6 +93,45 @@ function truncate(value: string, max = 120) {
   return `${text.slice(0, max - 1)}…`;
 }
 
+/** Colored caption plaque — tdesktop Photo/Gif skipBubbleTail when media fills the bubble. */
+function hasVisibleMediaCaption(message: ChatMessage) {
+  const caption = (message.text || "").trim();
+  if (!caption) return false;
+  const attachments = messageAttachments(message);
+  if (!attachments.some((file) => isMediaAttachment(file))) return false;
+  if (attachments.length > 1) {
+    return (
+      caption !== "Фото" &&
+      caption !== "GIF" &&
+      caption !== "Видео" &&
+      !/^Альбом/i.test(caption)
+    );
+  }
+  const file = attachments[0];
+  return (
+    caption !== file.name &&
+    caption !== "Фото" &&
+    caption !== "GIF" &&
+    caption !== "Видео" &&
+    caption !== "Аудио" &&
+    caption !== "Голосовое сообщение"
+  );
+}
+
+function plaqueShapeClass(
+  attachPrev: boolean,
+  attachNext: boolean,
+  skipTail: boolean,
+) {
+  return [
+    attachPrev ? "bubble--attach-prev" : "",
+    attachNext ? "bubble--attach-next" : "",
+    skipTail ? "bubble--skip-tail" : "bubble--tail",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function resolveAuthor(
   message: ChatMessage,
   peopleById?: Map<string, PeopleUser>,
@@ -101,14 +153,265 @@ function resolveAuthor(
   };
 }
 
+function SendMeta({
+  createdAt,
+  mine = false,
+  status,
+  peerReadAt,
+  className,
+}: {
+  createdAt: number;
+  mine?: boolean;
+  status?: MessageStatus;
+  peerReadAt?: number | null;
+  className?: string;
+}) {
+  const read = Boolean(mine && peerReadAt && peerReadAt >= createdAt);
+  const sending = mine && status === "pending";
+  const failed = mine && status === "failed";
+  return (
+    <time
+      className={`bubble__time${className ? ` ${className}` : ""}`}
+      dateTime={new Date(createdAt).toISOString()}
+    >
+      {formatMessageTime(createdAt)}
+      {mine && !failed && (
+        <span
+          className={`bubble__receipt${read ? " is-read" : ""}${sending ? " is-sending" : ""}`}
+          aria-label={
+            sending ? "отправка" : read ? "Прочитано" : "Отправлено"
+          }
+        >
+          {sending ? (
+            <i className="bubble__spinner" aria-hidden />
+          ) : read ? (
+            <IconTgRead size={16} />
+          ) : (
+            <IconTgSent size={12} />
+          )}
+        </span>
+      )}
+    </time>
+  );
+}
+
+function MediaCaption({
+  caption,
+  createdAt,
+  mine,
+  status,
+  peerReadAt,
+}: {
+  caption?: string;
+  createdAt: number;
+  mine?: boolean;
+  status?: MessageStatus;
+  peerReadAt?: number | null;
+}) {
+  const clock = (
+    <SendMeta
+      createdAt={createdAt}
+      mine={mine}
+      status={status}
+      peerReadAt={peerReadAt}
+      className={caption ? undefined : "bubble__media-time"}
+    />
+  );
+  if (caption) {
+    return (
+      <p className="bubble__text bubble__media-caption">
+        {renderMessageText(caption)}
+        {clock}
+      </p>
+    );
+  }
+  return clock;
+}
+
+function AlbumMosaic({
+  files,
+  onOpenImage,
+}: {
+  files: FileAttachment[];
+  onOpenImage?: (src: string, name: string, kind?: "image" | "video") => void;
+}) {
+  const [probed, setProbed] = useState<Record<string, { width: number; height: number }>>(
+    {},
+  );
+
+  const sizes = files.map((file, index) => {
+    const stored = parseMediaSize(file);
+    if (stored) return stored;
+    return probed[`${file.url}:${index}`] || { width: 100, height: 100 };
+  });
+  const cells = layoutMediaGroup(sizes);
+  const box = albumBounds(cells);
+
+  function rememberSize(key: string, width: number, height: number) {
+    const next = parseMediaSize({ width, height });
+    if (!next) return;
+    setProbed((prev) => {
+      const cur = prev[key];
+      if (cur && cur.width === next.width && cur.height === next.height) {
+        return prev;
+      }
+      return { ...prev, [key]: next };
+    });
+  }
+
+  return (
+    <div
+      className="bubble__album-grid"
+      style={{ aspectRatio: `${box.width} / ${box.height}` }}
+    >
+      {files.map((file, index) => {
+        const cell = cells[index];
+        if (!cell) return null;
+        const src = signedMediaSrc(file.url) || mediaSrc(file.url);
+        const openSrc = signedMediaSrc(file.url) || bareMediaUrl(file.url);
+        const video = isVideoAttachment(file);
+        const key = `${file.url}:${index}`;
+        const known = Boolean(parseMediaSize(file));
+        return (
+          <button
+            key={key}
+            type="button"
+            className="bubble__album-cell"
+            style={{
+              left: `${(cell.x / box.width) * 100}%`,
+              top: `${(cell.y / box.height) * 100}%`,
+              width: `${(cell.width / box.width) * 100}%`,
+              height: `${(cell.height / box.height) * 100}%`,
+            }}
+            onClick={() =>
+              onOpenImage?.(openSrc, file.name, video ? "video" : "image")
+            }
+            aria-label={video ? "Открыть видео" : "Открыть фото"}
+          >
+            {video ? (
+              <>
+                <video
+                  src={src}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  controls={false}
+                  onLoadedMetadata={(event) => {
+                    if (known) return;
+                    rememberSize(
+                      key,
+                      event.currentTarget.videoWidth,
+                      event.currentTarget.videoHeight,
+                    );
+                  }}
+                  onPlay={(event) => {
+                    event.currentTarget.pause();
+                  }}
+                />
+                <span className="bubble__video-play" aria-hidden>
+                  <IconPlay size={18} />
+                </span>
+              </>
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={src}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                fetchPriority="low"
+                onLoad={(event) => {
+                  if (known) return;
+                  rememberSize(
+                    key,
+                    event.currentTarget.naturalWidth,
+                    event.currentTarget.naturalHeight,
+                  );
+                }}
+              />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Telegram Gif: fit inside `st::maxGifSize` (320), never stretch to photo width. */
+function GifMedia({
+  file,
+  src,
+  openSrc,
+  onOpenImage,
+}: {
+  file: FileAttachment;
+  src: string;
+  openSrc: string;
+  onOpenImage?: (src: string, name: string, kind?: "image" | "video") => void;
+}) {
+  const stored = parseMediaSize(file);
+  const [probed, setProbed] = useState<{ width: number; height: number } | null>(
+    stored || null,
+  );
+  const box = probed
+    ? fitGifDisplaySize(probed.width, probed.height)
+    : undefined;
+
+  return (
+    <button
+      type="button"
+      className="bubble__image-btn bubble__image-btn--gif"
+      style={
+        box
+          ? {
+              width: box.width,
+              maxWidth: "100%",
+              height: "auto",
+              aspectRatio: `${box.width} / ${box.height}`,
+            }
+          : undefined
+      }
+      onClick={() => onOpenImage?.(openSrc, file.name, "image")}
+      aria-label="Открыть GIF"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt=""
+        className="bubble__image bubble__image--gif"
+        loading="lazy"
+        decoding="async"
+        fetchPriority="low"
+        referrerPolicy="no-referrer"
+        onLoad={(event) => {
+          const next = parseMediaSize({
+            width: event.currentTarget.naturalWidth,
+            height: event.currentTarget.naturalHeight,
+          });
+          if (!next) return;
+          setProbed((prev) => {
+            if (!prev) return next;
+            if (next.width * next.height <= prev.width * prev.height) {
+              return prev;
+            }
+            return next;
+          });
+        }}
+      />
+    </button>
+  );
+}
+
 function FileBodyInner({
   message,
   mine,
+  peerReadAt,
   onOpenImage,
   onTranscribe,
 }: {
   message: ChatMessage;
   mine?: boolean;
+  peerReadAt?: number | null;
   onOpenImage?: (src: string, name: string, kind?: "image" | "video") => void;
   onTranscribe?: (messageId: string) => void;
 }) {
@@ -124,56 +427,20 @@ function FileBodyInner({
     const userCaption =
       caption &&
       caption !== "Фото" &&
+      caption !== "GIF" &&
       caption !== "Видео" &&
       !/^Альбом/i.test(caption);
 
     return (
-      <div className={`bubble__album bubble__album--${Math.min(visible.length, 4)}`}>
-        <div className="bubble__album-grid">
-          {visible.map((file, index) => {
-            const src = signedMediaSrc(file.url) || mediaSrc(file.url);
-            const openSrc = signedMediaSrc(file.url) || bareMediaUrl(file.url);
-            const video = isVideoAttachment(file);
-            return (
-              <button
-                key={`${src}-${index}`}
-                type="button"
-                className="bubble__album-cell"
-                onClick={() =>
-                  onOpenImage?.(openSrc, file.name, video ? "video" : "image")
-                }
-                aria-label={video ? "Открыть видео" : "Открыть фото"}
-              >
-                {video ? (
-                  <>
-                    { }
-                    <video
-                      src={src}
-                      muted
-                      playsInline
-                      preload="metadata"
-                    />
-                    <span className="bubble__video-play" aria-hidden>
-                      <IconPlay size={18} />
-                    </span>
-                  </>
-                ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={src}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    fetchPriority="low"
-                  />
-                )}
-              </button>
-            );
-          })}
-        </div>
-        {userCaption ? (
-          <p className="bubble__text bubble__media-caption">{caption}</p>
-        ) : null}
+      <div className="bubble__album">
+        <AlbumMosaic files={visible} onOpenImage={onOpenImage} />
+        <MediaCaption
+          caption={userCaption ? caption : undefined}
+          createdAt={message.createdAt}
+          mine={mine}
+          status={message.status}
+          peerReadAt={peerReadAt}
+        />
       </div>
     );
   }
@@ -187,6 +454,7 @@ function FileBodyInner({
     caption &&
     caption !== file.name &&
     caption !== "Фото" &&
+    caption !== "GIF" &&
     caption !== "Видео" &&
     caption !== "Аудио" &&
     caption !== "Голосовое сообщение";
@@ -194,28 +462,44 @@ function FileBodyInner({
   if (isImage) {
     const src = signedMediaSrc(file.url) || mediaSrc(file.url);
     const openSrc = signedMediaSrc(file.url) || bareMediaUrl(file.url);
+    const gif = isGifAttachment(file);
     return (
-      <div className="bubble__media bubble__media--image">
-        <button
-          type="button"
-          className="bubble__image-btn"
-          onClick={() => onOpenImage?.(openSrc, file.name, "image")}
-          aria-label="Открыть фото"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+      <div
+        className={`bubble__media bubble__media--image${gif ? " bubble__media--gif" : ""}`}
+      >
+        {gif ? (
+          <GifMedia
+            file={file}
             src={src}
-            alt=""
-            className="bubble__image"
-            loading="lazy"
-            decoding="async"
-            fetchPriority="low"
-            referrerPolicy="no-referrer"
+            openSrc={openSrc}
+            onOpenImage={onOpenImage}
           />
-        </button>
-        {userCaption ? (
-          <p className="bubble__text bubble__media-caption">{caption}</p>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            className="bubble__image-btn"
+            onClick={() => onOpenImage?.(openSrc, file.name, "image")}
+            aria-label="Открыть фото"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={src}
+              alt=""
+              className="bubble__image"
+              loading="lazy"
+              decoding="async"
+              fetchPriority="low"
+              referrerPolicy="no-referrer"
+            />
+          </button>
+        )}
+        <MediaCaption
+          caption={userCaption ? caption : undefined}
+          createdAt={message.createdAt}
+          mine={mine}
+          status={message.status}
+          peerReadAt={peerReadAt}
+        />
       </div>
     );
   }
@@ -228,9 +512,13 @@ function FileBodyInner({
           url={file.url}
           onOpen={() => onOpenImage?.(openSrc, file.name, "video")}
         />
-        {userCaption ? (
-          <p className="bubble__text bubble__media-caption">{caption}</p>
-        ) : null}
+        <MediaCaption
+          caption={userCaption ? caption : undefined}
+          createdAt={message.createdAt}
+          mine={mine}
+          status={message.status}
+          peerReadAt={peerReadAt}
+        />
       </div>
     );
   }
@@ -277,6 +565,15 @@ function FileBodyInner({
                 <VoiceTranscript
                   message={message}
                   mine={mine}
+                  clock={
+                    <SendMeta
+                      createdAt={message.createdAt}
+                      mine={mine}
+                      status={message.status}
+                      peerReadAt={peerReadAt}
+                      className="voice-transcript__time"
+                    />
+                  }
                   onTranscribe={onTranscribe}
                 />
               ) : null}
@@ -286,8 +583,22 @@ function FileBodyInner({
         {showUserCaption ? (
           <p className="bubble__text bubble__audio-caption">
             {renderMessageText(caption)}
+            <SendMeta
+              createdAt={message.createdAt}
+              mine={mine}
+              status={message.status}
+              peerReadAt={peerReadAt}
+            />
           </p>
-        ) : null}
+        ) : voiceOnly ? null : (
+          <SendMeta
+            createdAt={message.createdAt}
+            mine={mine}
+            status={message.status}
+            peerReadAt={peerReadAt}
+            className="bubble__audio-clock"
+          />
+        )}
       </div>
     );
   }
@@ -331,8 +642,21 @@ function FileBodyInner({
       {userCaption ? (
         <p className="bubble__text bubble__media-caption">
           {renderMessageText(caption)}
+          <SendMeta
+            createdAt={message.createdAt}
+            mine={mine}
+            status={message.status}
+            peerReadAt={peerReadAt}
+          />
         </p>
-      ) : null}
+      ) : (
+        <SendMeta
+          createdAt={message.createdAt}
+          mine={mine}
+          status={message.status}
+          peerReadAt={peerReadAt}
+        />
+      )}
     </div>
   );
 }
@@ -341,6 +665,9 @@ function FileBodyInner({
 const FileBody = memo(FileBodyInner, (prev, next) => {
   if (
     prev.mine !== next.mine ||
+    prev.peerReadAt !== next.peerReadAt ||
+    prev.message.status !== next.message.status ||
+    prev.message.createdAt !== next.message.createdAt ||
     prev.onOpenImage !== next.onOpenImage ||
     prev.onTranscribe !== next.onTranscribe ||
     prev.message.text !== next.message.text ||
@@ -361,7 +688,9 @@ const FileBody = memo(FileBodyInner, (prev, next) => {
       file.url === b[index]?.url &&
       file.mime === b[index]?.mime &&
       file.name === b[index]?.name &&
-      file.size === b[index]?.size,
+      file.size === b[index]?.size &&
+      file.width === b[index]?.width &&
+      file.height === b[index]?.height,
   );
 });
 
@@ -370,6 +699,9 @@ function MessageBubbleInner({
   mine,
   peopleById,
   showMeta = true,
+  showAvatar = true,
+  attachPrev = false,
+  attachNext = false,
   animate = true,
   selfId,
   searchQuery = "",
@@ -485,14 +817,17 @@ function MessageBubbleInner({
     const sticker = message.sticker;
     const stickerClassName = `bubble-row bubble-row--plaque bubble-row--sticker ${
       mine ? "bubble-row--mine" : ""
-    } ${showMeta ? "" : "bubble-row--compact"}`;
+    } ${showMeta ? "" : "bubble-row--compact"} ${
+      attachPrev ? "bubble-row--attach-prev" : ""
+    } ${attachNext ? "bubble-row--attach-next" : ""}`;
     const stickerInner = (
       <>
-        {showMeta ? (
+        {showAvatar ? (
           <Avatar name={author.name} src={author.avatarUrl} size="md" />
         ) : (
           <span className="bubble-row__spacer" aria-hidden />
         )}
+        <div className="sticker-bubble-wrap">
         <button
           type="button"
           className="sticker-bubble"
@@ -557,6 +892,14 @@ function MessageBubbleInner({
             />
           )}
         </button>
+        <SendMeta
+          createdAt={message.createdAt}
+          mine={mine}
+          status={message.status}
+          peerReadAt={peerReadAt}
+          className="bubble__sticker-time"
+        />
+        </div>
       </>
     );
 
@@ -590,6 +933,11 @@ function MessageBubbleInner({
       ? soloEmojiSizePx(message.text)
       : 0;
   const bigEmoji = soloSize > 0;
+  const skipTail =
+    attachNext ||
+    bigEmoji ||
+    (mediaMsg && !hasVisibleMediaCaption(message));
+  const bubbleShape = plaqueShapeClass(attachPrev, attachNext, skipTail);
   const canCopy = !audioMsg && !mediaMsg;
   const copyText =
     message.kind === "file"
@@ -660,25 +1008,27 @@ function MessageBubbleInner({
         .map((part) => part.value)
     : [];
 
-  const timeLabel = formatMessageTime(message.createdAt);
-  const displayName = mine ? "Вы" : author.name;
+  const sendTime = (
+    <SendMeta
+      createdAt={message.createdAt}
+      mine={mine}
+      status={message.status}
+      peerReadAt={peerReadAt}
+    />
+  );
 
   const body = (
     <>
-      {showMeta ? (
+      {showAvatar ? (
         <Avatar name={author.name} src={author.avatarUrl} size="md" />
       ) : (
-        <span className="bubble-row__spacer" aria-hidden>
-          <time dateTime={new Date(message.createdAt).toISOString()}>
-            {timeLabel}
-          </time>
-        </span>
+        <span className="bubble-row__spacer" aria-hidden />
       )}
       <div
         ref={bubbleRef}
         className={`bubble ${mine ? "bubble--mine" : "bubble--theirs"} ${
           showMeta ? "" : "bubble--compact"
-        } ${mediaMsg ? "bubble--media" : ""} ${
+        } ${bubbleShape} ${mediaMsg ? "bubble--media" : ""} ${
           audioMsg ? "bubble--audio" : ""
         } ${bigEmoji ? "bubble--emoji" : ""} ${
           menuOpen ? "is-actions-open" : ""
@@ -690,20 +1040,9 @@ function MessageBubbleInner({
           openMenu();
         }}
       >
-        {showMeta && (
+        {showMeta && !mine && (
           <div className="bubble__meta-line">
-            <span className="bubble__author">{displayName}</span>
-            <time
-              className="bubble__time"
-              dateTime={new Date(message.createdAt).toISOString()}
-            >
-              {timeLabel}
-            </time>
-            {mine && message.status === "pending" && (
-              <span className="bubble__status" aria-label="отправка">
-                <i className="bubble__spinner" aria-hidden />
-              </span>
-            )}
+            <span className="bubble__author">{author.name}</span>
           </div>
         )}
 
@@ -733,54 +1072,39 @@ function MessageBubbleInner({
           <FileBody
             message={message}
             mine={mine}
+            peerReadAt={peerReadAt}
             onOpenImage={onOpenImage}
             onTranscribe={onTranscribe}
           />
-        ) : (
-          <p
-            className={`bubble__text${bigEmoji ? " bubble__text--emoji" : ""}`}
-            style={
-              bigEmoji
-                ? ({ "--emoji-solo-size": `${soloSize}px` } as CSSProperties)
-                : undefined
-            }
-          >
-            {bigEmoji
-              ? soloGlyphs.map((glyph, index) => (
+        ) : bigEmoji ? (
+          <>
+            {message.editedAt ? (
+              <em className="bubble__edited">изменено</em>
+            ) : null}
+            <div className="bubble__emoji-line">
+              <p
+                className="bubble__text bubble__text--emoji"
+                style={
+                  { "--emoji-solo-size": `${soloSize}px` } as CSSProperties
+                }
+              >
+                {soloGlyphs.map((glyph, index) => (
                   <span key={`${glyph}-${index}`} className="emoji-glyph">
                     {glyph}
                   </span>
-                ))
-              : textNode}
-            {!bigEmoji && message.editedAt ? (
+                ))}
+              </p>
+              {sendTime}
+            </div>
+          </>
+        ) : (
+          <p className="bubble__text">
+            {textNode}
+            {message.editedAt ? (
               <em className="bubble__edited"> изменено</em>
             ) : null}
+            {sendTime}
           </p>
-        )}
-        {bigEmoji && message.editedAt ? (
-          <em className="bubble__edited">изменено</em>
-        ) : null}
-
-        {mine &&
-          !message.status &&
-          !mediaMsg &&
-          message.kind !== "file" && (
-          <span
-            className={`bubble__receipt ${
-              peerReadAt && peerReadAt >= message.createdAt ? "is-read" : ""
-            }`}
-            aria-label={
-              peerReadAt && peerReadAt >= message.createdAt
-                ? "Прочитано"
-                : "Отправлено"
-            }
-          >
-            {peerReadAt && peerReadAt >= message.createdAt ? (
-              <IconCheckDouble size={14} />
-            ) : (
-              <IconCheck size={14} />
-            )}
-          </span>
         )}
 
         {!!message.reactions?.length && (
@@ -796,7 +1120,7 @@ function MessageBubbleInner({
                   className={`bubble__reaction ${active ? "is-active" : ""}`}
                   onClick={() => onReact?.(message.id, reaction.emoji)}
                 >
-                  <span>{reaction.emoji}</span>
+                  <span className="bubble__reaction-emoji">{reaction.emoji}</span>
                   <em>{reaction.userIds.length}</em>
                 </button>
               );
@@ -887,9 +1211,11 @@ function MessageBubbleInner({
     </>
   );
 
-  /* Discord-style full-width row: avatar | name+time | body (not TG bubbles) */
+  /* TG-style row: avatar at bottom of last message in a same-author streak */
   const className = `bubble-row bubble-row--plaque ${mine ? "bubble-row--mine" : ""} ${
     showMeta ? "" : "bubble-row--compact"
+  } ${attachPrev ? "bubble-row--attach-prev" : ""} ${
+    attachNext ? "bubble-row--attach-next" : ""
   } ${dimmed ? "is-dimmed" : ""} ${highlighted ? "is-flash" : ""}`;
 
   const touchProps = {

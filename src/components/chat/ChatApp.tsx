@@ -500,17 +500,30 @@ export function ChatApp() {
 
   useEffect(() => {
     function syncViewport() {
-      const height = window.visualViewport?.height ?? window.innerHeight;
+      const vv = window.visualViewport;
+      const height = vv?.height ?? window.innerHeight;
       document.documentElement.style.setProperty(
         "--app-height",
         `${Math.round(height)}px`,
       );
+      if (vv) {
+        const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        if (covered > 120) {
+          const pickerHeight = Math.round(Math.min(Math.max(covered, 220), 420));
+          document.documentElement.style.setProperty(
+            "--picker-height",
+            `${pickerHeight}px`,
+          );
+        }
+      }
     }
     syncViewport();
     window.visualViewport?.addEventListener("resize", syncViewport);
+    window.visualViewport?.addEventListener("scroll", syncViewport);
     window.addEventListener("resize", syncViewport);
     return () => {
       window.visualViewport?.removeEventListener("resize", syncViewport);
+      window.visualViewport?.removeEventListener("scroll", syncViewport);
       window.removeEventListener("resize", syncViewport);
     };
   }, []);
@@ -1398,6 +1411,7 @@ export function ChatApp() {
                 chats={chats}
                 people={people}
                 currentUserId={account.userId}
+                currentUserName={selfName}
                 currentChatId={session?.room}
                 focus={sidebarPanel}
                 onFocusChange={setSidebarPanel}

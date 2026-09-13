@@ -17,6 +17,7 @@ import type {
 } from "@/lib/types";
 import {
   MAX_FILES_AT_ONCE,
+  chunkItems,
   albumPreviewText,
   attachmentPreviewText,
   audioDisplayName,
@@ -27,6 +28,7 @@ import {
   isVoiceNote,
   messageAttachments,
   uploadFileWithRetry,
+  parseMediaSize,
   runPool,
   validateAvatarFile,
   validateFile,
@@ -39,6 +41,7 @@ import {
 } from "@/lib/notify";
 import { isChatMuted } from "@/lib/mute";
 import { compressUploadBatch } from "@/lib/compressImage";
+import { readMediaSize } from "@/lib/mediaSize";
 import { watchAppBoot } from "@/lib/liveReload";
 import { parseGiphyMediaUrl } from "@/lib/giphyMedia";
 
@@ -94,6 +97,7 @@ export function useChat() {
   const pendingAckTimersRef = useRef(new Map<string, number>());
   const historyWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyCacheRef = useRef(new Map<string, ChatMessage[]>());
+  const peerReadCacheRef = useRef(new Map<string, number | null>());
   const previousRoomRef = useRef<{
     session: Session;
     messages: ChatMessage[];
@@ -375,13 +379,19 @@ export function useChat() {
 
     socket.on(
       "history",
-      (payload: ChatMessage[] | { chatId?: string; messages?: ChatMessage[] }) => {
+      (payload: ChatMessage[] | { chatId?: string; messages?: ChatMessage[]; peerReadAt?: number | null }) => {
         const chatId = Array.isArray(payload) ? null : String(payload?.chatId || "");
         const history = Array.isArray(payload)
           ? payload
           : Array.isArray(payload?.messages)
             ? payload.messages
             : [];
+        if (!Array.isArray(payload) && "peerReadAt" in payload) {
+          const value =
+            typeof payload.peerReadAt === "number" ? payload.peerReadAt : null;
+          setPeerReadAt(value);
+          if (chatId) peerReadCacheRef.current.set(chatId, value);
+        }
 
         if (chatId) {
           if (!expectedRoomRef.current) {
@@ -528,6 +538,7 @@ export function useChat() {
         if (payload.userId && selfId && payload.userId === selfId) return;
         const readAt = Number(payload?.readAt) || Date.now();
         setPeerReadAt(readAt);
+        peerReadCacheRef.current.set(chatId, readAt);
       },
     );
 
@@ -771,7 +782,9 @@ export function useChat() {
     setSidebarError(null);
     setTypingUsers([]);
     setComposerError(null);
-    setPeerReadAt(null);
+    setPeerReadAt(
+      roomHint ? (peerReadCacheRef.current.get(roomHint) ?? null) : null,
+    );
     setChatMembers([]);
 
     const cached = roomHint ? historyCacheRef.current.get(roomHint) : undefined;
@@ -1411,7 +1424,7 @@ export function useChat() {
         return { ok: false, completed: [] };
       }
 
-      const batchRaw = files.slice(0, MAX_FILES_AT_ONCE);
+      const batchRaw = files;
       const batch = await compressUploadBatch(batchRaw);
       for (const file of batch) {
         const invalid = validateFile(file);
@@ -1431,6 +1444,8 @@ export function useChat() {
         name: string;
         size: number;
         mime: string;
+        width?: number;
+        height?: number;
       }[] = [];
 
       const controller = new AbortController();
@@ -1451,17 +1466,21 @@ export function useChat() {
             if (controller.signal.aborted) {
               throw new Error("Загрузка отменена");
             }
-            const uploaded = await uploadFileWithRetry(file, account.token, {
-              signal: controller.signal,
-              onProgress: (ratio) => {
-                loadedParts[index] = file.size * ratio;
-                reportProgress();
-              },
-            });
+            const [uploaded, pixels] = await Promise.all([
+              uploadFileWithRetry(file, account.token, {
+                signal: controller.signal,
+                onProgress: (ratio) => {
+                  loadedParts[index] = file.size * ratio;
+                  reportProgress();
+                },
+              }),
+              readMediaSize(file),
+            ]);
             loadedParts[index] = file.size;
             completed.push(batchRaw[index] ?? file);
             reportProgress();
-            return uploaded;
+            const size = parseMediaSize(pixels);
+            return size ? { ...uploaded, ...size } : uploaded;
           });
           uploadedFiles.push(...uploadedList);
           options?.onProgress?.(0.99);
@@ -1472,16 +1491,20 @@ export function useChat() {
           }
 
           const file = batch[index];
-          const uploaded = await uploadFileWithRetry(file, account.token, {
-            signal: controller.signal,
-            onProgress: (ratio) => {
-              const current = loadedBytes + file.size * ratio;
-              // Leave a little room for the socket send after HTTP finishes.
-              options?.onProgress?.(Math.min(0.97, current / totalBytes));
-            },
-          });
+          const [uploaded, pixels] = await Promise.all([
+            uploadFileWithRetry(file, account.token, {
+              signal: controller.signal,
+              onProgress: (ratio) => {
+                const current = loadedBytes + file.size * ratio;
+                // Leave a little room for the socket send after HTTP finishes.
+                options?.onProgress?.(Math.min(0.97, current / totalBytes));
+              },
+            }),
+            readMediaSize(file),
+          ]);
           loadedBytes += file.size;
-          uploadedFiles.push(uploaded);
+          const size = parseMediaSize(pixels);
+          uploadedFiles.push(size ? { ...uploaded, ...size } : uploaded);
           // Composer tracks pending by original File refs; compression may replace them.
           completed.push(batchRaw[index] ?? file);
           options?.onProgress?.(Math.min(0.99, loadedBytes / totalBytes));
@@ -1527,36 +1550,43 @@ export function useChat() {
         }
 
         if (asAlbum) {
-          await new Promise<void>((resolve, reject) => {
-            const socket = socketRef.current;
-            if (!socket?.connected) {
-              reject(new Error("Нет соединения"));
-              return;
-            }
+          const albums = chunkItems(uploadedFiles, MAX_FILES_AT_ONCE);
+          for (let albumIndex = 0; albumIndex < albums.length; albumIndex += 1) {
+            const album = albums[albumIndex];
+            const firstAlbum = albumIndex === 0;
+            await new Promise<void>((resolve, reject) => {
+              const socket = socketRef.current;
+              if (!socket?.connected) {
+                reject(new Error("Нет соединения"));
+                return;
+              }
 
-            const timer = window.setTimeout(() => {
-              reject(new Error("Сервер не ответил на отправку альбома"));
-            }, 20_000);
+              const timer = window.setTimeout(() => {
+                reject(new Error("Сервер не ответил на отправку альбома"));
+              }, 20_000);
 
-            socket.emit(
-              "message:file",
-              {
-                chatId,
-                files: uploadedFiles,
-                file: uploadedFiles[0],
-                text: caption,
-                replyToId: options?.replyToId || undefined,
-              },
-              (ack: { ok: boolean; error?: string }) => {
-                window.clearTimeout(timer);
-                if (!ack?.ok) {
-                  reject(new Error(ack?.error || "Альбом не отправился"));
-                  return;
-                }
-                resolve();
-              },
-            );
-          });
+              socket.emit(
+                "message:file",
+                {
+                  chatId,
+                  files: album.length > 1 ? album : undefined,
+                  file: album[0],
+                  text: firstAlbum ? caption : "",
+                  replyToId: firstAlbum
+                    ? options?.replyToId || undefined
+                    : undefined,
+                },
+                (ack: { ok: boolean; error?: string }) => {
+                  window.clearTimeout(timer);
+                  if (!ack?.ok) {
+                    reject(new Error(ack?.error || "Альбом не отправился"));
+                    return;
+                  }
+                  resolve();
+                },
+              );
+            });
+          }
         }
 
         options?.onProgress?.(1);
@@ -1631,6 +1661,7 @@ export function useChat() {
                 name: file.name || remote.name,
                 size: file.size || 0,
                 mime: remote.mime,
+                ...parseMediaSize(file),
               },
               text: options?.caption || "",
               replyToId: options?.replyToId || undefined,

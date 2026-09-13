@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { giphyApiKey } from '@/lib/giphyKey';
 import { pickGiphyPreviewUrl, pickGiphySendAsset } from '@/lib/giphyMedia';
 
 const GIPHY_BASE = 'https://api.giphy.com/v1/gifs';
 const GIPHY_FETCH_MS = 8_000;
-
-function giphyApiKey() {
-  return String(process.env.GIPHY_API_KEY || "").trim();
-}
 
 // ============================================
 // Серверный кэш (живёт в памяти Node.js)
@@ -138,8 +135,14 @@ export async function GET(request: NextRequest) {
           title: item.title || '',
           url: send.url,
           preview: pickGiphyPreviewUrl(item.images) || send.url,
-          width: Number(item.images?.fixed_width?.width) || 320,
-          height: Number(item.images?.fixed_width?.height) || 180,
+          width:
+            Number(item.images?.original?.width) ||
+            Number(item.images?.fixed_width?.width) ||
+            320,
+          height:
+            Number(item.images?.original?.height) ||
+            Number(item.images?.fixed_width?.height) ||
+            180,
           size: send.size,
           mime: send.mime,
         };
