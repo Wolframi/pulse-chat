@@ -271,7 +271,8 @@ function AlbumMosaic({
     <div
       className="bubble__album-grid"
       style={{
-        width: box.width,
+        width: "100%",
+        maxWidth: box.width,
         aspectRatio: `${box.width} / ${box.height}`,
       }}
     >

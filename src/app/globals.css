@@ -4775,6 +4775,7 @@ button:active:not(:disabled) {
   padding: 0;
   width: fit-content;
   max-width: min(100%, 430px);
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -4813,7 +4814,7 @@ button:active:not(:disabled) {
   overflow: visible;
   background: transparent !important;
   box-shadow: none !important;
-  max-width: min(100%, calc(430px + 72px));
+  max-width: min(100%, 430px);
 }
 
 .bubble-row--plaque .bubble--media:not(:has(.bubble__media-caption)) .bubble__media {
@@ -4826,12 +4827,11 @@ button:active:not(:disabled) {
 }
 
 .bubble-row--plaque .bubble--media:not(:has(.bubble__media-caption)) .bubble__album {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-end;
-  column-gap: 6px;
+  display: grid;
+  position: relative;
   width: 430px;
   max-width: 100%;
+  min-width: 0;
 }
 
 .bubble-row--plaque .bubble--media:not(:has(.bubble__media-caption)) .bubble__image-btn,
@@ -4961,7 +4961,6 @@ button:active:not(:disabled) {
 
 .bubble-row--plaque .bubble.bubble--emoji > .bubble__time,
 .bubble-row--plaque .bubble__emoji-line > .bubble__time,
-.bubble-row--plaque .bubble--media .bubble__media-time,
 .sticker-bubble-wrap > .bubble__time {
   position: static;
   float: none;
@@ -4988,7 +4987,6 @@ button:active:not(:disabled) {
 
 .bubble-row--plaque .bubble.bubble--emoji.bubble--mine > .bubble__time,
 .bubble-row--plaque .bubble.bubble--emoji.bubble--mine .bubble__emoji-line > .bubble__time,
-.bubble-row--plaque .bubble--media.bubble--mine .bubble__media-time,
 .bubble-row--plaque.bubble-row--mine .sticker-bubble-wrap > .bubble__time {
   color: var(--bubble-me-meta, var(--muted));
 }
@@ -5123,9 +5121,12 @@ button:active:not(:disabled) {
 
 .bubble__album {
   display: grid;
+  position: relative;
   gap: 0;
   width: 430px;
   max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .bubble__album-grid {
@@ -5135,7 +5136,9 @@ button:active:not(:disabled) {
   max-width: 100%;
   height: auto;
   flex: 0 1 auto;
+  min-width: 0;
   min-height: 120px;
+  box-sizing: border-box;
   border-radius: 14px;
   overflow: hidden;
   background: transparent;
@@ -10103,9 +10106,11 @@ button:active:not(:disabled) {
     max-width: min(85%, 100%);
   }
 
-  .bubble-row:has(.bubble--media) {
-    max-width: min(88%, 100%);
-    width: min(88%, 100%);
+  .bubble-row:has(.bubble--media),
+  .bubble-row--plaque:has(.bubble--media) {
+    max-width: 100%;
+    width: 100%;
+    min-width: 0;
   }
 
   /* Voice/audio: fit chat column (avatar spacer + padding), no horizontal overflow */
@@ -10119,13 +10124,32 @@ button:active:not(:disabled) {
     padding: 8px 11px;
   }
 
-  .bubble-row--plaque .bubble {
+  .bubble-row--plaque .bubble:not(.bubble--media):not(.bubble--audio) {
     padding: 8px 11px;
     max-width: min(82%, 420px);
+    width: max-content;
   }
 
-  .bubble-row--plaque .bubble:not(.bubble--media):not(.bubble--audio) {
-    width: max-content;
+  .bubble-row--plaque .bubble.bubble--media {
+    padding: 0;
+    width: 100%;
+    max-width: min(100%, 430px);
+    min-width: 0;
+  }
+
+  .bubble-row--plaque .bubble__album,
+  .bubble-row--plaque .bubble__album-grid,
+  .bubble-group__body .bubble__album,
+  .bubble-group__body .bubble__album-grid {
+    width: 430px;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .bubble-row--plaque .bubble--media .bubble__media-time {
+    position: absolute;
+    right: 8px;
+    bottom: 6px;
   }
 
   .bubble-group {
