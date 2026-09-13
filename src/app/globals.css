@@ -4822,7 +4822,7 @@ button:active:not(:disabled) {
   flex-direction: row;
   align-items: flex-end;
   column-gap: 6px;
-  width: fit-content;
+  width: 430px;
   max-width: 100%;
 }
 
@@ -5111,26 +5111,21 @@ button:active:not(:disabled) {
 .bubble__album {
   display: grid;
   gap: 0;
-  width: min(100%, 430px);
+  width: 430px;
   max-width: 100%;
 }
 
 .bubble__album-grid {
   position: relative;
   display: block;
-  width: min(100%, 430px);
+  width: 430px;
   max-width: 100%;
   height: auto;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-height: 120px;
   border-radius: 14px;
   overflow: hidden;
   background: transparent;
-}
-
-.bubble__album-sizer {
-  display: block;
-  width: 100%;
-  pointer-events: none;
 }
 
 .bubble__album-cell {

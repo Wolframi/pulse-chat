@@ -250,7 +250,7 @@ function AlbumMosaic({
   const sizes = files.map((file, index) => {
     const stored = parseMediaSize(file);
     if (stored) return stored;
-    return probed[`${file.url}:${index}`] || { width: 100, height: 100 };
+    return probed[`${file.url}:${index}`] || { width: 1280, height: 960 };
   });
   const cells = layoutMediaGroup(sizes);
   const box = albumBounds(cells);
@@ -270,13 +270,11 @@ function AlbumMosaic({
   return (
     <div
       className="bubble__album-grid"
-      style={{ aspectRatio: `${box.width} / ${box.height}` }}
+      style={{
+        width: box.width,
+        aspectRatio: `${box.width} / ${box.height}`,
+      }}
     >
-      <i
-        className="bubble__album-sizer"
-        style={{ paddingTop: `${(box.height / box.width) * 100}%` }}
-        aria-hidden
-      />
       {files.map((file, index) => {
         const cell = cells[index];
         if (!cell) return null;
