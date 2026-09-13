@@ -823,6 +823,34 @@ setInterval(() => {
       });
     }
   }
+  // Sweep ghost voice members: after a restart, members restored from
+  // live-media.json have socketId "" — drop them if the user never came back.
+  for (const [channelId, room] of [...voiceByChannel.entries()]) {
+    const found = findVoiceChannel(channelId);
+    if (!found) {
+      // Channel no longer exists — drop the whole room.
+      for (const userId of room.keys()) {
+        voiceByUser.delete(userId);
+        void removeLiveKitParticipant(channelId, userId);
+      }
+      voiceByChannel.delete(channelId);
+      continue;
+    }
+    let changed = false;
+    for (const [userId, member] of [...room.entries()]) {
+      if (member.socketId || userIsConnected(userId)) continue;
+      room.delete(userId);
+      voiceByUser.delete(userId);
+      changed = true;
+      void removeLiveKitParticipant(channelId, userId);
+    }
+    if (room.size === 0) {
+      voiceByChannel.delete(channelId);
+      if (ioServer) emitVoiceState(ioServer, found.group);
+      continue;
+    }
+    if (changed && ioServer) emitVoiceState(ioServer, found.group);
+  }
   if (callsById.size || voiceByChannel.size) persistLiveMedia();
 }, 20_000).unref();
 
