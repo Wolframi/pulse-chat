@@ -22,11 +22,7 @@ fi
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$LOG_FILE"; }
 
 build_app() {
-  if SEED_DEMO=0 NEXT_PUBLIC_DEMO=0 npm run build; then
-    return 0
-  fi
-  log "npm run build failed, retrying next build --webpack"
-  SEED_DEMO=0 NEXT_PUBLIC_DEMO=0 npx next build --webpack
+  SEED_DEMO=0 NEXT_PUBLIC_DEMO=0 ./node_modules/.bin/next build
 }
 
 cd "$APP_DIR"

@@ -10,7 +10,28 @@ const nextConfig: NextConfig = {
     "*.trycloudflare.com",
     ...lanDevHosts(),
   ],
-  webpack: (config, { dev }) => {
+  transpilePackages: [
+    "react-voice-recorder-kit",
+    "@wavesurfer/react",
+    "wavesurfer.js",
+    "emoji-mart",
+    "@emoji-mart/react",
+    "@emoji-mart/data",
+    "emojibase-data",
+    "yet-another-react-lightbox",
+    "sonner",
+    "linkify-react",
+    "linkifyjs",
+    "lucide-react",
+    "react-textarea-autosize",
+    "vaul",
+    "@livekit/krisp-noise-filter",
+    "@shiguredo/rnnoise-wasm",
+  ],
+};
+
+if (process.env.NODE_ENV !== "production") {
+  nextConfig.webpack = (config, { dev }) => {
     if (dev) {
       const extra = ["**/uploads/**", "**/data/**"];
       const prev = config.watchOptions?.ignored;
@@ -32,25 +53,7 @@ const nextConfig: NextConfig = {
       };
     }
     return config;
-  },
-  transpilePackages: [
-    "react-voice-recorder-kit",
-    "@wavesurfer/react",
-    "wavesurfer.js",
-    "emoji-mart",
-    "@emoji-mart/react",
-    "@emoji-mart/data",
-    "emojibase-data",
-    "yet-another-react-lightbox",
-    "sonner",
-    "linkify-react",
-    "linkifyjs",
-    "lucide-react",
-    "react-textarea-autosize",
-    "vaul",
-    "@livekit/krisp-noise-filter",
-    "@shiguredo/rnnoise-wasm",
-  ],
-};
+  };
+}
 
 export default nextConfig;
