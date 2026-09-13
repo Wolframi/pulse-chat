@@ -45,6 +45,18 @@ export function thumbSrc(url: string, width = 430) {
   return `${encoded}${encoded.includes("?") ? "&" : "?"}w=${width}`;
 }
 
+/** Drop `w=` so a failed thumbnail can fall back to the original file. */
+export function withoutThumbParam(url: string) {
+  const q = url.indexOf("?");
+  if (q < 0) return url;
+  const path = url.slice(0, q);
+  const params = new URLSearchParams(url.slice(q + 1));
+  if (!params.has("w")) return url;
+  params.delete("w");
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
 /** Human-readable attachment name without server uuid_ prefix. */
 export function displayFileName(name?: string | null) {
   const raw = String(name || "").trim();

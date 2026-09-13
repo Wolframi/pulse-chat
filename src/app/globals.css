@@ -4752,11 +4752,11 @@ button:active:not(:disabled) {
 }
 
 .bubble-row--plaque .bubble__media-caption .bubble__time {
-  float: right;
-  position: relative;
-  top: 12px;
+  float: none;
+  position: static;
+  top: auto;
   display: inline-flex;
-  margin: 0 -2px -12px 12px;
+  margin: 0 0 0 8px;
   font-size: 13px;
   line-height: 1.15;
   opacity: 1;
@@ -5117,11 +5117,20 @@ button:active:not(:disabled) {
 
 .bubble__album-grid {
   position: relative;
-  width: 430px;
+  display: block;
+  width: min(100%, 430px);
   max-width: 100%;
+  height: auto;
+  flex: 0 0 auto;
   border-radius: 14px;
   overflow: hidden;
   background: transparent;
+}
+
+.bubble__album-sizer {
+  display: block;
+  width: 100%;
+  pointer-events: none;
 }
 
 .bubble__album-cell {
@@ -5157,24 +5166,23 @@ button:active:not(:disabled) {
   padding: 6px 10px 8px;
   font-size: 15px;
   line-height: 1.38;
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 10px;
+  display: block;
 }
 
 .bubble__media-caption-text {
+  display: block;
   min-width: 0;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
-.bubble__media-caption .bubble__time {
-  flex: none;
+/* Время идёт в конце последней строки текста, как в Telegram */
+.bubble__media-caption-text .bubble__time {
   float: none;
   position: static;
   top: auto;
   display: inline-flex;
-  margin: 0 0 1px;
+  margin: 0 0 0 8px;
   font-size: 13px;
   line-height: 1.15;
   opacity: 1;

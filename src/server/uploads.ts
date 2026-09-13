@@ -638,9 +638,22 @@ function pipeUpload(
 /** Delete uploads nothing references, older than ORPHAN_MIN_AGE_MS. */
 const ORPHAN_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+function isJpegFile(filePath: string) {
+  try {
+    const fd = openSync(filePath, "r");
+    const buf = Buffer.alloc(3);
+    const n = readSync(fd, buf, 0, 3, 0);
+    closeSync(fd);
+    return n >= 2 && buf[0] === 0xff && buf[1] === 0xd8;
+  } catch {
+    return false;
+  }
+}
+
 /** Synchronous ffmpeg JPEG resize — only for the (rare) first thumb hit. */
 function resizeThumbSync(source: string, target: string, width: number) {
   const tmp = `${target}.tmp`;
+  const side = Math.max(32, Math.min(1080, Math.round(width) || 430));
   try {
     const result = spawnSync(
       "ffmpeg",
@@ -649,10 +662,12 @@ function resizeThumbSync(source: string, target: string, width: number) {
         "-i",
         source,
         "-vf",
-        "scale=430:-2",
-        "-q:v",
-        "82",
+        `scale=${side}:-2`,
         "-frames:v",
+        "1",
+        "-q:v",
+        "5",
+        "-update",
         "1",
         "-f",
         "image2",
@@ -660,7 +675,7 @@ function resizeThumbSync(source: string, target: string, width: number) {
       ],
       { timeout: 15_000, stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
     );
-    if (result.status === 0 && existsSync(tmp)) {
+    if (result.status === 0 && existsSync(tmp) && isJpegFile(tmp)) {
       renameSync(tmp, target);
       return true;
     }
@@ -808,7 +823,7 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
     if (!existsSync(thumbPath) && rateLimit("thumb-gen", 120, 60_000)) {
       resizeThumbSync(filePath, thumbPath, width);
     }
-    if (existsSync(thumbPath)) {
+    if (existsSync(thumbPath) && isJpegFile(thumbPath)) {
       let thumbSize = 0;
       try {
         thumbSize = statSync(thumbPath).size;

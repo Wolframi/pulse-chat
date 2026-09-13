@@ -41,6 +41,7 @@ import {
   mediaSrc,
   signedMediaSrc,
   thumbSrc,
+  withoutThumbParam,
   downloadHref,
   displayFileName,
   messageAttachments,
@@ -227,8 +228,8 @@ function MediaCaption({
       <p className="bubble__text bubble__media-caption">
         <span className="bubble__media-caption-text">
           {renderMessageText(caption)}
+          {clock}
         </span>
-        {clock}
       </p>
     );
   }
@@ -271,6 +272,11 @@ function AlbumMosaic({
       className="bubble__album-grid"
       style={{ aspectRatio: `${box.width} / ${box.height}` }}
     >
+      <i
+        className="bubble__album-sizer"
+        style={{ paddingTop: `${(box.height / box.width) * 100}%` }}
+        aria-hidden
+      />
       {files.map((file, index) => {
         const cell = cells[index];
         if (!cell) return null;
@@ -415,6 +421,13 @@ function PhotoImage({
 }) {
   const [attempt, setAttempt] = useState(0);
   const [broken, setBroken] = useState(false);
+  const [source, setSource] = useState(src);
+
+  useEffect(() => {
+    setSource(src);
+    setAttempt(0);
+    setBroken(false);
+  }, [src]);
 
   if (broken) {
     return (
@@ -437,8 +450,8 @@ function PhotoImage({
 
   const url =
     attempt > 0
-      ? `${src}${src.includes("?") ? "&" : "?"}r=${attempt}`
-      : src;
+      ? `${source}${source.includes("?") ? "&" : "?"}r=${attempt}`
+      : source;
 
   return (
     // eslint-disable-next-line @next/next/no-img-element
@@ -452,6 +465,12 @@ function PhotoImage({
       referrerPolicy="no-referrer"
       onLoad={onLoad}
       onError={() => {
+        const original = withoutThumbParam(source);
+        if (original !== source) {
+          setSource(original);
+          setAttempt(0);
+          return;
+        }
         if (attempt < 1) setAttempt((value) => value + 1);
         else setBroken(true);
       }}
@@ -690,13 +709,15 @@ function FileBodyInner({
       })}
       {userCaption ? (
         <p className="bubble__text bubble__media-caption">
-          {renderMessageText(caption)}
-          <SendMeta
-            createdAt={message.createdAt}
-            mine={mine}
-            status={message.status}
-            peerReadAt={peerReadAt}
-          />
+          <span className="bubble__media-caption-text">
+            {renderMessageText(caption)}
+            <SendMeta
+              createdAt={message.createdAt}
+              mine={mine}
+              status={message.status}
+              peerReadAt={peerReadAt}
+            />
+          </span>
         </p>
       ) : (
         <SendMeta

@@ -157,7 +157,10 @@ export function StickerPicker({
     const el = widthProbeRef.current;
     if (!el) return;
     const measure = () => {
-      const next = Math.floor(el.clientWidth);
+      const next = Math.floor(
+        el.clientWidth || el.parentElement?.clientWidth || 0,
+      );
+      if (next < 1) return;
       setMosaicWidth((prev) => (prev === next ? prev : next));
     };
     measure();
@@ -190,8 +193,11 @@ export function StickerPicker({
   const mosaic = useMemo(() => {
     const stickers = activePack?.stickers ?? [];
     return layoutGifMosaic(
-      stickers.map((s) => ({ width: s.width || 1, height: s.height || 1 })),
-      mosaicWidth,
+      stickers.map((s) => ({
+        width: s.width || 512,
+        height: s.height || 512,
+      })),
+      mosaicWidth || 360,
       STICKER_MOSAIC_SPACING,
       STICKER_MOSAIC_TARGET_HEIGHT,
       STICKER_MOSAIC_MAX_HEIGHT,
@@ -444,7 +450,6 @@ export function StickerPicker({
       <div className="sticker-picker__grid">
         <div ref={widthProbeRef} className="sticker-picker__mosaic-width" />
         {activePack?.stickers.length ? (
-          mosaicWidth > 0 && (
             <div
               className="sticker-picker__mosaic"
               style={{ height: mosaic.height }}
@@ -508,7 +513,6 @@ export function StickerPicker({
                 );
               })}
             </div>
-          )
         ) : (
           <div className="sticker-picker__empty">
             {activePack?.canEdit
