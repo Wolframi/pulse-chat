@@ -671,7 +671,7 @@ function resizeThumbSync(source: string, target: string, width: number) {
       "signal:",
       result.signal,
       "stderr:",
-      String(result.stderr || "").slice(0, 300),
+      String(result.stderr || "").slice(-500),
     );
   } catch (error) {
     console.error("[thumbs] spawn error", (error as Error).message);
