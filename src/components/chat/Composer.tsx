@@ -423,6 +423,7 @@ export function Composer({
           if (ok) {
             onClearReply?.();
             pulseSend();
+            setPickerOpen(false);
             return;
           }
         }
@@ -446,6 +447,7 @@ export function Composer({
         if (!uploaded.ok) throw new Error("upload failed");
         onClearReply?.();
         pulseSend();
+        setPickerOpen(false);
       } catch {
         toast.error("Не удалось отправить GIF");
       } finally {

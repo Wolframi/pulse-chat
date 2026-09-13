@@ -74,12 +74,19 @@ export function MessageMenu({
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const menu = rootRef.current;
-      const width = menu?.offsetWidth || 220;
-      const height = menu?.offsetHeight || 320;
+      const width = 220;
+      const height = menu?.offsetHeight || 200;
+      const mediaLike =
+        el.classList.contains("bubble--media") ||
+        el.classList.contains("bubble--emoji") ||
+        Boolean(el.closest(".sticker-bubble-wrap, .bubble-row--sticker"));
+      const edge = mediaLike ? rect.bottom - 36 : rect.top;
       let left = mine ? rect.right - width : rect.left;
-      let top = rect.top - 8 - Math.min(height, 360);
+      let top = edge - 8 - height;
       left = Math.min(Math.max(10, left), window.innerWidth - width - 10);
-      if (top < 10) top = Math.min(rect.bottom + 8, window.innerHeight - height - 10);
+      if (top < 10) {
+        top = Math.min(rect.bottom + 8, window.innerHeight - height - 10);
+      }
       setPos({ top, left });
     }
 
@@ -108,6 +115,14 @@ export function MessageMenu({
 
   if (!open || typeof document === "undefined") return null;
 
+  const anchor = anchorRef ? anchorRef.current : anchorEl;
+  const mediaLike = Boolean(
+    anchor &&
+      (anchor.classList.contains("bubble--media") ||
+        anchor.classList.contains("bubble--emoji") ||
+        anchor.closest(".sticker-bubble-wrap, .bubble-row--sticker")),
+  );
+
   return createPortal(
     <>
       <button
@@ -118,7 +133,7 @@ export function MessageMenu({
       />
       <div
         ref={rootRef}
-        className={`msg-menu ${mine ? "msg-menu--mine" : ""}`}
+        className={`msg-menu${mine ? " msg-menu--mine" : ""}${mediaLike ? " msg-menu--media" : ""}`}
         role="menu"
         aria-label="Действия с сообщением"
         style={pos ? { top: pos.top, left: pos.left } : { opacity: 0 }}
