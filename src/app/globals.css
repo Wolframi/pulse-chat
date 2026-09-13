@@ -4752,11 +4752,11 @@ button:active:not(:disabled) {
 }
 
 .bubble-row--plaque .bubble__media-caption .bubble__time {
-  float: none;
-  position: static;
-  top: auto;
+  float: right;
+  position: relative;
+  top: 4px;
   display: inline-flex;
-  margin: 0 0 0 8px;
+  margin: 0 0 -2px 12px;
   font-size: 13px;
   line-height: 1.15;
   opacity: 1;
@@ -4816,7 +4816,15 @@ button:active:not(:disabled) {
   max-width: min(100%, calc(430px + 72px));
 }
 
-.bubble-row--plaque .bubble--media:not(:has(.bubble__media-caption)) .bubble__media,
+.bubble-row--plaque .bubble--media:not(:has(.bubble__media-caption)) .bubble__media {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  column-gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+}
+
 .bubble-row--plaque .bubble--media:not(:has(.bubble__media-caption)) .bubble__album {
   display: flex;
   flex-direction: row;
@@ -5101,11 +5109,16 @@ button:active:not(:disabled) {
 
 .bubble__media {
   display: grid;
-  gap: 6px;
-  width: fit-content;
-  max-width: 100%;
+  gap: 0;
+  width: max-content;
+  max-width: min(100%, 430px);
   min-width: 0;
   position: relative;
+}
+
+.bubble--media:has(.bubble__media-caption) .bubble__media {
+  width: max-content;
+  max-width: min(100%, 430px);
 }
 
 .bubble__album {
@@ -5162,22 +5175,25 @@ button:active:not(:disabled) {
   font-size: 15px;
   line-height: 1.38;
   display: block;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .bubble__media-caption-text {
   display: block;
+  width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
-/* Время идёт в конце последней строки текста, как в Telegram */
+/* Как в Telegram: время справа на последней строке подписи */
 .bubble__media-caption-text .bubble__time {
-  float: none;
-  position: static;
-  top: auto;
+  float: right;
+  position: relative;
+  top: 4px;
   display: inline-flex;
-  margin: 0 0 0 8px;
+  margin: 0 0 -2px 12px;
   font-size: 13px;
   line-height: 1.15;
   opacity: 1;
