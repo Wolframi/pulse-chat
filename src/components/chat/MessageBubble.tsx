@@ -59,6 +59,8 @@ type MessageBubbleProps = {
   peopleById?: Map<string, PeopleUser>;
   showMeta?: boolean;
   showAvatar?: boolean;
+  /** Avatar lives in the sticky group rail — no row spacer. */
+  hideAvatarColumn?: boolean;
   /** tdesktop isBubbleAttachedToPrevious / isBubbleAttachedToNext */
   attachPrev?: boolean;
   attachNext?: boolean;
@@ -700,6 +702,7 @@ function MessageBubbleInner({
   peopleById,
   showMeta = true,
   showAvatar = true,
+  hideAvatarColumn = false,
   attachPrev = false,
   attachNext = false,
   animate = true,
@@ -822,12 +825,23 @@ function MessageBubbleInner({
     } ${attachNext ? "bubble-row--attach-next" : ""}`;
     const stickerInner = (
       <>
-        {showAvatar ? (
+        {hideAvatarColumn ? null : showAvatar ? (
           <Avatar name={author.name} src={author.avatarUrl} size="md" />
         ) : (
           <span className="bubble-row__spacer" aria-hidden />
         )}
-        <div className="sticker-bubble-wrap">
+        <div
+          ref={bubbleRef}
+          className="sticker-bubble-wrap"
+          onContextMenu={(event) => {
+            event.preventDefault();
+            openMenu();
+          }}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={clearLongPress}
+          onTouchCancel={clearLongPress}
+        >
         <button
           type="button"
           className="sticker-bubble"
@@ -841,19 +855,6 @@ function MessageBubbleInner({
           }}
           title="Нажмите, чтобы открыть пак"
           aria-label="Открыть пак стикеров"
-          style={{
-            position: "relative",
-            display: "block",
-            width: 140,
-            height: 140,
-            maxWidth: "min(60vw, 220px)",
-            maxHeight: "min(60vw, 220px)",
-            padding: 0,
-            border: 0,
-            background: "transparent",
-            cursor: "pointer",
-            flex: "0 0 auto",
-          }}
         >
           {sticker.animated ? (
             <video
@@ -900,6 +901,29 @@ function MessageBubbleInner({
           className="bubble__sticker-time"
         />
         </div>
+        <MessageMenu
+          open={menuOpen}
+          anchorRef={bubbleRef}
+          mine={mine}
+          canCopy={false}
+          canDelete={false}
+          canEdit={false}
+          canForward={Boolean(onForward)}
+          canRetry={false}
+          canDiscard={false}
+          canDownload={false}
+          onClose={() => setMenuOpen(false)}
+          onReply={() => {
+            onReply?.(message);
+            setMenuOpen(false);
+          }}
+          onCopy={() => setMenuOpen(false)}
+          onReact={(emoji) => onReact?.(message.id, emoji)}
+          onForward={() => {
+            onForward?.(message);
+            setMenuOpen(false);
+          }}
+        />
       </>
     );
 
@@ -1019,7 +1043,7 @@ function MessageBubbleInner({
 
   const body = (
     <>
-      {showAvatar ? (
+      {hideAvatarColumn ? null : showAvatar ? (
         <Avatar name={author.name} src={author.avatarUrl} size="md" />
       ) : (
         <span className="bubble-row__spacer" aria-hidden />

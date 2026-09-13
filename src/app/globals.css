@@ -1375,7 +1375,8 @@ button:active:not(:disabled) {
   z-index: 51;
   display: grid;
   gap: 8px;
-  width: min(240px, calc(100vw - 20px));
+  width: min(220px, calc(100vw - 20px));
+  max-width: min(220px, calc(100vw - 20px));
   filter: drop-shadow(0 10px 28px rgba(0, 0, 0, 0.5));
 }
 
@@ -4213,8 +4214,6 @@ button:active:not(:disabled) {
   gap: 8px;
   flex: 0 0 auto;
   width: 100%;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 72px;
 }
 
 .message-block--media-stack {
@@ -4224,12 +4223,6 @@ button:active:not(:disabled) {
 
 .message-block--media + .message-block--media-stack {
   margin-top: 2px;
-}
-
-.message-block:has(.bubble--emoji),
-.message-block:has(.bubble-row--sticker) {
-  content-visibility: visible;
-  contain-intrinsic-size: auto 160px;
 }
 
 .room__jump {
@@ -4506,6 +4499,81 @@ button:active:not(:disabled) {
   flex: 0 0 auto;
 }
 
+.bubble-group {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 7px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 0 8px;
+}
+
+.bubble-group__rail {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-self: stretch;
+  flex: 0 0 33px;
+  width: 33px;
+}
+
+/* Sit on the last sticker/message; stick flush to the visible bottom while scrolling */
+.bubble-group__avatar {
+  position: sticky;
+  bottom: 0;
+  width: 33px;
+  height: 33px;
+  margin: 0;
+  z-index: 2;
+  flex: 0 0 auto;
+  align-self: flex-end;
+}
+
+.bubble-group__avatar .avatar--md {
+  width: 33px;
+  height: 33px;
+  font-size: 0.72rem;
+}
+
+.bubble-group__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bubble-group .message-block,
+.bubble-group .message-block--media,
+.bubble-group .message-block--media-stack,
+.bubble-group .message-block:has(.bubble-row--plaque) {
+  margin: 0;
+  gap: 0;
+  padding: 0;
+}
+
+.bubble-group .bubble-row--plaque {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.room__messages-anchor + .bubble-group {
+  margin-top: 0;
+}
+
+.room__messages-anchor + .day-chip {
+  margin-top: 6px;
+}
+
+.day-chip + .bubble-group {
+  margin-top: 2px;
+}
+
+.bubble-group .message-block:has(> .bubble-row--plaque:not(.bubble-row--compact)):not(:has(.day-chip)):not(:has(.unread-sep)) {
+  margin-top: 0;
+}
+
 .bubble-row--plaque .bubble-row__spacer {
   width: 33px;
   height: 33px;
@@ -4530,8 +4598,9 @@ button:active:not(:disabled) {
   display: block;
   position: relative;
   flex: 0 1 auto;
-  width: fit-content;
+  width: max-content;
   max-width: min(78%, 430px);
+  min-width: 0;
   /* tdesktop msgPadding: 11 / 8 / 11 / 8 */
   padding: 8px 11px;
   /* Isolated + Tail: Large/Large/Large/None — tail drawn ::after (historyBubbleTailInLeft) */
@@ -4539,7 +4608,6 @@ button:active:not(:disabled) {
   box-shadow: none !important;
   background: var(--bubble-them);
   color: var(--bubble-them-ink);
-  min-width: 0;
   align-self: flex-start;
   border: 0;
   transition: none;
@@ -4684,6 +4752,16 @@ button:active:not(:disabled) {
   width: fit-content;
   max-width: min(100%, 430px);
   overflow: hidden;
+}
+
+.bubble-row--plaque .bubble--media .bubble__image-btn:not(.bubble__image-btn--gif) {
+  width: auto;
+  max-width: min(100%, 430px);
+}
+
+.bubble-group__body .bubble-row--plaque .bubble:not(.bubble--media):not(.bubble--audio) {
+  width: max-content;
+  max-width: min(78%, 430px);
 }
 
 .bubble-row--plaque .bubble--media:has(.bubble__media-caption) {
@@ -4925,7 +5003,7 @@ button:active:not(:disabled) {
 
 .room__messages:has(.bubble-row--plaque) {
   gap: 2px;
-  padding: 24px 20px 16px;
+  padding: 24px 20px 8px;
 }
 
 .message-block:has(.bubble-row--plaque) {
@@ -5121,13 +5199,17 @@ button:active:not(:disabled) {
 }
 
 .typing-slot {
-  min-height: 28px;
-  height: 28px;
+  min-height: 0;
+  height: auto;
   display: flex;
   align-items: center;
   padding: 0;
   flex: 0 0 auto;
   overflow: hidden;
+}
+
+.typing-slot:has(.typing) {
+  min-height: 28px;
 }
 
 .typing {
@@ -6309,8 +6391,6 @@ button:active:not(:disabled) {
   gap: 8px;
   flex: 0 0 auto;
   width: 100%;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 72px;
 }
 
 .message-block--media-stack {
@@ -6320,6 +6400,11 @@ button:active:not(:disabled) {
 
 .message-block--media + .message-block--media-stack {
   margin-top: 2px;
+}
+
+.message-block--media-stack:has(.bubble-row--plaque),
+.message-block--media + .message-block--media-stack:has(.bubble-row--plaque) {
+  margin-top: 0;
 }
 
 .bubble-row__spacer {
@@ -9957,7 +10042,7 @@ button:active:not(:disabled) {
 
   .room__messages:has(.bubble-row--plaque) {
     gap: 2px;
-    padding: 10px max(10px, var(--safe-left)) 12px
+    padding: 10px max(10px, var(--safe-left)) 8px
       max(10px, var(--safe-right));
   }
 
@@ -9984,6 +10069,14 @@ button:active:not(:disabled) {
   .bubble-row--plaque .bubble {
     padding: 8px 11px;
     max-width: min(82%, 420px);
+  }
+
+  .bubble-row--plaque .bubble:not(.bubble--media):not(.bubble--audio) {
+    width: max-content;
+  }
+
+  .bubble-group {
+    padding: 0 2px;
   }
 
   .bubble-row--plaque .avatar--md {
@@ -11962,7 +12055,7 @@ button:active:not(:disabled) {
 
 .bubble-row--sticker {
   align-items: flex-end;
-  gap: 16px;
+  gap: 7px;
   max-width: 100%;
   width: 100%;
   align-self: stretch;
@@ -11979,11 +12072,9 @@ button:active:not(:disabled) {
   border: 0;
   background: transparent;
   cursor: pointer;
-  transition: transform 0.15s ease;
   flex: 0 0 auto;
 }
-.sticker-bubble:hover { transform: scale(1.04); }
-.sticker-bubble:active { transform: scale(0.97); }
+.sticker-bubble:active { transform: scale(0.98); }
 .sticker-bubble img,
 .sticker-bubble video {
   position: absolute;
