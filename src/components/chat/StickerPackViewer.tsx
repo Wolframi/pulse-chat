@@ -39,6 +39,10 @@ export function StickerPackViewer({
   const [installing, setInstalling] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!open || !packId) {
@@ -51,11 +55,17 @@ export function StickerPackViewer({
     void fetchPack(packId)
       .then((next) => {
         if (!next) {
-          setError("Пак не найден");
+          // Пака больше нет (удалил владелец) — не открываем вообще.
           setPack(null);
+          setError(null);
+          onCloseRef.current();
+          toast.error("Этот пак стикеров больше не существует");
           return;
         }
         setPack(next);
+      })
+      .catch(() => {
+        setError("Не удалось загрузить пак");
       })
       .finally(() => setLoading(false));
   }, [open, packId, fetchPack]);
