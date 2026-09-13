@@ -656,7 +656,7 @@ function resizeThumbSync(source: string, target: string, width: number) {
         "1",
         tmp,
       ],
-      { timeout: 15_000, stdio: "ignore", windowsHide: true },
+      { timeout: 15_000, stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
     );
     if (result.status === 0 && existsSync(tmp)) {
       renameSync(tmp, target);
@@ -664,10 +664,14 @@ function resizeThumbSync(source: string, target: string, width: number) {
     }
     console.error(
       "[thumbs] ffmpeg failed",
+      "status:",
       result.status,
+      "err:",
       result.error?.message || "",
       "signal:",
       result.signal,
+      "stderr:",
+      String(result.stderr || "").slice(0, 300),
     );
   } catch (error) {
     console.error("[thumbs] spawn error", (error as Error).message);
