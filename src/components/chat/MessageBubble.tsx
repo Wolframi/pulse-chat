@@ -40,6 +40,7 @@ import {
   bareMediaUrl,
   mediaSrc,
   signedMediaSrc,
+  thumbSrc,
   downloadHref,
   displayFileName,
   messageAttachments,
@@ -318,7 +319,7 @@ function AlbumMosaic({
               </>
             ) : (
               <PhotoImage
-                src={src}
+                src={thumbSrc(file.url, 430)}
                 onLoad={(event) => {
                   if (known) return;
                   rememberSize(
@@ -536,7 +537,7 @@ function FileBodyInner({
             aria-label="Открыть фото"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <PhotoImage src={src} className="bubble__image" />
+            <PhotoImage src={thumbSrc(file.url, 430)} className="bubble__image" />
           </button>
         )}
         <MediaCaption

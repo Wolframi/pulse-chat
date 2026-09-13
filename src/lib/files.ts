@@ -38,6 +38,13 @@ export function downloadHref(url: string) {
   return `${encoded}?${params.toString()}`;
 }
 
+/** Thumbnail URL for chat bubbles — server resizes JPEGs on the fly. */
+export function thumbSrc(url: string, width = 430) {
+  const encoded = signedMediaSrc(url) || mediaSrc(url);
+  if (!encoded) return "";
+  return `${encoded}${encoded.includes("?") ? "&" : "?"}w=${width}`;
+}
+
 /** Human-readable attachment name without server uuid_ prefix. */
 export function displayFileName(name?: string | null) {
   const raw = String(name || "").trim();

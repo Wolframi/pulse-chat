@@ -5,6 +5,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import Busboy from "busboy";
 import { isDevAccessibleHost } from "../lib/devHosts";
@@ -27,10 +28,13 @@ import {
   closeSync,
   readFileSync,
   readdirSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
+const THUMB_DIR = path.join(UPLOAD_DIR, "thumbs");
+const THUMB_WIDTHS = new Set(["320", "430", "860", "1080"]);
 const MAX_SIZE = 500 * 1024 * 1024;
 const AVATAR_MAX_SIZE = 2 * 1024 * 1024;
 const DEV = process.env.NODE_ENV !== "production";
@@ -157,6 +161,9 @@ loadOwners();
 
 if (!existsSync(UPLOAD_DIR)) {
   mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+if (!existsSync(THUMB_DIR)) {
+  mkdirSync(THUMB_DIR, { recursive: true });
 }
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -631,6 +638,41 @@ function pipeUpload(
 /** Delete uploads nothing references, older than ORPHAN_MIN_AGE_MS. */
 const ORPHAN_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Synchronous ffmpeg JPEG resize — only for the (rare) first thumb hit. */
+function resizeThumbSync(source: string, target: string, width: number) {
+  const tmp = `${target}.tmp`;
+  try {
+    const result = spawnSync(
+      "ffmpeg",
+      [
+        "-y",
+        "-i",
+        source,
+        "-vf",
+        `scale=min(${width}\\,iw):-2`,
+        "-q:v",
+        "82",
+        "-frames:v",
+        "1",
+        tmp,
+      ],
+      { timeout: 15_000, stdio: "ignore", windowsHide: true },
+    );
+    if (result.status === 0 && existsSync(tmp)) {
+      renameSync(tmp, target);
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    unlinkSync(tmp);
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
 export function sweepOrphanUploads(
   isReferenced: (fileName: string) => boolean,
   now = Date.now(),
@@ -739,6 +781,40 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
   const forceAttach = download || !INLINE_MEDIA_EXT.has(ext);
   const disposition = `${forceAttach ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(original)}`;
   const isVideo = mime.startsWith("video/");
+
+  // Thumbnail proxy: ?w=… serves a cached resized JPEG (photos only).
+  const wantW = parsed.searchParams.get("w");
+  if (
+    wantW &&
+    THUMB_WIDTHS.has(wantW) &&
+    looksImage &&
+    (ext === ".jpg" || ext === ".jpeg")
+  ) {
+    const width = Number(wantW);
+    const thumbName = `${fileName}.w${width}.jpg`;
+    const thumbPath = path.join(THUMB_DIR, thumbName);
+    if (!existsSync(thumbPath) && rateLimit("thumb-gen", 120, 60_000)) {
+      resizeThumbSync(filePath, thumbPath, width);
+    }
+    if (existsSync(thumbPath)) {
+      let thumbSize = 0;
+      try {
+        thumbSize = statSync(thumbPath).size;
+      } catch {
+        /* ignore */
+      }
+      if (thumbSize > 0) {
+        res.writeHead(200, {
+          "Content-Type": "image/jpeg",
+          "Cache-Control": "public, max-age=31536000, immutable",
+          "Content-Length": thumbSize,
+          "X-Content-Type-Options": "nosniff",
+        });
+        createReadStream(thumbPath).pipe(res);
+        return true;
+      }
+    }
+  }
   // Videos are often replaced after HEVC→H.264 — short cache + ETag so PC
   // browsers pick up the converted file instead of a stale audio-only copy.
   const etag = `"${size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
