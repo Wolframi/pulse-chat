@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import dynamic from "next/dynamic";
@@ -65,6 +65,35 @@ export function UnifiedPicker({
   const panelRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
   const [phone, setPhone] = useState(false);
+  const [panelHeight, setPanelHeight] = useState<number | null>(null);
+  const resizeRef = useRef<{ startY: number; startH: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) setPanelHeight(null);
+  }, [open]);
+
+  function handleResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    const el = panelRef.current;
+    if (!el) return;
+    event.preventDefault();
+    resizeRef.current = {
+      startY: event.clientY,
+      startH: el.getBoundingClientRect().height,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleResizeMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = resizeRef.current;
+    if (!drag) return;
+    // Тянем вверх — панель выше, вниз — ниже.
+    const next = Math.round(drag.startH + (drag.startY - event.clientY));
+    setPanelHeight(Math.min(560, Math.max(220, next)));
+  }
+
+  function handleResizeEnd() {
+    resizeRef.current = null;
+  }
 
   useEffect(() => {
     setMounted(true);
@@ -95,6 +124,9 @@ export function UnifiedPicker({
       // Диалог обрезки портируется в body — клики внутри него не должны закрывать панель.
       const cropDialog = document.querySelector(".avatar-crop");
       if (cropDialog && cropDialog.contains(target)) return;
+      // Клик в область сообщения (поле ввода, кнопки композера) панель не закрывает.
+      const composer = triggerRef.current?.closest(".composer");
+      if (composer && composer.contains(target)) return;
       onOpenChange(false);
     }
 
@@ -148,6 +180,7 @@ export function UnifiedPicker({
         <motion.div
           ref={panelRef}
           className="unified-picker"
+          style={panelHeight !== null ? { height: panelHeight } : undefined}
           initial={
             phone
               ? { opacity: 0, y: 16 }
@@ -163,6 +196,14 @@ export function UnifiedPicker({
           }
           transition={{ duration: phone ? 0.16 : 0.2 }}
         >
+          <div
+            className="unified-picker__resizer"
+            aria-hidden
+            onPointerDown={handleResizeStart}
+            onPointerMove={handleResizeMove}
+            onPointerUp={handleResizeEnd}
+            onPointerCancel={handleResizeEnd}
+          />
           <div className="unified-picker__tabs" role="tablist">
             <button
               type="button"

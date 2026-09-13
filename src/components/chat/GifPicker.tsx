@@ -62,12 +62,20 @@ export function GifPicker({ onSelect, onClose, open }: GifPickerProps) {
 
   const gridRef = useRef<HTMLDivElement>(null);
   const widthProbeRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const searchTimeout = useRef<NodeJS.Timeout | undefined>(undefined);
   const lastQueryRef = useRef<string>("");
   const isLoadingMoreRef = useRef<boolean>(false);
   const [mosaicWidth, setMosaicWidth] = useState(0);
+
+  useEffect(() => {
+    if (!open) return;
+    // На телефоне autoFocus открывал клавиатуру сразу — фокус только с мышью.
+    if (window.matchMedia("(pointer: coarse)").matches) return;
+    searchInputRef.current?.focus();
+  }, [open]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -296,11 +304,11 @@ export function GifPicker({ onSelect, onClose, open }: GifPickerProps) {
         <div className="gif-picker__search">
           <IconSearch size={18} />
           <input
+            ref={searchInputRef}
             type="text"
             placeholder="Поиск GIF..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            autoFocus
           />
           {query && (
             <button onClick={() => setQuery("")} aria-label="Очистить">

@@ -11320,6 +11320,31 @@ button:active:not(:disabled) {
   overflow: hidden;
 }
 
+/* Ручка для изменения высоты панели перетаскиванием */
+.unified-picker__resizer {
+  flex-shrink: 0;
+  height: 12px;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  cursor: ns-resize;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  z-index: 2;
+}
+
+.unified-picker__resizer::before {
+  content: "";
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.unified-picker__resizer:hover::before {
+  background: rgba(255, 255, 255, 0.4);
+}
+
 /* Табы — как в Telegram */
 .unified-picker__tabs {
   display: grid;
