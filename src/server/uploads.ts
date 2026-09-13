@@ -654,6 +654,8 @@ function resizeThumbSync(source: string, target: string, width: number) {
         "82",
         "-frames:v",
         "1",
+        "-f",
+        "image2",
         tmp,
       ],
       { timeout: 15_000, stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
@@ -668,10 +670,8 @@ function resizeThumbSync(source: string, target: string, width: number) {
       result.status,
       "err:",
       result.error?.message || "",
-      "signal:",
-      result.signal,
       "stderr:",
-      String(result.stderr || "").slice(-500),
+      String(result.stderr || "").slice(-200),
     );
   } catch (error) {
     console.error("[thumbs] spawn error", (error as Error).message);
@@ -795,22 +795,6 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
 
   // Thumbnail proxy: ?w=… serves a cached resized JPEG (photos only).
   const wantW = parsed.searchParams.get("w");
-  if (wantW) {
-    console.log(
-      "[thumbs] request",
-      fileName,
-      "w=",
-      wantW,
-      "okW:",
-      THUMB_WIDTHS.has(wantW),
-      "img:",
-      looksImage,
-      "ext:",
-      ext,
-      "size:",
-      size,
-    );
-  }
   if (
     wantW &&
     THUMB_WIDTHS.has(wantW) &&
@@ -821,13 +805,8 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
     const width = Number(wantW);
     const thumbName = `${fileName}.w${width}.jpg`;
     const thumbPath = path.join(THUMB_DIR, thumbName);
-    if (!existsSync(thumbPath)) {
-      if (rateLimit("thumb-gen", 120, 60_000)) {
-        console.log("[thumbs] generating", thumbPath);
-        resizeThumbSync(filePath, thumbPath, width);
-      } else {
-        console.log("[thumbs] rate limited");
-      }
+    if (!existsSync(thumbPath) && rateLimit("thumb-gen", 120, 60_000)) {
+      resizeThumbSync(filePath, thumbPath, width);
     }
     if (existsSync(thumbPath)) {
       let thumbSize = 0;
