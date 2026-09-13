@@ -26,6 +26,7 @@ import {
   readSync,
   closeSync,
   readFileSync,
+  readdirSync,
   writeFileSync,
 } from "node:fs";
 
@@ -625,6 +626,43 @@ function pipeUpload(
     if (!res.writableEnded) res.destroy();
   });
   stream.pipe(res);
+}
+
+/** Delete uploads nothing references, older than ORPHAN_MIN_AGE_MS. */
+const ORPHAN_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function sweepOrphanUploads(
+  isReferenced: (fileName: string) => boolean,
+  now = Date.now(),
+): { removed: number; freedBytes: number } {
+  let removed = 0;
+  let freedBytes = 0;
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(UPLOAD_DIR);
+  } catch {
+    return { removed, freedBytes };
+  }
+  for (const name of entries) {
+    if (isReferenced(name)) continue;
+    const full = path.join(UPLOAD_DIR, name);
+    let info;
+    try {
+      info = statSync(full);
+    } catch {
+      continue;
+    }
+    if (!info.isFile()) continue;
+    if (now - info.mtimeMs < ORPHAN_MIN_AGE_MS) continue;
+    try {
+      unlinkSync(full);
+      removed += 1;
+      freedBytes += info.size;
+    } catch {
+      /* busy or already gone */
+    }
+  }
+  return { removed, freedBytes };
 }
 
 export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {

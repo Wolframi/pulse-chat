@@ -89,6 +89,7 @@ import {
   signUploadUrl,
   signAvatarUrl,
   bareUploadUrl,
+  sweepOrphanUploads,
 } from "./src/server/uploads";
 import { handleRingtones } from "./src/server/ringtones";
 import { rateLimit } from "./src/server/rateLimit";
@@ -859,6 +860,36 @@ setInterval(() => {
   }
 }, 20_000).unref();
 
+// Hourly: delete uploads no message/user references (orphans from failed sends,
+// replaced avatars). Files younger than 7 days are never touched.
+setInterval(() => {
+  const referenced = new Set<string>();
+  const addRef = (url: string | undefined | null) => {
+    if (!url) return;
+    try {
+      const name = decodeURIComponent(path.basename(bareUploadUrl(url)));
+      if (name) referenced.add(name);
+    } catch {
+      /* ignore */
+    }
+  };
+  for (const list of chatMessages.values()) {
+    for (const message of list) {
+      for (const file of messageAttachments(message)) addRef(file.url);
+      addRef(message.sticker?.url);
+    }
+  }
+  for (const user of listUsers()) {
+    addRef((user as { avatarUrl?: string }).avatarUrl);
+  }
+  const result = sweepOrphanUploads((name) => referenced.has(name));
+  if (result.removed > 0) {
+    console.log(
+      `[uploads] sweep removed ${result.removed} orphans (${Math.round(result.freedBytes / 1024 / 1024)} MB)`,
+    );
+  }
+}, 60 * 60_000).unref();
+
 function allowCallLog(userId: string, chatId: string) {
   callLogAllow.set(`${userId}:${chatId}`, Date.now() + 90_000);
 }
@@ -943,9 +974,13 @@ function markChatRead(userId: string, chatId: string, at = Date.now()) {
   if (!lastReadByUser.has(userId)) {
     lastReadByUser.set(userId, new Map());
   }
-  lastReadByUser.get(userId)!.set(chatId, at);
-  persistReads();
-  return at;
+  const map = lastReadByUser.get(userId)!;
+  const previous = map.get(chatId) ?? 0;
+  if (at > previous) {
+    map.set(chatId, at);
+    persistReads();
+  }
+  return map.get(chatId) ?? at;
 }
 
 /** Latest last-read among other members — outgoing ticks (sent vs read). */
@@ -3545,10 +3580,13 @@ app.prepare().then(() => {
       const account = requireAccount(socket);
       const chatId = String(payload?.chatId || "");
       if (!account || !chatId) return;
+      if (!rateLimit(`chat-read:${account.userId}`, 40, 60_000)) return;
       const chat = getChat(chatId);
       if (!chat || !canAccessChat(chat, account.userId)) return;
+      const before = lastReadByUser.get(account.userId)?.get(chatId) ?? 0;
       const readAt = markChatRead(account.userId, chatId);
       emitChats(socket, account.userId);
+      if (readAt === before) return; // nothing advanced — skip broadcast
       socket.to(chatId).emit("chat:read", {
         chatId,
         userId: account.userId,

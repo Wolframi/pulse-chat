@@ -29,6 +29,10 @@ module.exports = {
       exec_mode: "fork",
       autorestart: true,
       max_memory_restart: "700M",
+      // Crash-loop guard: stop restarting after a burst instead of 297 loops.
+      min_uptime: "3s",
+      max_restarts: 10,
+      restart_delay: 3000,
       env: {
         NODE_ENV: "production",
         HOSTNAME: "127.0.0.1",
