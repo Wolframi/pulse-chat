@@ -164,6 +164,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   const durationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectedAtRef = useRef<number | null>(null);
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peerReturnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iceRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iceRestartsRef = useRef(0);
   const relayOnlyRef = useRef(false);
@@ -274,6 +275,10 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     if (cleanupTimerRef.current) {
       clearTimeout(cleanupTimerRef.current);
       cleanupTimerRef.current = null;
+    }
+    if (peerReturnTimerRef.current) {
+      clearTimeout(peerReturnTimerRef.current);
+      peerReturnTimerRef.current = null;
     }
     if (iceRestartTimerRef.current) {
       clearTimeout(iceRestartTimerRef.current);
@@ -695,6 +700,10 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   }, [scheduleCleanup]);
 
   const markConnected = useCallback(() => {
+    if (peerReturnTimerRef.current) {
+      clearTimeout(peerReturnTimerRef.current);
+      peerReturnTimerRef.current = null;
+    }
     setStatus("На линии");
     iceRestartsRef.current = 0;
     stallTicksRef.current = 0;
@@ -2016,6 +2025,17 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
             : "";
         if (reason === "disconnect" && callPcAlive(pcRef.current)) {
           setStatus("Собеседник переподключается…");
+          if (peerReturnTimerRef.current) {
+            clearTimeout(peerReturnTimerRef.current);
+          }
+          peerReturnTimerRef.current = setTimeout(() => {
+            peerReturnTimerRef.current = null;
+            if (!callIdRef.current || peerLeftRef.current) return;
+            if (callPcAlive(pcRef.current)) return;
+            // Peer never came back — exit cleanly instead of hanging.
+            setStatus("Собеседник недоступен");
+            endAndCleanup(900);
+          }, 30_000);
           return;
         }
         if (ringTimerRef.current) {

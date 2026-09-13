@@ -801,6 +801,26 @@ function loadPersistedState() {
 loadPersistedState();
 
 setInterval(() => {
+  // Sweep ghost calls: in a healthy active call BOTH sides are mapped.
+  for (const call of [...callsById.values()]) {
+    if (call.status !== "active") continue;
+    const callerIn = callByUser.get(call.callerId) === call.callId;
+    const calleeIn = callByUser.get(call.calleeId) === call.callId;
+    if (callerIn && calleeIn) continue;
+    const leftId = callerIn ? call.callerId : call.calleeId;
+    const goneId = callerIn ? call.calleeId : call.callerId;
+    clearCall(call.callId);
+    if (leftId && userIsConnected(leftId)) {
+      const gone = getUserById(goneId);
+      emitToUser(io, leftId, "call:signal", {
+        callId: call.callId,
+        fromUserId: goneId,
+        fromName: gone?.displayName || gone?.username || "Pulse",
+        type: "peer-left",
+        data: { reason: "stale" },
+      });
+    }
+  }
   if (callsById.size || voiceByChannel.size) persistLiveMedia();
 }, 20_000).unref();
 
@@ -1010,7 +1030,12 @@ function releaseBusyUserIfZombie(userId: string) {
     return;
   }
   if (call.status === "ringing") return;
-  if (!userIsConnected(peerIdOfCall(call, userId))) {
+  const peerId = peerIdOfCall(call, userId);
+  if (
+    !userIsConnected(peerId) ||
+    callByUser.get(peerId) !== call.callId
+  ) {
+    // Peer is offline or already left — the call is stale.
     clearCall(call.callId);
   }
 }
@@ -1863,26 +1888,32 @@ function afterAuth(io: Server, socket: Socket, account: AuthAccount) {
     const peerId =
       liveCall.callerId === account.userId ? liveCall.calleeId : liveCall.callerId;
     const peer = getUserById(peerId);
-    const peerPresent = userIsConnected(peerId);
-    socket.emit("call:resume", {
-      callId: liveCall.callId,
-      peerId,
-      peerName: peer?.displayName || peer?.username || "Pulse",
-      mode: liveCall.mode,
-      chatId: liveCall.chatId,
-      role: liveCall.callerId === account.userId ? "caller" : "callee",
-      peerPresent,
-    });
-    if (peerPresent && socketsForUser(account.userId).length <= 1) {
-      emitToUser(io, peerId, "call:resume", {
+    if (callByUser.get(peerId) !== liveCall.callId) {
+      // Peer already left this call — it's a ghost. Kill it instead of
+      // resuming a call that only exists in stale state.
+      clearCall(liveCall.callId);
+    } else {
+      const peerPresent = userIsConnected(peerId);
+      socket.emit("call:resume", {
         callId: liveCall.callId,
-        peerId: account.userId,
-        peerName: labelOf(account),
+        peerId,
+        peerName: peer?.displayName || peer?.username || "Pulse",
         mode: liveCall.mode,
         chatId: liveCall.chatId,
-        role: liveCall.callerId === peerId ? "caller" : "callee",
-        peerPresent: true,
+        role: liveCall.callerId === account.userId ? "caller" : "callee",
+        peerPresent,
       });
+      if (peerPresent && socketsForUser(account.userId).length <= 1) {
+        emitToUser(io, peerId, "call:resume", {
+          callId: liveCall.callId,
+          peerId: account.userId,
+          peerName: labelOf(account),
+          mode: liveCall.mode,
+          chatId: liveCall.chatId,
+          role: liveCall.callerId === peerId ? "caller" : "callee",
+          peerPresent: true,
+        });
+      }
     }
   }
 }
@@ -4154,7 +4185,8 @@ app.prepare().then(() => {
           const canResume =
             reconnect &&
             existingPair.status === "active" &&
-            userIsConnected(toUserId);
+            userIsConnected(toUserId) &&
+            callByUser.get(toUserId) === existingPair.callId;
           if (
             reconnect &&
             existingPair.status === "active" &&
