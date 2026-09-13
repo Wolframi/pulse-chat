@@ -37,6 +37,8 @@ export type ChatMessage = {
   id: string;
   /** Stable list key for optimistic → server id remaps (avoids remount jump). */
   clientKey?: string;
+  /** Sender-generated idempotency key — survives server restarts. */
+  clientId?: string;
   room: string;
   author: string;
   authorId?: string;

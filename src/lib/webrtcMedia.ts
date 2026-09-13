@@ -115,6 +115,26 @@ export function readCallNetworkSample(
   return { rttMs, lossPct, jitterMs, availableBitrate };
 }
 
+/** Inbound RTP flow (bytes + packets) — media flow watchdog. */
+export function readInboundFlow(report: RTCStatsReport): {
+  bytes: number;
+  packets: number;
+} {
+  let bytes = 0;
+  let packets = 0;
+  report.forEach((stat) => {
+    if (stat.type === "inbound-rtp") {
+      const flow = stat as {
+        bytesReceived?: number;
+        packetsReceived?: number;
+      };
+      bytes += Math.max(0, Number(flow.bytesReceived) || 0);
+      packets += Math.max(0, Number(flow.packetsReceived) || 0);
+    }
+  });
+  return { bytes, packets };
+}
+
 export function callNetworkLevel(sample: CallNetworkSample): CallNetworkLevel {
   if (
     sample.lossPct > 8 ||

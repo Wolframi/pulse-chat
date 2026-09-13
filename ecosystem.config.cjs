@@ -28,13 +28,14 @@ module.exports = {
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
-      max_memory_restart: "512M",
+      max_memory_restart: "700M",
       env: {
         NODE_ENV: "production",
-        HOSTNAME: "0.0.0.0",
+        HOSTNAME: "127.0.0.1",
         PORT: "3000",
         PUBLIC_ORIGIN: "https://193.233.247.171.sslip.io",
-        TURN_HOST: "193.233.247.171",
+        // Domain (not IP) so clients also get turns:…5349 relay.
+        TURN_HOST: "193.233.247.171.sslip.io",
         SEED_DEMO: "0",
         NEXT_PUBLIC_DEMO: "0",
         TRUST_PROXY: "1",

@@ -75,6 +75,12 @@ function stripBootQuery() {
 }
 
 function reloadNow(bootId: string) {
+  // Never reload while a call/voice session is live — WebRTC must survive
+  // a deploy. flushPendingBootReload() runs once the session ends.
+  if (hasLiveMediaSession()) {
+    writePendingBootId(bootId);
+    return;
+  }
   persistLiveMediaNow();
   markPageUnloading();
   writeBootId(bootId);
@@ -99,6 +105,11 @@ export function applyBootId(bootId: string) {
   if (prev === bootId) {
     memoryBootId = bootId;
     clearPendingBootId();
+    return;
+  }
+  // Defer the reload while a call/voice session is live.
+  if (hasLiveMediaSession()) {
+    writePendingBootId(bootId);
     return;
   }
   reloadNow(bootId);

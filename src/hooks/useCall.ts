@@ -35,6 +35,7 @@ import {
   prepareCameraTrack,
   prepareScreenTrack,
   readCallNetworkSample,
+  readInboundFlow,
   replaceAudioSenders,
   SCREEN_SEND_PARAMS,
   setLocalDescriptionTuned,
@@ -82,6 +83,11 @@ type CallMediaState = {
 const RING_TIMEOUT_MS = 35_000;
 const ICE_RESTART_DELAY_MS = 5_000;
 const MAX_ICE_RESTARTS = 3;
+/** Stats interval is 2s → 4 ticks ≈ 8s without inbound media. */
+const MEDIA_STALL_TICKS = 4;
+/** Restart streak window — excess restarts within it trigger the relay
+ * fallback even when markConnected resets the per-connection counter. */
+const RESTART_STREAK_WINDOW_MS = 60_000;
 const CALL_HANGUP_KEY = "pulse-call-hungup";
 
 function callPcAlive(pc: RTCPeerConnection | null) {
@@ -160,6 +166,13 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iceRestartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const iceRestartsRef = useRef(0);
+  const relayOnlyRef = useRef(false);
+  const relayTriedRef = useRef(false);
+  const lastInboundBytesRef = useRef(-1);
+  const lastInboundPacketsRef = useRef(-1);
+  const stallTicksRef = useRef(0);
+  const stallRecoveryRef = useRef(false);
+  const restartStreakRef = useRef({ count: 0, since: 0 });
   const busyRef = useRef(false);
   const outboundRef = useRef(false);
   const acceptReadyRef = useRef(false);
@@ -385,6 +398,43 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
       const pc = pcRef.current;
       if (!pc) return;
       void pc.getStats().then((report) => {
+        // Media-flow watchdog: ICE can stay "connected" while media stalls
+        // (one-way audio, frozen NAT mapping). Force ICE restart when no
+        // inbound bytes arrive for several ticks.
+        if (
+          pc.connectionState === "connected" &&
+          document.visibilityState !== "hidden"
+        ) {
+          const flow = readInboundFlow(report);
+          // DTX silence sends tiny comfort-noise packets — require BOTH
+          // bytes and packets to be frozen before counting a stall.
+          if (flow.bytes > 0 || flow.packets > 0) {
+            const grew =
+              (lastInboundBytesRef.current >= 0 &&
+                flow.bytes > lastInboundBytesRef.current) ||
+              (lastInboundPacketsRef.current >= 0 &&
+                flow.packets > lastInboundPacketsRef.current);
+            if (stallRecoveryRef.current) {
+              if (grew) stallRecoveryRef.current = false;
+            } else if (grew || lastInboundBytesRef.current < 0) {
+              stallTicksRef.current = 0;
+            } else {
+              stallTicksRef.current += 1;
+              if (
+                stallTicksRef.current >= MEDIA_STALL_TICKS &&
+                !makingOfferRef.current &&
+                !iceRestartTimerRef.current
+              ) {
+                stallTicksRef.current = 0;
+                const peerId = peerRef.current?.peerId;
+                if (peerId) void restartIceRef.current(peerId);
+              }
+            }
+            lastInboundBytesRef.current = flow.bytes;
+            lastInboundPacketsRef.current = flow.packets;
+          }
+        }
+
         const sample = readCallNetworkSample(report, statsCursorRef.current);
         if (!sample) return;
         const level = callNetworkLevel(sample);
@@ -587,6 +637,13 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     acceptReadyRef.current = false;
     peerLeftRef.current = false;
     iceRestartsRef.current = 0;
+    relayOnlyRef.current = false;
+    relayTriedRef.current = false;
+    stallTicksRef.current = 0;
+    stallRecoveryRef.current = false;
+    lastInboundBytesRef.current = -1;
+    lastInboundPacketsRef.current = -1;
+    restartStreakRef.current = { count: 0, since: 0 };
     cameraWasOffRef.current = true;
     localCameraOffRef.current = true;
     localSharingScreenRef.current = false;
@@ -629,6 +686,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     makingOfferRef.current = false;
     acceptReadyRef.current = false;
     iceRestartsRef.current = 0;
+    restartStreakRef.current = { count: 0, since: 0 };
     setRemoteSharingScreen(false);
     setRemoteCameraOff(true);
     setRemoteSpeaking(false);
@@ -639,6 +697,10 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   const markConnected = useCallback(() => {
     setStatus("На линии");
     iceRestartsRef.current = 0;
+    stallTicksRef.current = 0;
+    stallRecoveryRef.current = false;
+    lastInboundBytesRef.current = -1;
+    lastInboundPacketsRef.current = -1;
     startCallMonitors();
     if (connectedAtRef.current) return;
     connectedAtRef.current = Date.now();
@@ -753,8 +815,23 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   const ensurePc = useCallback(
     (peerId: string) => {
       if (pcRef.current) return pcRef.current;
+      const turnOnly = iceServersRef.current.filter((server) => {
+        const urls = Array.isArray(server.urls)
+          ? server.urls
+          : [server.urls || ""];
+        return urls.some(
+          (url) =>
+            String(url).startsWith("turn") ||
+            String(url).startsWith("turns"),
+        );
+      });
+      const iceServers =
+        relayOnlyRef.current && turnOnly.length
+          ? turnOnly
+          : iceServersRef.current;
       const pc = new RTCPeerConnection({
-        iceServers: iceServersRef.current,
+        iceServers,
+        iceTransportPolicy: relayOnlyRef.current ? "relay" : "all",
         iceCandidatePoolSize: 4,
         bundlePolicy: "max-bundle",
         rtcpMuxPolicy: "require",
@@ -1014,17 +1091,54 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     [getMedia, ensurePc, emitSignal, answerRemoteOffer],
   );
 
+  const restartWithRelay = useCallback(
+    async (peerId: string) => {
+      const peer = peerRef.current;
+      const callId = callIdRef.current;
+      if (!socket || !peer || !callId || peerLeftRef.current) return;
+      if (relayTriedRef.current) {
+        setStatus("Связь потеряна");
+        return;
+      }
+      relayTriedRef.current = true;
+      relayOnlyRef.current = true;
+      iceRestartsRef.current = 0;
+      restartStreakRef.current = { count: 0, since: 0 };
+      stallTicksRef.current = 0;
+      stallRecoveryRef.current = true;
+      setStatus("Переподключение через TURN…");
+      try {
+        await createOffer(peerId, peer.mode, { resetPc: true });
+      } catch {
+        setStatus("Связь потеряна");
+      }
+    },
+    [socket, createOffer],
+  );
+
   const restartIce = useCallback(
     async (peerId: string) => {
       const pc = pcRef.current;
       const callId = callIdRef.current;
       if (!socket || !pc || !callId || peerLeftRef.current) return;
-      if (iceRestartsRef.current >= MAX_ICE_RESTARTS) {
-        setStatus("Связь потеряна");
+      const now = Date.now();
+      const streak = restartStreakRef.current;
+      if (now - streak.since > RESTART_STREAK_WINDOW_MS) {
+        streak.count = 0;
+        streak.since = now;
+      }
+      streak.count += 1;
+      if (streak.count > MAX_ICE_RESTARTS) {
+        // Direct candidates keep failing — fall back to TURN relay once.
+        // The streak survives markConnected resets of iceRestartsRef,
+        // so a flapping connection still reaches the relay fallback.
+        void restartWithRelay(peerId);
         return;
       }
 
       iceRestartsRef.current += 1;
+      stallTicksRef.current = 0;
+      stallRecoveryRef.current = true;
       setStatus("Переподключение…");
       try {
         makingOfferRef.current = true;
@@ -1056,7 +1170,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
         }
       }
     },
-    [socket, emitSignal, answerRemoteOffer],
+    [socket, emitSignal, answerRemoteOffer, restartWithRelay],
   );
   useEffect(() => {
     restartIceRef.current = restartIce;
@@ -2148,12 +2262,18 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     socket.on("call:dismiss", onDismiss);
     socket.on("call:resume", onResume);
     socket.on("call:renegotiate", onRenegotiate);
+    const onSocketDown = () => {
+      // Deploy/network blip — media stays up, signaling recovers via resume.
+      if (callIdRef.current) setStatus("Переподключение к серверу…");
+    };
+    socket.on("disconnect", onSocketDown);
     return () => {
       socket.off("call:incoming", onIncoming);
       socket.off("call:signal", onSignal);
       socket.off("call:dismiss", onDismiss);
       socket.off("call:resume", onResume);
       socket.off("call:renegotiate", onRenegotiate);
+      socket.off("disconnect", onSocketDown);
     };
   }, [
     socket,

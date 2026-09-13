@@ -8,7 +8,16 @@ export type IceServerConfig = {
 
 const FALLBACK_ICE: IceServerConfig[] = [
   { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19305" },
+  { urls: "stun:stun.cloudflare.com:3478" },
 ];
+
+function isIpLiteral(host: string) {
+  return (
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(host) ||
+    host.includes(":")
+  );
+}
 
 function turnHostFromEnv() {
   const host = (process.env.NEXT_PUBLIC_TURN_HOST || "").trim();
@@ -32,17 +41,25 @@ export function buildIceServers(options?: {
   const user = (options?.turnUser || process.env.TURN_USER || process.env.NEXT_PUBLIC_TURN_USER || "").trim();
   const pass = (options?.turnPass || process.env.TURN_PASS || process.env.NEXT_PUBLIC_TURN_PASS || "").trim();
 
-  // Google STUN first — local STUN/TURN on :3478 only help when coturn is up.
+  // Several STUN for faster candidate gathering and resilience.
   const servers: IceServerConfig[] = [
     { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19305" },
+    { urls: "stun:stun.cloudflare.com:3478" },
   ];
 
   if (host && user && pass) {
+    const turnUrls = [
+      `turn:${host}:3478?transport=udp`,
+      `turn:${host}:3478?transport=tcp`,
+    ];
+    // TLS relay only when the host is a domain whose certificate covers
+    // 5349 (coturn tls-listening-port). Browsers skip it silently otherwise.
+    if (!isIpLiteral(host)) {
+      turnUrls.push(`turns:${host}:5349?transport=tcp`);
+    }
     servers.push({
-      urls: [
-        `turn:${host}:3478?transport=udp`,
-        `turn:${host}:3478?transport=tcp`,
-      ],
+      urls: turnUrls,
       username: user,
       credential: pass,
     });
@@ -67,10 +84,20 @@ export function buildIceServers(options?: {
 
 let cachedClientIce: RTCIceServer[] | null = null;
 let clientIcePromise: Promise<RTCIceServer[]> | null = null;
+let cachedClientIceAt = 0;
+/** Refresh the ICE list occasionally — TURN config may change server-side. */
+const CLIENT_ICE_TTL_MS = 30 * 60_000;
 
 /** Browser: fetch signed ICE from API (falls back to public STUN/TURN). */
 export async function getClientIceServers(token?: string | null): Promise<RTCIceServer[]> {
-  if (cachedClientIce) return cachedClientIce;
+  if (cachedClientIce && Date.now() - cachedClientIceAt < CLIENT_ICE_TTL_MS) {
+    return cachedClientIce;
+  }
+  if (cachedClientIce) {
+    // Stale — drop so a fresh fetch happens now.
+    cachedClientIce = null;
+    clientIcePromise = null;
+  }
   if (!clientIcePromise) {
     clientIcePromise = (async () => {
       try {
@@ -84,6 +111,7 @@ export async function getClientIceServers(token?: string | null): Promise<RTCIce
           const data = (await res.json()) as { iceServers?: RTCIceServer[] };
           if (Array.isArray(data.iceServers) && data.iceServers.length) {
             cachedClientIce = data.iceServers;
+            cachedClientIceAt = Date.now();
             return cachedClientIce;
           }
         }
@@ -92,6 +120,7 @@ export async function getClientIceServers(token?: string | null): Promise<RTCIce
       }
       const built = buildIceServers() as RTCIceServer[];
       cachedClientIce = built;
+      cachedClientIceAt = Date.now();
       return built;
     })();
   }
@@ -101,4 +130,5 @@ export async function getClientIceServers(token?: string | null): Promise<RTCIce
 export function clearClientIceCache() {
   cachedClientIce = null;
   clientIcePromise = null;
+  cachedClientIceAt = 0;
 }

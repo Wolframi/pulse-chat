@@ -95,6 +95,9 @@ export function useChat() {
   const expectedRoomRef = useRef<string | null>(null);
   const switchSeqRef = useRef(0);
   const pendingAckTimersRef = useRef(new Map<string, number>());
+  const pendingSendsRef = useRef(
+    new Map<string, { text: string; replyToId?: string; chatId: string }>(),
+  );
   const historyWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyCacheRef = useRef(new Map<string, ChatMessage[]>());
   const peerReadCacheRef = useRef(new Map<string, number | null>());
@@ -114,6 +117,65 @@ export function useChat() {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  const failPendingMessage = useCallback((clientId: string) => {
+    const timer = pendingAckTimersRef.current.get(clientId);
+    if (timer) {
+      window.clearTimeout(timer);
+      pendingAckTimersRef.current.delete(clientId);
+    }
+    pendingSendsRef.current.delete(clientId);
+    setMessages((prev) =>
+      prev.map((item) =>
+        item.id === clientId ? { ...item, status: "failed" } : item,
+      ),
+    );
+  }, []);
+
+  /** (Re)send a pending message. Server dedupes by clientId — safe to retry. */
+  const emitPendingMessage = useCallback(
+    (clientId: string) => {
+      const socket = socketRef.current;
+      const payload = pendingSendsRef.current.get(clientId);
+      if (!socket?.connected || !payload) return;
+      const previous = pendingAckTimersRef.current.get(clientId);
+      if (previous) window.clearTimeout(previous);
+      const timer = window.setTimeout(
+        () => failPendingMessage(clientId),
+        12_000,
+      );
+      pendingAckTimersRef.current.set(clientId, timer);
+      socket.emit(
+        "message",
+        { ...payload, clientId },
+        (ack: { ok?: boolean; message?: ChatMessage; error?: string }) => {
+          const active = pendingAckTimersRef.current.get(clientId);
+          if (active) {
+            window.clearTimeout(active);
+            pendingAckTimersRef.current.delete(clientId);
+          }
+          pendingSendsRef.current.delete(clientId);
+          if (!ack?.ok) {
+            failPendingMessage(clientId);
+            if (ack?.error) setComposerError(ack.error);
+            return;
+          }
+          setMessages((prev) =>
+            prev.map((item) =>
+              item.id === clientId
+                ? {
+                    ...(ack.message || item),
+                    clientKey: item.clientKey || clientId,
+                    status: undefined,
+                  }
+                : item,
+            ),
+          );
+        },
+      );
+    },
+    [failPendingMessage],
+  );
 
   const persistAccount = useCallback((next: AuthAccount | null) => {
     setAccount(next);
@@ -159,7 +221,9 @@ export function useChat() {
       // socket.io then upgrades to websocket when the proxy allows it.
       transports: ["polling", "websocket"],
       upgrade: true,
-      rememberUpgrade: false,
+      // Remember a successful websocket upgrade — reconnects after a deploy
+      // go straight to WS instead of one extra polling round-trip.
+      rememberUpgrade: true,
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 700,
@@ -242,6 +306,11 @@ export function useChat() {
       setReconnecting(false);
       setConnected(true);
       // `connect` also fires; restoreSessionAfterConnect re-binds room.
+      // Re-deliver messages that were in flight when the socket dropped —
+      // the server dedupes by clientId, so retries are safe.
+      for (const clientId of [...pendingSendsRef.current.keys()]) {
+        emitPendingMessage(clientId);
+      }
     });
     socket.io.on("reconnect_error", () => setReconnecting(true));
     socket.io.on("reconnect_failed", () => setReconnecting(true));
@@ -366,6 +435,7 @@ export function useChat() {
         window.clearTimeout(timer),
       );
       pendingAckTimersRef.current.clear();
+      pendingSendsRef.current.clear();
       persistAccount(null);
       setSession(null);
       setMessages([]);
@@ -611,6 +681,7 @@ export function useChat() {
       typingTimers.current.clear();
       pendingAckTimersRef.current.forEach((timer) => window.clearTimeout(timer));
       pendingAckTimersRef.current.clear();
+      pendingSendsRef.current.clear();
       if (historyWatchdogRef.current) {
         clearTimeout(historyWatchdogRef.current);
         historyWatchdogRef.current = null;
@@ -619,7 +690,7 @@ export function useChat() {
       socketRef.current = null;
       setSocket(null);
     };
-  }, [persistAccount]);
+  }, [persistAccount, emitPendingMessage]);
 
   // Keep Web Push subscription alive while logged in (for background calls).
   useEffect(() => {
@@ -685,6 +756,7 @@ export function useChat() {
     expectedRoomRef.current = null;
     pendingAckTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     pendingAckTimersRef.current.clear();
+    pendingSendsRef.current.clear();
     socketRef.current?.emit("leave");
     socketRef.current?.emit("auth:logout");
     persistAccount(null);
@@ -775,6 +847,7 @@ export function useChat() {
     expectedRoomRef.current = roomHint || "";
     pendingAckTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     pendingAckTimersRef.current.clear();
+    pendingSendsRef.current.clear();
     if (historyWatchdogRef.current) {
       clearTimeout(historyWatchdogRef.current);
       historyWatchdogRef.current = null;
@@ -1227,6 +1300,7 @@ export function useChat() {
     expectedRoomRef.current = null;
     pendingAckTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     pendingAckTimersRef.current.clear();
+    pendingSendsRef.current.clear();
     socketRef.current?.emit("leave");
     setSession(null);
     setMessages([]);
@@ -1291,51 +1365,14 @@ export function useChat() {
     });
     socket.emit("typing", false);
 
-    const fail = () => {
-      pendingAckTimersRef.current.delete(clientId);
-      setMessages((prev) =>
-        prev.map((item) =>
-          item.id === clientId ? { ...item, status: "failed" } : item,
-        ),
-      );
-    };
-
-    const timer = window.setTimeout(fail, 12_000);
-    pendingAckTimersRef.current.set(clientId, timer);
-    socket.emit(
-      "message",
-      {
-        text: value,
-        replyToId: replyToId || undefined,
-        clientId,
-        chatId: room,
-      },
-      (ack: { ok?: boolean; message?: ChatMessage; error?: string }) => {
-        const active = pendingAckTimersRef.current.get(clientId);
-        if (active) {
-          window.clearTimeout(active);
-          pendingAckTimersRef.current.delete(clientId);
-        }
-        if (!ack?.ok) {
-          fail();
-          if (ack?.error) setComposerError(ack.error);
-          return;
-        }
-        setMessages((prev) =>
-          prev.map((item) =>
-            item.id === clientId
-              ? {
-                  ...(ack.message || item),
-                  clientKey: item.clientKey || clientId,
-                  status: undefined,
-                }
-              : item,
-          ),
-        );
-      },
-    );
+    pendingSendsRef.current.set(clientId, {
+      text: value,
+      replyToId: replyToId || undefined,
+      chatId: room,
+    });
+    emitPendingMessage(clientId);
     return true;
-  }, [historyLoading]);
+  }, [historyLoading, emitPendingMessage]);
 
   const retryMessage = useCallback((messageId: string) => {
     const socket = socketRef.current;
@@ -1354,46 +1391,13 @@ export function useChat() {
       ),
     );
 
-    const fail = () => {
-      pendingAckTimersRef.current.delete(messageId);
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === messageId ? { ...item, status: "failed" } : item,
-        ),
-      );
-    };
-
-    const timer = window.setTimeout(fail, 12_000);
-    pendingAckTimersRef.current.set(messageId, timer);
-    socket.emit(
-      "message",
-      {
-        text: message.text,
-        replyToId: message.replyTo?.id,
-        clientId: message.id,
-        chatId: session.room,
-      },
-      (ack: { ok?: boolean; message?: ChatMessage; error?: string }) => {
-        const active = pendingAckTimersRef.current.get(messageId);
-        if (active) {
-          window.clearTimeout(active);
-          pendingAckTimersRef.current.delete(messageId);
-        }
-        if (!ack?.ok) {
-          fail();
-          if (ack?.error) setComposerError(ack.error);
-          return;
-        }
-        setMessages((current) =>
-          current.map((item) =>
-            item.id === messageId
-              ? { ...(ack.message || item), status: undefined }
-              : item,
-          ),
-        );
-      },
-    );
-  }, []);
+    pendingSendsRef.current.set(messageId, {
+      text: message.text,
+      replyToId: message.replyTo?.id,
+      chatId: session.room,
+    });
+    emitPendingMessage(messageId);
+  }, [emitPendingMessage]);
 
   const cancelUpload = useCallback(() => {
     uploadAbortRef.current?.abort();
@@ -1450,6 +1454,46 @@ export function useChat() {
 
       const controller = new AbortController();
       uploadAbortRef.current = controller;
+
+      const newClientId = () =>
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `f_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+      /** Socket send with 3 attempts — server dedupes by clientId. */
+      const emitFileMessage = (
+        payload: Record<string, unknown>,
+        clientId: string,
+      ) =>
+        new Promise<void>((resolve, reject) => {
+          const attempt = (left: number) => {
+            const socket = socketRef.current;
+            if (!socket?.connected) {
+              reject(new Error("Нет соединения"));
+              return;
+            }
+            const timer = window.setTimeout(() => {
+              if (left > 1) {
+                attempt(left - 1);
+              } else {
+                reject(new Error("Сервер не ответил на отправку файла"));
+              }
+            }, 15_000);
+            socket.emit(
+              "message:file",
+              { ...payload, clientId },
+              (ack: { ok: boolean; error?: string }) => {
+                window.clearTimeout(timer);
+                if (!ack?.ok) {
+                  reject(new Error(ack?.error || "Файл не отправился"));
+                  return;
+                }
+                resolve();
+              },
+            );
+          };
+          attempt(3);
+        });
 
       const asAlbum =
         batch.length > 1 &&
@@ -1509,43 +1553,23 @@ export function useChat() {
           completed.push(batchRaw[index] ?? file);
           options?.onProgress?.(Math.min(0.99, loadedBytes / totalBytes));
 
-          await new Promise<void>((resolve, reject) => {
-            const socket = socketRef.current;
-            if (!socket?.connected) {
-              reject(new Error("Нет соединения"));
-              return;
-            }
-
-            const timer = window.setTimeout(() => {
-              reject(new Error("Сервер не ответил на отправку файла"));
-            }, 15_000);
-
-            socket.emit(
-              "message:file",
-              {
-                chatId,
-                file: uploaded,
-                text: caption
-                  ? caption
-                  : isMediaAttachment(uploaded)
-                    ? ""
-                    : isAudioAttachment(uploaded)
-                      ? isVoiceNote(uploaded)
-                        ? "Голосовое сообщение"
-                        : audioDisplayName(uploaded)
-                      : uploaded.name,
-                replyToId: options?.replyToId || undefined,
-              },
-              (ack: { ok: boolean; error?: string }) => {
-                window.clearTimeout(timer);
-                if (!ack?.ok) {
-                  reject(new Error(ack?.error || "Файл не отправился"));
-                  return;
-                }
-                resolve();
-              },
-            );
-          });
+          await emitFileMessage(
+            {
+              chatId,
+              file: uploaded,
+              text: caption
+                ? caption
+                : isMediaAttachment(uploaded)
+                  ? ""
+                  : isAudioAttachment(uploaded)
+                    ? isVoiceNote(uploaded)
+                      ? "Голосовое сообщение"
+                      : audioDisplayName(uploaded)
+                    : uploaded.name,
+              replyToId: options?.replyToId || undefined,
+            },
+            newClientId(),
+          );
         }
         }
 
@@ -1554,38 +1578,18 @@ export function useChat() {
           for (let albumIndex = 0; albumIndex < albums.length; albumIndex += 1) {
             const album = albums[albumIndex];
             const firstAlbum = albumIndex === 0;
-            await new Promise<void>((resolve, reject) => {
-              const socket = socketRef.current;
-              if (!socket?.connected) {
-                reject(new Error("Нет соединения"));
-                return;
-              }
-
-              const timer = window.setTimeout(() => {
-                reject(new Error("Сервер не ответил на отправку альбома"));
-              }, 20_000);
-
-              socket.emit(
-                "message:file",
-                {
-                  chatId,
-                  files: album.length > 1 ? album : undefined,
-                  file: album[0],
-                  text: firstAlbum ? caption : "",
-                  replyToId: firstAlbum
-                    ? options?.replyToId || undefined
-                    : undefined,
-                },
-                (ack: { ok: boolean; error?: string }) => {
-                  window.clearTimeout(timer);
-                  if (!ack?.ok) {
-                    reject(new Error(ack?.error || "Альбом не отправился"));
-                    return;
-                  }
-                  resolve();
-                },
-              );
-            });
+            await emitFileMessage(
+              {
+                chatId,
+                files: album.length > 1 ? album : undefined,
+                file: album[0],
+                text: firstAlbum ? caption : "",
+                replyToId: firstAlbum
+                  ? options?.replyToId || undefined
+                  : undefined,
+              },
+              newClientId(),
+            );
           }
         }
 
