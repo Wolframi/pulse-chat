@@ -817,8 +817,13 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
     const width = Number(wantW);
     const thumbName = `${fileName}.w${width}.jpg`;
     const thumbPath = path.join(THUMB_DIR, thumbName);
-    if (!existsSync(thumbPath) && rateLimit("thumb-gen", 120, 60_000)) {
-      resizeThumbSync(filePath, thumbPath, width);
+    if (!existsSync(thumbPath)) {
+      if (rateLimit("thumb-gen", 120, 60_000)) {
+        console.log("[thumbs] generating", thumbPath);
+        resizeThumbSync(filePath, thumbPath, width);
+      } else {
+        console.log("[thumbs] rate limited");
+      }
     }
     if (existsSync(thumbPath)) {
       let thumbSize = 0;
