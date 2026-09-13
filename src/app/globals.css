@@ -4505,7 +4505,7 @@ button:active:not(:disabled) {
   align-items: stretch;
   gap: 7px;
   width: 100%;
-  margin-top: 8px;
+  margin-top: 14px;
   padding: 0 8px;
 }
 
@@ -4541,7 +4541,7 @@ button:active:not(:disabled) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 8px;
 }
 
 .bubble-group .message-block,
@@ -4567,7 +4567,7 @@ button:active:not(:disabled) {
 }
 
 .day-chip + .bubble-group {
-  margin-top: 2px;
+  margin-top: 8px;
 }
 
 .bubble-group .message-block:has(> .bubble-row--plaque:not(.bubble-row--compact)):not(:has(.day-chip)):not(:has(.unread-sep)) {
@@ -5002,7 +5002,7 @@ button:active:not(:disabled) {
 }
 
 .room__messages:has(.bubble-row--plaque) {
-  gap: 2px;
+  gap: 8px;
   padding: 24px 20px 8px;
 }
 
@@ -5011,10 +5011,10 @@ button:active:not(:disabled) {
 }
 
 .message-block:has(> .bubble-row--plaque:not(.bubble-row--compact)):not(:has(.day-chip)):not(:has(.unread-sep)) {
-  margin-top: 8px;
+  margin-top: 14px;
 }
 
-/* Plaque clusters already use 2px list gap — don't add media-stack offsets */
+/* Plaque clusters already use 8px list gap — don't add media-stack offsets */
 .message-block--media-stack:has(.bubble-row--plaque),
 .message-block--media + .message-block--media-stack:has(.bubble-row--plaque) {
   margin-top: 0;
@@ -10041,7 +10041,7 @@ button:active:not(:disabled) {
   }
 
   .room__messages:has(.bubble-row--plaque) {
-    gap: 2px;
+    gap: 8px;
     padding: 10px max(10px, var(--safe-left)) 8px
       max(10px, var(--safe-right));
   }
