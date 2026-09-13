@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
   type SyntheticEvent,
   type TouchEvent as ReactTouchEvent,
 } from "react";
@@ -239,9 +240,11 @@ function MediaCaption({
 function AlbumMosaic({
   files,
   onOpenImage,
+  overlay,
 }: {
   files: FileAttachment[];
   onOpenImage?: (src: string, name: string, kind?: "image" | "video") => void;
+  overlay?: ReactNode;
 }) {
   const [probed, setProbed] = useState<Record<string, { width: number; height: number }>>(
     {},
@@ -340,6 +343,7 @@ function AlbumMosaic({
           </button>
         );
       })}
+      {overlay}
     </div>
   );
 }
@@ -508,14 +512,29 @@ function FileBodyInner({
 
     return (
       <div className="bubble__album">
-        <AlbumMosaic files={visible} onOpenImage={onOpenImage} />
-        <MediaCaption
-          caption={userCaption ? caption : undefined}
-          createdAt={message.createdAt}
-          mine={mine}
-          status={message.status}
-          peerReadAt={peerReadAt}
+        <AlbumMosaic
+          files={visible}
+          onOpenImage={onOpenImage}
+          overlay={
+            userCaption ? undefined : (
+              <MediaCaption
+                createdAt={message.createdAt}
+                mine={mine}
+                status={message.status}
+                peerReadAt={peerReadAt}
+              />
+            )
+          }
         />
+        {userCaption ? (
+          <MediaCaption
+            caption={caption}
+            createdAt={message.createdAt}
+            mine={mine}
+            status={message.status}
+            peerReadAt={peerReadAt}
+          />
+        ) : null}
       </div>
     );
   }
