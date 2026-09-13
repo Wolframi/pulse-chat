@@ -80,6 +80,8 @@ export function UnifiedPicker({
 
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
+        // Открытый диалог обрезки сам обрабатывает Escape — не закрываем панель заодно.
+        if (document.querySelector(".avatar-crop")) return;
         e.preventDefault();
         onOpenChange(false);
       }
@@ -90,6 +92,9 @@ export function UnifiedPicker({
       if (!(target instanceof Node)) return;
       if (triggerRef.current?.contains(target)) return;
       if (panelRef.current?.contains(target)) return;
+      // Диалог обрезки портируется в body — клики внутри него не должны закрывать панель.
+      const cropDialog = document.querySelector(".avatar-crop");
+      if (cropDialog && cropDialog.contains(target)) return;
       onOpenChange(false);
     }
 
