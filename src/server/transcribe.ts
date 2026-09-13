@@ -126,6 +126,15 @@ async function postGroqWithProxy(
         lastError = new Error(`Groq ${response.status} через прокси`);
         continue;
       }
+      if (response.status === 400) {
+        // Some proxies rewrite Content-Type — that 400 is the proxy's fault.
+        const probe = await response.clone().text().catch(() => "");
+        if (/multipart|content-type/i.test(probe)) {
+          invalidateGroqEgress(egress);
+          lastError = new Error("Прокси исказил запрос (Content-Type)");
+          continue;
+        }
+      }
       markGroqEgressOk(egress);
       return response;
     } catch (error) {

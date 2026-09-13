@@ -24,9 +24,29 @@ function cachePath() {
 
 function normalizeProxy(value: string) {
   const line = value.trim();
+  // http://user:pass@ip:port — purchased proxies often carry credentials.
+  if (/^https?:\/\/[^\s@]+@\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$/i.test(line)) {
+    return line;
+  }
   if (/^https?:\/\/\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$/i.test(line)) return line;
+  if (/^[^\s@]+@\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$/.test(line)) {
+    return `http://${line}`;
+  }
   if (/^\d{1,3}(?:\.\d{1,3}){3}:\d{2,5}$/.test(line)) return `http://${line}`;
   return "";
+}
+
+/** User-pinned egress (.groq-egress-proxy.pinned / env) — never overwritten. */
+function pinnedEgress() {
+  try {
+    const fromFile = normalizeProxy(
+      readFileSync(path.join(process.cwd(), ".groq-egress-proxy.pinned"), "utf8"),
+    );
+    if (fromFile) return fromFile;
+  } catch {
+    /* no pinned file */
+  }
+  return normalizeProxy(String(process.env.GROQ_EGRESS_PROXY_PINNED || ""));
 }
 
 function readCached() {
@@ -182,11 +202,13 @@ export function invalidateGroqEgress(proxy?: string) {
 }
 
 export function markGroqEgressOk(proxy: string) {
-  persist(proxy);
+  if (!pinnedEgress()) persist(proxy);
   lastOkAt = Date.now();
 }
 
 export async function resolveGroqEgress(refresh = false) {
+  const pinned = pinnedEgress();
+  if (pinned) return pinned;
   if (refresh) {
     const next = spare.shift();
     if (next) {
