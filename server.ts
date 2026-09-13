@@ -103,11 +103,13 @@ import {
 import {
   albumPreviewText,
   attachmentPreviewText,
+  chatListPreview,
   isAudioAttachment,
   isImageAttachment,
   isVideoAttachment,
   isVoiceNote,
   messageAttachments,
+  parseMediaSize,
 } from "./src/lib/files";
 import {
   hasGroqKey,
@@ -361,12 +363,16 @@ type ChatMessage = {
     name: string;
     size: number;
     mime: string;
+    width?: number;
+    height?: number;
   };
   files?: {
     url: string;
     name: string;
     size: number;
     mime: string;
+    width?: number;
+    height?: number;
   }[];
   replyTo?: ReplyPreview;
   forwardedFrom?: {
@@ -876,12 +882,34 @@ function toggleReaction(
   return message;
 }
 
-function markChatRead(userId: string, chatId: string) {
+function markChatRead(userId: string, chatId: string, at = Date.now()) {
   if (!lastReadByUser.has(userId)) {
     lastReadByUser.set(userId, new Map());
   }
-  lastReadByUser.get(userId)!.set(chatId, Date.now());
+  lastReadByUser.get(userId)!.set(chatId, at);
   persistReads();
+  return at;
+}
+
+/** Latest last-read among other members — outgoing ticks (sent vs read). */
+function peerReadAtFor(chatId: string, viewerId: string) {
+  const chat = getChat(chatId);
+  if (!chat) return null;
+  let latest = 0;
+  for (const memberId of chat.memberIds) {
+    if (memberId === viewerId) continue;
+    const at = lastReadByUser.get(memberId)?.get(chatId) ?? 0;
+    if (at > latest) latest = at;
+  }
+  return latest || null;
+}
+
+function emitHistory(socket: Socket, chatId: string, viewerId: string) {
+  socket.emit("history", {
+    chatId,
+    messages: historyForClient(chatId),
+    peerReadAt: peerReadAtFor(chatId, viewerId),
+  });
 }
 
 function unreadCountFor(chatId: string, viewerId: string) {
@@ -1318,12 +1346,7 @@ function labelOf(account: AuthAccount) {
 function chatInfo(chat: ChatMeta, viewerId: string) {
   const messages = messagesFor(chat.id);
   const last = [...messages].reverse().find((item) => item.kind !== "system");
-  const previewText =
-    last?.kind === "file"
-      ? albumPreviewText(messageAttachments(last), last.text)
-      : last?.kind === "call"
-        ? last.text
-        : last?.text;
+  const preview = last ? chatListPreview(last) : null;
 
   const group =
     chat.type === "group" ? ensureVoiceChannels(chat) : chat;
@@ -1345,11 +1368,17 @@ function chatInfo(chat: ChatMeta, viewerId: string) {
     createdBy: chat.createdBy,
     memberIds: chat.type === "group" ? [...chat.memberIds] : undefined,
     visibility: chat.type === "group" ? groupVisibility(chat) : undefined,
-    lastMessage: last
+    lastMessage: last && preview
       ? {
           author: last.author,
-          text: previewText || "",
+          authorId: last.authorId,
+          text: preview.text || "",
           createdAt: last.createdAt,
+          kind: last.kind,
+          thumbUrl: preview.thumbUrl
+            ? signUploadUrl(bareUploadUrl(preview.thumbUrl))
+            : undefined,
+          thumbAnimated: preview.thumbAnimated,
         }
       : null,
     createdAt: chat.createdAt,
@@ -1740,11 +1769,13 @@ function joinChat(
   const previous = usersBySocket.get(socket.id);
   if (previous?.room === chat.id) {
     // Re-send history so clients that cleared the list (same-chat reopen) recover.
-    markChatRead(account.userId, chat.id);
-    socket.emit("history", {
+    const readAt = markChatRead(account.userId, chat.id);
+    socket.to(chat.id).emit("chat:read", {
       chatId: chat.id,
-      messages: historyForClient(chat.id),
+      userId: account.userId,
+      readAt,
     });
+    emitHistory(socket, chat.id, account.userId);
     return {
       ok: true as const,
       session: { name: labelOf(account), room: chat.id },
@@ -1762,11 +1793,13 @@ function joinChat(
 
   // Presence updates below — don't spam the thread with join notices.
 
-  markChatRead(account.userId, chat.id);
-  socket.emit("history", {
+  const readAt = markChatRead(account.userId, chat.id);
+  socket.to(chat.id).emit("chat:read", {
     chatId: chat.id,
-    messages: historyForClient(chat.id),
+    userId: account.userId,
+    readAt,
   });
+  emitHistory(socket, chat.id, account.userId);
   io.to(chat.id).emit("presence", {
     chatId: chat.id,
     names: presenceNames(chat.id),
@@ -3426,10 +3459,8 @@ app.prepare().then(() => {
       if (!account || !chatId) return;
       const chat = getChat(chatId);
       if (!chat || !canAccessChat(chat, account.userId)) return;
-      const readAt = Date.now();
-      markChatRead(account.userId, chatId);
+      const readAt = markChatRead(account.userId, chatId);
       emitChats(socket, account.userId);
-      // Real-time read receipt for peers in the room.
       socket.to(chatId).emit("chat:read", {
         chatId,
         userId: account.userId,
@@ -3760,8 +3791,22 @@ app.prepare().then(() => {
       (
         payload: {
           chatId?: string;
-          file?: { url?: string; name?: string; size?: number; mime?: string };
-          files?: { url?: string; name?: string; size?: number; mime?: string }[];
+          file?: {
+            url?: string;
+            name?: string;
+            size?: number;
+            mime?: string;
+            width?: number;
+            height?: number;
+          };
+          files?: {
+            url?: string;
+            name?: string;
+            size?: number;
+            mime?: string;
+            width?: number;
+            height?: number;
+          }[];
           text?: string;
           replyToId?: string;
         },
@@ -3811,6 +3856,8 @@ app.prepare().then(() => {
           size: number;
           mime: string;
           isAudio: boolean;
+          width?: number;
+          height?: number;
         }[] = [];
 
         for (const file of rawList) {
@@ -3830,6 +3877,7 @@ app.prepare().then(() => {
               size: Math.max(0, Math.min(Number(file?.size) || 0, 20 * 1024 * 1024)),
               mime: remote.mime,
               isAudio: false,
+              ...parseMediaSize(file),
             });
             continue;
           }
@@ -3892,6 +3940,7 @@ app.prepare().then(() => {
             size,
             mime: serverMime,
             isAudio,
+            ...parseMediaSize(file),
           });
         }
 
@@ -3925,11 +3974,12 @@ app.prepare().then(() => {
               ? rawText
               : rawText || first.name;
 
-        const attachments = resolved.map(({ url, name, size, mime }) => ({
+        const attachments = resolved.map(({ url, name, size, mime, width, height }) => ({
           url,
           name,
           size,
           mime,
+          ...(width && height ? { width, height } : {}),
         }));
 
         const saved: ChatMessage = {

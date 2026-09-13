@@ -50,6 +50,8 @@ export function EmojiPanel({
 
   useEffect(() => {
     if (!open) return;
+    // Embedded in UnifiedPicker — parent owns outside-click / Escape.
+    if (!showTrigger) return;
     function onDoc(event: MouseEvent) {
       const target = event.target;
       if (!(target instanceof Node)) return;
@@ -60,13 +62,13 @@ export function EmojiPanel({
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") setOpen(false);
     }
-    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("pointerdown", onDoc);
     window.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("pointerdown", onDoc);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, showTrigger]);
 
   function handleSelect(emoji: EmojiMartSelection) {
     const native = emoji.native?.trim();

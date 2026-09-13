@@ -3,6 +3,9 @@ export type FileAttachment = {
   name: string;
   size: number;
   mime: string;
+  /** Pixel size — used for Telegram-style album mosaic. */
+  width?: number;
+  height?: number;
 };
 
 export type ReplyPreview = {
@@ -97,6 +100,16 @@ export type VoiceChannelInfo = {
   users: VoiceChannelUser[];
 };
 
+export type ChatLastMessage = {
+  author: string;
+  authorId?: string;
+  text: string;
+  createdAt: number;
+  kind?: ChatMessage["kind"];
+  thumbUrl?: string;
+  thumbAnimated?: boolean;
+};
+
 export type ChatInfo = {
   id: string;
   type: ChatType;
@@ -114,11 +127,7 @@ export type ChatInfo = {
   memberIds?: string[];
   /** Groups only. Missing/legacy → treat as private. */
   visibility?: GroupVisibility;
-  lastMessage: {
-    author: string;
-    text: string;
-    createdAt: number;
-  } | null;
+  lastMessage: ChatLastMessage | null;
   createdAt: number;
   /** Discord-style voice channels (groups only). */
   voiceChannels?: VoiceChannelInfo[];

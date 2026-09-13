@@ -20,7 +20,8 @@ import {
   formatBytes,
   isMediaAttachment,
   isVideoAttachment,
-  MAX_FILES_AT_ONCE,
+  MAX_PENDING_FILES,
+  parseMediaSize,
   validateFile,
 } from "@/lib/files";
 import { clearDraft, loadDraft, saveDraft } from "@/lib/drafts";
@@ -138,6 +139,7 @@ export function Composer({
   const [voiceMode, setVoiceMode] = useState<"hold" | "click">("hold");
   const [voiceSlideX, setVoiceSlideX] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [composerEl, setComposerEl] = useState<HTMLFormElement | null>(null);
 
   const typingRef = useRef(false);
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -239,10 +241,10 @@ export function Composer({
     setLocalError(null);
 
     setPending((prev) => {
-      const room = Math.max(0, MAX_FILES_AT_ONCE - prev.length);
+      const room = Math.max(0, MAX_PENDING_FILES - prev.length);
       if (room === 0) {
         setLocalError(
-          `Можно прикрепить не больше ${MAX_FILES_AT_ONCE} файлов`,
+          `Можно прикрепить не больше ${MAX_PENDING_FILES} файлов`,
         );
         return prev;
       }
@@ -254,7 +256,7 @@ export function Composer({
         if (nextItems.length >= room) {
           errorMsg =
             errorMsg ||
-            `Можно прикрепить не больше ${MAX_FILES_AT_ONCE} файлов`;
+            `Можно прикрепить не больше ${MAX_PENDING_FILES} файлов`;
           break;
         }
         const invalid = validateFile(file);
@@ -275,7 +277,7 @@ export function Composer({
       }
 
       if (errorMsg) setLocalError(errorMsg);
-      return [...prev, ...nextItems].slice(0, MAX_FILES_AT_ONCE);
+      return [...prev, ...nextItems].slice(0, MAX_PENDING_FILES);
     });
   }
 
@@ -401,11 +403,12 @@ export function Composer({
 
   // Отправка GIF
   const handleGifSend = useCallback(
-    async (url: string) => {
+    async (url: string, size?: { width: number; height: number }) => {
       if (locked || sendingRef.current) return;
       sendingRef.current = true;
       try {
         const remote = parseGiphyMediaUrl(url);
+        const pixels = parseMediaSize(size);
         if (remote && onSendRemoteFile) {
           const ok = await onSendRemoteFile(
             {
@@ -413,6 +416,7 @@ export function Composer({
               name: remote.name,
               mime: remote.mime,
               size: remote.size,
+              ...pixels,
             },
             { caption: "", replyToId: replyTo?.id },
           );
@@ -737,7 +741,8 @@ export function Composer({
 
   return (
     <form
-      className={`composer ${dragging ? "composer--drag" : ""} ${disabled ? "is-disabled" : ""}`}
+      ref={setComposerEl}
+      className={`composer ${dragging ? "composer--drag" : ""} ${disabled ? "is-disabled" : ""} ${pickerOpen ? "composer--picker" : ""}`}
       onSubmit={handleSubmit}
       onDragEnter={locked ? undefined : handleDragEnter}
       onDragLeave={locked ? undefined : handleDragLeave}
@@ -901,19 +906,19 @@ export function Composer({
           <label
             htmlFor={fileInputId}
             className={`composer__attach ${
-              locked || pending.length >= MAX_FILES_AT_ONCE
+              locked || pending.length >= MAX_PENDING_FILES
                 ? "is-disabled"
                 : ""
             }`}
             aria-label="Прикрепить файл или фото"
             title="Файл или фото"
             onClick={(event) => {
-              if (locked || pending.length >= MAX_FILES_AT_ONCE) {
+              if (locked || pending.length >= MAX_PENDING_FILES) {
                 event.preventDefault();
               }
             }}
           >
-            <IconAttach size={20} />
+            <IconAttach size={24} />
           </label>
 
           <TextareaAutosize
@@ -923,6 +928,24 @@ export function Composer({
             onChange={(event) => markTyping(event.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
+            onPointerDown={() => {
+              if (
+                pickerOpen &&
+                typeof window !== "undefined" &&
+                window.matchMedia("(max-width: 640px)").matches
+              ) {
+                setPickerOpen(false);
+              }
+            }}
+            onFocus={() => {
+              if (
+                pickerOpen &&
+                typeof window !== "undefined" &&
+                window.matchMedia("(max-width: 640px)").matches
+              ) {
+                setPickerOpen(false);
+              }
+            }}
             placeholder={
               disabled
                 ? "Открываем чат…"
@@ -942,8 +965,19 @@ export function Composer({
           {/* Единый пикер: эмодзи, GIF, стикеры */}
           <UnifiedPicker
             open={pickerOpen}
+            portalRoot={composerEl}
+            onRevealKeyboard={() => {
+              areaRef.current?.focus();
+            }}
             onOpenChange={(next) => {
-              if (locked) return;
+              if (locked && next) return;
+              if (
+                next &&
+                typeof window !== "undefined" &&
+                window.matchMedia("(max-width: 640px)").matches
+              ) {
+                areaRef.current?.blur();
+              }
               setPickerOpen(next);
             }}
             onEmojiPick={handleEmojiInsert}
@@ -985,7 +1019,7 @@ export function Composer({
               onClick={openVoiceClick}
               onContextMenu={(event) => event.preventDefault()}
             >
-              <IconMic size={22} />
+              <IconMic size={24} />
             </button>
           ) : (
             <button
@@ -996,7 +1030,7 @@ export function Composer({
               disabled={!canSend}
               aria-label="Отправить"
             >
-              <IconSend size={20} />
+              <IconSend size={24} />
             </button>
           )}
         </div>

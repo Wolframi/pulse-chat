@@ -29,6 +29,7 @@ import {
 } from "@/lib/icons";
 import { ConfirmDialog } from "@/components/chat/ConfirmDialog";
 import { formatChatListTime } from "@/lib/dates";
+import { bareMediaUrl, signedMediaSrc } from "@/lib/files";
 import { isChatMuted } from "@/lib/mute";
 import { easeOutSoft, panelVariants } from "@/lib/motion";
 import type { RailFocus } from "@/components/chat/ServerRail";
@@ -37,6 +38,7 @@ type ChatSidebarProps = {
   chats: ChatInfo[];
   people: PeopleUser[];
   currentUserId?: string;
+  currentUserName?: string;
   currentChatId?: string;
   focus: RailFocus;
   onFocusChange: (focus: RailFocus) => void;
@@ -71,12 +73,72 @@ function matchesQuery(value: string, query: string) {
   return value.toLowerCase().includes(query.toLowerCase());
 }
 
+function PreviewThumb({
+  url,
+  animated,
+  sticker,
+}: {
+  url: string;
+  animated?: boolean;
+  sticker?: boolean;
+}) {
+  const src = signedMediaSrc(url);
+  if (!src) return null;
+  const className = `room-item__thumb${sticker ? " is-sticker" : ""}`;
+  const video =
+    Boolean(animated) && /\.(webm|mp4|mov)$/i.test(bareMediaUrl(url));
+  if (video) {
+    return (
+      <video
+        className={className}
+        src={src}
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+      />
+    );
+  }
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className={className} src={src} alt="" draggable={false} />;
+}
+
+function chatRowPreview(
+  chat: ChatInfo,
+  currentUserId?: string,
+  currentUserName?: string,
+) {
+  const last = chat.lastMessage;
+  if (!last) {
+    return { text: chat.topic };
+  }
+  const own =
+    Boolean(last.authorId && currentUserId && last.authorId === currentUserId) ||
+    Boolean(currentUserName && last.author === currentUserName);
+  const text = last.text.trim();
+  const media = {
+    thumbUrl: last.thumbUrl,
+    thumbAnimated: last.thumbAnimated,
+    sticker: last.kind === "sticker",
+  };
+  if (own || chat.type === "dm") {
+    return { text, ...media };
+  }
+  return {
+    text: text ? `${last.author}: ${text}` : last.author,
+    ...media,
+  };
+}
+
 function ChatRow({
   chat,
   active,
   avatarUrl,
   muted,
   online,
+  currentUserId,
+  currentUserName,
   onClick,
   onToggleMute,
 }: {
@@ -85,13 +147,13 @@ function ChatRow({
   avatarUrl?: string;
   muted?: boolean;
   online?: boolean;
+  currentUserId?: string;
+  currentUserName?: string;
   onClick: () => void;
   onToggleMute?: (chatId: string) => void;
 }) {
   const title = chat.type === "channel" ? `#${chat.title}` : chat.title;
-  const preview = chat.lastMessage
-    ? `${chat.lastMessage.author}: ${chat.lastMessage.text}`
-    : chat.topic;
+  const preview = chatRowPreview(chat, currentUserId, currentUserName);
   const unreadLabel =
     chat.unreadCount > 99 ? "99+" : String(chat.unreadCount);
 
@@ -139,7 +201,16 @@ function ChatRow({
             ) : null}
           </span>
           <span className="room-item__bottom">
-            <span className="room-item__preview">{preview}</span>
+            <span className="room-item__preview">
+              {preview.thumbUrl ? (
+                <PreviewThumb
+                  url={preview.thumbUrl}
+                  animated={preview.thumbAnimated}
+                  sticker={preview.sticker}
+                />
+              ) : null}
+              <span className="room-item__preview-text">{preview.text}</span>
+            </span>
             {chat.unreadCount > 0 && (
               <span
                 className={`room-item__unread ${muted ? "is-muted" : ""}`}
@@ -169,6 +240,7 @@ export function ChatSidebar({
   chats,
   people,
   currentUserId,
+  currentUserName,
   currentChatId,
   focus,
   onFocusChange,
@@ -789,6 +861,8 @@ export function ChatSidebar({
                       key={chat.id}
                       chat={chat}
                       active={chat.id === currentChatId}
+                      currentUserId={currentUserId}
+                      currentUserName={currentUserName}
                       muted={mutedIds.has(chat.id)}
                       avatarUrl={
                         chat.peerId

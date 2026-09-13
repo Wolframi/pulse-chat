@@ -46,6 +46,21 @@ function sameDay(a: number, b: number) {
   );
 }
 
+function isChatMessage(message: ChatMessage) {
+  return message.kind !== "system" && message.kind !== "call";
+}
+
+/** Same author, < 5 min, same day — tdesktop isAttachedToPrevious / isAttachedToNext. */
+function attachedInCluster(a: ChatMessage, b: ChatMessage) {
+  return (
+    isChatMessage(a) &&
+    isChatMessage(b) &&
+    sameAuthor(a, b) &&
+    Math.abs(b.createdAt - a.createdAt) < 5 * 60 * 1000 &&
+    sameDay(a.createdAt, b.createdAt)
+  );
+}
+
 function isMine(message: ChatMessage, account: AuthAccount) {
   if (message.authorId) return message.authorId === account.userId;
   const selfName = account.displayName || account.username;
@@ -148,16 +163,10 @@ export function MessageList({
     const searching = Boolean(searchQuery.trim());
     return messages.map((message, index) => {
       const prev = messages[index - 1];
+      const next = messages[index + 1];
       const showDay = !prev || !sameDay(prev.createdAt, message.createdAt);
-      const system = message.kind === "system" || message.kind === "call";
-      const clustered =
-        !system &&
-        !!prev &&
-        prev.kind !== "system" &&
-        prev.kind !== "call" &&
-        sameAuthor(prev, message) &&
-        message.createdAt - prev.createdAt < 5 * 60 * 1000 &&
-        !showDay;
+      const clustered = !!prev && attachedInCluster(prev, message);
+      const attachedToNext = !!next && attachedInCluster(message, next);
       const match = messageMatches(message, searchQuery);
       const key = messageKey(message);
       const isNewest = index === messages.length - 1;
@@ -182,6 +191,9 @@ export function MessageList({
         message,
         showDay,
         showMeta: !clustered,
+        showAvatar: isChatMessage(message) && !attachedToNext,
+        attachPrev: clustered,
+        attachNext: attachedToNext,
         mine: isMine(message, account),
         dimmed: searching && !match,
         highlighted: activeMatchId === message.id,
@@ -360,6 +372,9 @@ export function MessageList({
                 message,
                 showDay,
                 showMeta,
+                showAvatar,
+                attachPrev,
+                attachNext,
                 mine,
                 dimmed,
                 highlighted,
@@ -385,6 +400,9 @@ export function MessageList({
                     mine={mine}
                     peopleById={peopleById}
                     showMeta={showMeta}
+                    showAvatar={showAvatar}
+                    attachPrev={attachPrev}
+                    attachNext={attachNext}
                     animate={animate}
                     selfId={account.userId}
                     searchQuery={searchQuery}
