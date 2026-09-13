@@ -662,8 +662,15 @@ function resizeThumbSync(source: string, target: string, width: number) {
       renameSync(tmp, target);
       return true;
     }
-  } catch {
-    /* ignore */
+    console.error(
+      "[thumbs] ffmpeg failed",
+      result.status,
+      result.error?.message || "",
+      "signal:",
+      result.signal,
+    );
+  } catch (error) {
+    console.error("[thumbs] spawn error", (error as Error).message);
   }
   try {
     unlinkSync(tmp);
