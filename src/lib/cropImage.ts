@@ -98,3 +98,73 @@ export async function getCroppedAvatarFile(
     lastModified: Date.now(),
   });
 }
+
+/**
+ * Crop sticker keeping transparency (PNG). Fits the crop into a 512px box.
+ */
+export async function getCroppedStickerFile(
+  imageSrc: string,
+  pixelCrop: CropArea,
+  rotation = 0,
+): Promise<File> {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas недоступен");
+
+  const { width: bBoxWidth, height: bBoxHeight } = rotatedSize(
+    image.width,
+    image.height,
+    rotation,
+  );
+  canvas.width = bBoxWidth;
+  canvas.height = bBoxHeight;
+
+  ctx.translate(bBoxWidth / 2, bBoxHeight / 2);
+  ctx.rotate(rad(rotation));
+  ctx.translate(-image.width / 2, -image.height / 2);
+  ctx.drawImage(image, 0, 0);
+
+  const MAX_SIDE = 512;
+  const scale = Math.min(
+    1,
+    MAX_SIDE / Math.max(pixelCrop.width, pixelCrop.height),
+  );
+  const outW = Math.max(1, Math.round(pixelCrop.width * scale));
+  const outH = Math.max(1, Math.round(pixelCrop.height * scale));
+
+  const cropped = document.createElement("canvas");
+  cropped.width = outW;
+  cropped.height = outH;
+  const croppedCtx = cropped.getContext("2d");
+  if (!croppedCtx) throw new Error("Canvas недоступен");
+
+  croppedCtx.imageSmoothingEnabled = true;
+  croppedCtx.imageSmoothingQuality = "high";
+  croppedCtx.drawImage(
+    canvas,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    outW,
+    outH,
+  );
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    cropped.toBlob((value) => resolve(value), "image/png");
+  });
+
+  canvas.width = 0;
+  canvas.height = 0;
+  cropped.width = 0;
+  cropped.height = 0;
+
+  if (!blob) throw new Error("Не удалось обрезать стикер");
+  return new File([blob], `sticker-${Date.now()}.png`, {
+    type: "image/png",
+    lastModified: Date.now(),
+  });
+}

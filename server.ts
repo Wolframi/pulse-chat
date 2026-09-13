@@ -3340,6 +3340,22 @@ app.prepare().then(() => {
   );
 
   socket.on(
+    "sticker:pack:uninstall",
+    (
+      payload: { packId?: string },
+      ack?: (r: { ok: boolean; error?: string }) => void,
+    ) => {
+      const account = requireAccount(socket);
+      if (!account) {
+        ack?.({ ok: false, error: "Нужен вход" });
+        return;
+      }
+      uninstallStickerPack(account.userId, String(payload?.packId || ""));
+      ack?.({ ok: true });
+    },
+  );
+
+  socket.on(
     "message:sticker",
     (
       payload: {

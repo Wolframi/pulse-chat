@@ -1267,6 +1267,7 @@ export function ChatApp() {
         fetchPack={fetchStickerPack}
         onSend={handleSendSticker}
         onInstall={installStickerPack}
+        onUninstall={uninstallStickerPack}
         onClose={() => setStickerViewer(null)}
       />
 

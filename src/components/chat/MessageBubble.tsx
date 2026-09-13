@@ -225,7 +225,9 @@ function MediaCaption({
   if (caption) {
     return (
       <p className="bubble__text bubble__media-caption">
-        {renderMessageText(caption)}
+        <span className="bubble__media-caption-text">
+          {renderMessageText(caption)}
+        </span>
         {clock}
       </p>
     );

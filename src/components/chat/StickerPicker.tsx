@@ -19,6 +19,7 @@ import {
 } from "@/lib/icons";
 import type { StickerPack } from "@/lib/types";
 import { MAX_STICKER_BYTES } from "@/lib/files";
+import { StickerCropDialog } from "@/components/chat/StickerCropDialog";
 
 type StickerPickerProps = {
   open: boolean;
@@ -122,7 +123,30 @@ export function StickerPicker({
   const [uploading, setUploading] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const cropResolverRef = useRef<((file: File | null) => void) | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const askCrop = useCallback(
+    (file: File) =>
+      new Promise<File | null>((resolve) => {
+        cropResolverRef.current = resolve;
+        setCropFile(file);
+      }),
+    [],
+  );
+
+  const handleCropComplete = useCallback((file: File) => {
+    cropResolverRef.current?.(file);
+    cropResolverRef.current = null;
+    setCropFile(null);
+  }, []);
+
+  const handleCropCancel = useCallback(() => {
+    cropResolverRef.current?.(null);
+    cropResolverRef.current = null;
+    setCropFile(null);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -180,10 +204,17 @@ export function StickerPicker({
           }
           const animated =
             /\.webm$/i.test(file.name) || file.type === "video/webm";
+          let source = file;
+          if (!animated) {
+            // Static stickers get a square crop before upload.
+            const cropped = await askCrop(file);
+            if (!cropped) continue;
+            source = cropped;
+          }
           const size = animated
-            ? await readVideoSize(file)
-            : await readImageSize(file);
-          const result = await onAddSticker(activePack.id, file, {
+            ? await readVideoSize(source)
+            : await readImageSize(source);
+          const result = await onAddSticker(activePack.id, source, {
             animated,
             width: size?.width,
             height: size?.height,
@@ -196,7 +227,7 @@ export function StickerPicker({
         setUploading(false);
       }
     },
-    [activePack, onAddSticker, uploading],
+    [activePack, onAddSticker, uploading, askCrop],
   );
 
   const handleDeletePack = useCallback(async () => {
@@ -229,6 +260,7 @@ export function StickerPicker({
   if (!open) return null;
 
   return (
+    <>
     <motion.div
       className="sticker-picker"
       initial={{ opacity: 0, y: 8 }}
@@ -485,5 +517,12 @@ export function StickerPicker({
         )}
       </div>
     </motion.div>
+    <StickerCropDialog
+      open={Boolean(cropFile)}
+      file={cropFile}
+      onCancel={handleCropCancel}
+      onComplete={handleCropComplete}
+    />
+    </>
   );
 }

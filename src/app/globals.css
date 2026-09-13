@@ -5157,14 +5157,24 @@ button:active:not(:disabled) {
   padding: 6px 10px 8px;
   font-size: 15px;
   line-height: 1.38;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bubble__media-caption-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .bubble__media-caption .bubble__time {
-  float: right;
-  position: relative;
-  top: 12px;
+  flex: none;
+  float: none;
+  position: static;
+  top: auto;
   display: inline-flex;
-  margin: 0 -2px -12px 12px;
+  margin: 0 0 1px;
   font-size: 13px;
   line-height: 1.15;
   opacity: 1;

@@ -14,6 +14,7 @@ type StickerPackViewerProps = {
   fetchPack: (packId: string) => Promise<StickerPack | null>;
   onSend: (packId: string, stickerId: string) => void;
   onInstall: (packId: string) => Promise<boolean>;
+  onUninstall: (packId: string) => Promise<boolean>;
   onClose: () => void;
 };
 
@@ -29,12 +30,14 @@ export function StickerPackViewer({
   fetchPack,
   onSend,
   onInstall,
+  onUninstall,
   onClose,
 }: StickerPackViewerProps) {
   const [pack, setPack] = useState<StickerPack | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -94,6 +97,22 @@ export function StickerPackViewer({
     }
   }, [pack, installing, onInstall]);
 
+  const handleUninstall = useCallback(async () => {
+    if (!pack || uninstalling) return;
+    setUninstalling(true);
+    try {
+      const ok = await onUninstall(pack.id);
+      if (!ok) {
+        toast.error("Не удалось убрать пак");
+        return;
+      }
+      setPack((prev) => (prev ? { ...prev, installed: false } : prev));
+      toast("Пак убран из ваших");
+    } finally {
+      setUninstalling(false);
+    }
+  }, [pack, uninstalling, onUninstall]);
+
   return (
     <AnimatePresence>
       {open && (
@@ -145,10 +164,21 @@ export function StickerPackViewer({
                     {installing ? "Добавляем…" : "Добавить пак"}
                   </button>
                 )}
-                {pack?.installed && (
+                {pack?.installed && !pack.canEdit && (
+                  <button
+                    type="button"
+                    className="sticker-viewer__install"
+                    onClick={() => void handleUninstall()}
+                    disabled={uninstalling}
+                  >
+                    <IconClose size={16} />
+                    {uninstalling ? "Убираем…" : "Убрать пак"}
+                  </button>
+                )}
+                {pack?.installed && pack.canEdit && (
                   <span className="sticker-viewer__installed">
                     <IconCheck size={14} />
-                    У вас есть
+                    Ваш пак
                   </span>
                 )}
                 <button
