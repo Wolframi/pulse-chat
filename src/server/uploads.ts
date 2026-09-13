@@ -649,7 +649,7 @@ function resizeThumbSync(source: string, target: string, width: number) {
         "-i",
         source,
         "-vf",
-        `scale=min(${width}\\,iw):-2`,
+        "scale=430:-2",
         "-q:v",
         "82",
         "-frames:v",
@@ -788,7 +788,8 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
     wantW &&
     THUMB_WIDTHS.has(wantW) &&
     looksImage &&
-    (ext === ".jpg" || ext === ".jpeg")
+    (ext === ".jpg" || ext === ".jpeg") &&
+    size > 120_000 // small files already stream fine
   ) {
     const width = Number(wantW);
     const thumbName = `${fileName}.w${width}.jpg`;
