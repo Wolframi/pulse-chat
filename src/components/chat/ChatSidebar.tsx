@@ -111,7 +111,12 @@ function chatRowPreview(
 ) {
   const last = chat.lastMessage;
   if (!last) {
-    return { text: chat.topic };
+    return {
+      text: chat.topic,
+      thumbUrl: undefined as string | undefined,
+      thumbAnimated: undefined as boolean | undefined,
+      sticker: false,
+    };
   }
   const own =
     Boolean(last.authorId && currentUserId && last.authorId === currentUserId) ||
