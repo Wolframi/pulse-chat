@@ -1495,94 +1495,73 @@ export function useChat() {
           attempt(3);
         });
 
-      const asAlbum =
-        batch.length > 1 &&
-        batch.every((file) => isMediaAttachment(file));
+      // Partition: photos/videos go as one album, docs each as own message.
+      // A single non-media file (e.g. desktop.ini in a folder drag) must not
+      // demote the whole batch to singles.
+      const pairs = batch.map((file, index) => ({
+        file,
+        raw: batchRaw[index] ?? file,
+      }));
+      const mediaPairs = pairs.filter((pair) =>
+        isMediaAttachment(pair.file),
+      );
+      const otherPairs = pairs.filter(
+        (pair) => !isMediaAttachment(pair.file),
+      );
+      const album = mediaPairs.length > 1;
 
       try {
-        if (asAlbum) {
-          const loadedParts = new Array(batch.length).fill(0);
-          const reportProgress = () => {
-            const current = loadedParts.reduce((sum, part) => sum + part, 0);
-            options?.onProgress?.(Math.min(0.97, current / totalBytes));
-          };
-          const uploadedList = await runPool(batch, 3, async (file, index) => {
-            if (controller.signal.aborted) {
-              throw new Error("Загрузка отменена");
-            }
-            const [uploaded, pixels] = await Promise.all([
-              uploadFileWithRetry(file, account.token, {
-                signal: controller.signal,
-                onProgress: (ratio) => {
-                  loadedParts[index] = file.size * ratio;
-                  reportProgress();
-                },
-              }),
-              readMediaSize(file),
-            ]);
-            loadedParts[index] = file.size;
-            completed.push(batchRaw[index] ?? file);
-            reportProgress();
-            const size = parseMediaSize(pixels);
-            return size ? { ...uploaded, ...size } : uploaded;
-          });
-          uploadedFiles.push(...uploadedList);
-          options?.onProgress?.(0.99);
-        } else {
-          for (let index = 0; index < batch.length; index += 1) {
-          if (controller.signal.aborted) {
-            throw new Error("Загрузка отменена");
-          }
+        let captionUsed = false;
 
-          const file = batch[index];
+        const uploadOne = async (
+          file: File,
+          onRatio?: (ratio: number) => void,
+        ) => {
           const [uploaded, pixels] = await Promise.all([
             uploadFileWithRetry(file, account.token, {
               signal: controller.signal,
-              onProgress: (ratio) => {
-                const current = loadedBytes + file.size * ratio;
-                // Leave a little room for the socket send after HTTP finishes.
-                options?.onProgress?.(Math.min(0.97, current / totalBytes));
-              },
+              onProgress: onRatio,
             }),
             readMediaSize(file),
           ]);
-          loadedBytes += file.size;
           const size = parseMediaSize(pixels);
-          uploadedFiles.push(size ? { ...uploaded, ...size } : uploaded);
-          // Composer tracks pending by original File refs; compression may replace them.
-          completed.push(batchRaw[index] ?? file);
-          options?.onProgress?.(Math.min(0.99, loadedBytes / totalBytes));
+          return size ? { ...uploaded, ...size } : uploaded;
+        };
 
-          await emitFileMessage(
-            {
-              chatId,
-              file: uploaded,
-              text: caption
-                ? caption
-                : isMediaAttachment(uploaded)
-                  ? ""
-                  : isAudioAttachment(uploaded)
-                    ? isVoiceNote(uploaded)
-                      ? "Голосовое сообщение"
-                      : audioDisplayName(uploaded)
-                    : uploaded.name,
-              replyToId: options?.replyToId || undefined,
-            },
-            newClientId(),
+        const reportTotal = (extra = 0) => {
+          options?.onProgress?.(
+            Math.min(0.97, (loadedBytes + extra) / totalBytes),
           );
-        }
-        }
+        };
 
-        if (asAlbum) {
+        if (album) {
+          const uploadedList = await runPool(
+            mediaPairs,
+            3,
+            async (pair) => {
+              if (controller.signal.aborted) {
+                throw new Error("Загрузка отменена");
+              }
+              const uploaded = await uploadOne(pair.file, (ratio) => {
+                reportTotal(pair.file.size * ratio);
+              });
+              loadedBytes += pair.file.size;
+              completed.push(pair.raw);
+              reportTotal();
+              return uploaded;
+            },
+          );
+          uploadedFiles.push(...uploadedList);
+          options?.onProgress?.(0.99);
           const albums = chunkItems(uploadedFiles, MAX_FILES_AT_ONCE);
           for (let albumIndex = 0; albumIndex < albums.length; albumIndex += 1) {
-            const album = albums[albumIndex];
-            const firstAlbum = albumIndex === 0;
+            const chunk = albums[albumIndex];
+            const firstAlbum = albumIndex === 0 && !captionUsed;
             await emitFileMessage(
               {
                 chatId,
-                files: album.length > 1 ? album : undefined,
-                file: album[0],
+                files: chunk.length > 1 ? chunk : undefined,
+                file: chunk[0],
                 text: firstAlbum ? caption : "",
                 replyToId: firstAlbum
                   ? options?.replyToId || undefined
@@ -1590,7 +1569,54 @@ export function useChat() {
               },
               newClientId(),
             );
+            if (firstAlbum) captionUsed = true;
           }
+        } else if (mediaPairs.length === 1) {
+          const pair = mediaPairs[0];
+          if (controller.signal.aborted) {
+            throw new Error("Загрузка отменена");
+          }
+          const uploaded = await uploadOne(pair.file);
+          loadedBytes += pair.file.size;
+          completed.push(pair.raw);
+          reportTotal();
+          await emitFileMessage(
+            {
+              chatId,
+              file: uploaded,
+              text: caption,
+              replyToId: options?.replyToId || undefined,
+            },
+            newClientId(),
+          );
+          captionUsed = true;
+        }
+
+        for (const pair of otherPairs) {
+          if (controller.signal.aborted) {
+            throw new Error("Загрузка отменена");
+          }
+          const uploaded = await uploadOne(pair.file);
+          loadedBytes += pair.file.size;
+          completed.push(pair.raw);
+          reportTotal();
+          const text = isAudioAttachment(uploaded)
+            ? isVoiceNote(uploaded)
+              ? "Голосовое сообщение"
+              : audioDisplayName(uploaded)
+            : uploaded.name;
+          await emitFileMessage(
+            {
+              chatId,
+              file: uploaded,
+              text: captionUsed ? text : caption || text,
+              replyToId: captionUsed
+                ? undefined
+                : options?.replyToId || undefined,
+            },
+            newClientId(),
+          );
+          captionUsed = true;
         }
 
         options?.onProgress?.(1);
