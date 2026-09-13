@@ -85,8 +85,6 @@ function plaqueAuthor(
  *  Stickers / photos / GIF / emoji stay in one stack for the whole day. */
 function attachedInCluster(a: ChatMessage, b: ChatMessage) {
   if (!isChatMessage(a) || !isChatMessage(b) || !sameAuthor(a, b)) return false;
-  // Стикеры не склеиваются в стопку как фото — каждое отдельным сообщением.
-  if (a.kind === "sticker" || b.kind === "sticker") return false;
   if (!sameDay(a.createdAt, b.createdAt)) return false;
   if (Math.abs(b.createdAt - a.createdAt) < 5 * 60 * 1000) return true;
   return isVisualMedia(a) && isVisualMedia(b);
