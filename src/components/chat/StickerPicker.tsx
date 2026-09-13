@@ -20,6 +20,7 @@ import {
 import type { StickerPack } from "@/lib/types";
 import { MAX_STICKER_BYTES } from "@/lib/files";
 import { StickerCropDialog } from "@/components/chat/StickerCropDialog";
+import { layoutGifMosaic } from "@/lib/gifMosaic";
 
 type StickerPickerProps = {
   open: boolean;
@@ -55,9 +56,11 @@ const STATIC_MIME = new Set([
 ]);
 const STATIC_EXT = /\.(png|jpe?g|jfif|webp|avif)$/i;
 
-const PICKER_CELL = 72;
-const PICKER_PAD = 6;
-const PICKER_INNER = PICKER_CELL - PICKER_PAD * 2;
+/** Мозаика как у GIF-панели: ряды одной высоты, ширина по пропорциям. */
+const STICKER_MOSAIC_TARGET_HEIGHT = 112;
+const STICKER_MOSAIC_MAX_HEIGHT = 168;
+const STICKER_MOSAIC_SPACING = 3;
+const STICKER_MOSAIC_MIN_ITEM_WIDTH = 64;
 
 function readImageSize(file: File): Promise<{ width: number; height: number } | null> {
   return new Promise((resolve) => {
@@ -126,6 +129,8 @@ export function StickerPicker({
   const [cropFile, setCropFile] = useState<File | null>(null);
   const cropResolverRef = useRef<((file: File | null) => void) | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const widthProbeRef = useRef<HTMLDivElement>(null);
+  const [mosaicWidth, setMosaicWidth] = useState(0);
 
   const askCrop = useCallback(
     (file: File) =>
@@ -149,6 +154,19 @@ export function StickerPicker({
   }, []);
 
   useEffect(() => {
+    const el = widthProbeRef.current;
+    if (!el) return;
+    const measure = () => {
+      const next = Math.floor(el.clientWidth);
+      setMosaicWidth((prev) => (prev === next ? prev : next));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open, activePackId]);
+
+  useEffect(() => {
     if (!open) return;
     void refreshPacks();
   }, [open, refreshPacks]);
@@ -168,6 +186,18 @@ export function StickerPicker({
     () => packs.find((p) => p.id === activePackId) ?? null,
     [packs, activePackId],
   );
+
+  const mosaic = useMemo(() => {
+    const stickers = activePack?.stickers ?? [];
+    return layoutGifMosaic(
+      stickers.map((s) => ({ width: s.width || 1, height: s.height || 1 })),
+      mosaicWidth,
+      STICKER_MOSAIC_SPACING,
+      STICKER_MOSAIC_TARGET_HEIGHT,
+      STICKER_MOSAIC_MAX_HEIGHT,
+      STICKER_MOSAIC_MIN_ITEM_WIDTH,
+    );
+  }, [activePack, mosaicWidth]);
 
   const handleCreatePack = useCallback(async () => {
     const title = packTitle.trim();
@@ -410,104 +440,75 @@ export function StickerPicker({
         </div>
       )}
 
-      {/* Сетка стикеров — inline-размеры, чтобы ничего не растягивалось */}
-      <div
-        className="sticker-picker__grid"
-        style={{
-          flex: "1 1 0",
-          minHeight: 0,
-          overflowY: "auto",
-          overflowX: "hidden",
-          display: "grid",
-          gridTemplateColumns: `repeat(auto-fill, ${PICKER_CELL}px)`,
-          gridAutoRows: `${PICKER_CELL}px`,
-          gap: 6,
-          padding: "10px 12px 14px",
-          alignContent: "start",
-          justifyContent: "start",
-        }}
-      >
+      {/* Сетка стикеров — мозаика: ряды одной высоты, ширина по пропорциям */}
+      <div className="sticker-picker__grid">
+        <div ref={widthProbeRef} className="sticker-picker__mosaic-width" />
         {activePack?.stickers.length ? (
-          activePack.stickers.map((sticker) => (
-            <button
-              key={sticker.id}
-              type="button"
-              className="sticker-picker__item"
-              onClick={() => onSend(activePack.id, sticker.id)}
-              title={sticker.name || "Стикер"}
-              style={{
-                position: "relative",
-                width: PICKER_CELL,
-                height: PICKER_CELL,
-                padding: PICKER_PAD,
-                border: 0,
-                borderRadius: 10,
-                background: "transparent",
-                cursor: "pointer",
-                overflow: "hidden",
-                boxSizing: "border-box",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transition: "background 0.15s ease",
-              }}
+          mosaicWidth > 0 && (
+            <div
+              className="sticker-picker__mosaic"
+              style={{ height: mosaic.height }}
             >
-              {sticker.animated ? (
-                <video
-                  src={sticker.url}
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  preload="metadata"
-                  aria-hidden
-                  style={{
-                    width: PICKER_INNER,
-                    height: PICKER_INNER,
-                    objectFit: "contain",
-                    objectPosition: "center",
-                    display: "block",
-                    pointerEvents: "none",
-                  }}
-                />
-              ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={sticker.url}
-                  alt=""
-                  loading="lazy"
-                  draggable={false}
-                  style={{
-                    width: PICKER_INNER,
-                    height: PICKER_INNER,
-                    objectFit: "contain",
-                    objectPosition: "center",
-                    display: "block",
-                    pointerEvents: "none",
-                  }}
-                />
-              )}
-              {activePack.canEdit && (
-                <span
-                  className="sticker-picker__item-remove"
-                  role="button"
-                  aria-label="Удалить стикер"
-                  title="Удалить стикер"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (!confirm("Удалить этот стикер?")) return;
-                    void onRemoveSticker(activePack.id, sticker.id).then(
-                      (ok) => {
-                        if (!ok) toast.error("Не удалось удалить");
-                      },
-                    );
-                  }}
-                >
-                  <IconClose size={12} />
-                </span>
-              )}
-            </button>
-          ))
+              {activePack.stickers.map((sticker, index) => {
+                const tile = mosaic.tiles[index];
+                if (!tile) return null;
+                return (
+                  <button
+                    key={sticker.id}
+                    type="button"
+                    className="sticker-picker__item"
+                    onClick={() => onSend(activePack.id, sticker.id)}
+                    title={sticker.name || "Стикер"}
+                    style={{
+                      left: tile.x,
+                      top: tile.y,
+                      width: tile.width,
+                      height: tile.height,
+                    }}
+                  >
+                    {sticker.animated ? (
+                      <video
+                        src={sticker.url}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        preload="metadata"
+                        aria-hidden
+                      />
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={sticker.url}
+                        alt=""
+                        loading="lazy"
+                        draggable={false}
+                      />
+                    )}
+                    {activePack.canEdit && (
+                      <span
+                        className="sticker-picker__item-remove"
+                        role="button"
+                        aria-label="Удалить стикер"
+                        title="Удалить стикер"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (!confirm("Удалить этот стикер?")) return;
+                          void onRemoveSticker(activePack.id, sticker.id).then(
+                            (ok) => {
+                              if (!ok) toast.error("Не удалось удалить");
+                            },
+                          );
+                        }}
+                      >
+                        <IconClose size={12} />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )
         ) : (
           <div className="sticker-picker__empty">
             {activePack?.canEdit

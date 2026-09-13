@@ -36,6 +36,8 @@ export function layoutGifMosaic(
   containerWidth: number,
   spacing = GIF_MOSAIC_SPACING,
   targetRowHeight = GIF_MOSAIC_TARGET_HEIGHT,
+  maxHeight = GIF_MOSAIC_MAX_HEIGHT,
+  minItemWidth = GIF_MOSAIC_MIN_ITEM_WIDTH,
 ): GifMosaicLayout {
   const width = Math.max(0, Math.floor(containerWidth));
   if (!sizes.length || width < 1) {
@@ -59,7 +61,7 @@ export function layoutGifMosaic(
     const nextMinWidth = (width - (nextCount - 1) * spacing) / nextCount;
     const overflow =
       row.length > 0 &&
-      (nextHeight < targetRowHeight || nextMinWidth < GIF_MOSAIC_MIN_ITEM_WIDTH);
+      (nextHeight < targetRowHeight || nextMinWidth < minItemWidth);
 
     if (overflow) {
       rows.push(row);
@@ -90,7 +92,7 @@ export function layoutGifMosaic(
         widow = true;
       }
     }
-    rowHeight = Math.min(GIF_MOSAIC_MAX_HEIGHT, Math.max(1, Math.round(rowHeight)));
+    rowHeight = Math.min(maxHeight, Math.max(1, Math.round(rowHeight)));
     const stretch = !widow;
     let x = 0;
 
