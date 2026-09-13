@@ -431,6 +431,8 @@ type CallRecord = {
 };
 
 const callsById = new Map<string, CallRecord>();
+/** Socket.IO server — set in app.prepare().then, used by the ghost-call sweep. */
+let ioServer: Server | null = null;
 const callByUser = new Map<string, string>();
 const callDisconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const RING_TIMEOUT_MS = 45_000;
@@ -810,9 +812,9 @@ setInterval(() => {
     const leftId = callerIn ? call.callerId : call.calleeId;
     const goneId = callerIn ? call.calleeId : call.callerId;
     clearCall(call.callId);
-    if (leftId && userIsConnected(leftId)) {
+    if (leftId && ioServer && userIsConnected(leftId)) {
       const gone = getUserById(goneId);
-      emitToUser(io, leftId, "call:signal", {
+      emitToUser(ioServer, leftId, "call:signal", {
         callId: call.callId,
         fromUserId: goneId,
         fromName: gone?.displayName || gone?.username || "Pulse",
@@ -2321,6 +2323,7 @@ app.prepare().then(() => {
   }, 3_000);
 
   io.on("connection", (socket) => {
+    ioServer = io;
     socket.emit("app:boot", { bootId: APP_BOOT_ID });
     // people list only after auth — see afterAuth / broadcastPeople
 
