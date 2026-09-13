@@ -44,6 +44,10 @@ import { compressUploadBatch } from "@/lib/compressImage";
 import { readMediaSize } from "@/lib/mediaSize";
 import { watchAppBoot } from "@/lib/liveReload";
 import { parseGiphyMediaUrl } from "@/lib/giphyMedia";
+import {
+  getAudioPlaybackState,
+  stopAudioPlayback,
+} from "@/lib/audioPlayback";
 
 const TOKEN_KEY = "pulse-chat-token";
 
@@ -358,6 +362,16 @@ export function useChat() {
         const chatId = String(payload?.chatId || "");
         const messageId = String(payload?.messageId || "");
         if (!chatId || !messageId) return;
+
+        // A deleted voice note / audio must stop playing right away.
+        const playback = getAudioPlaybackState();
+        if (
+          playback.current &&
+          (playback.current.messageId === messageId ||
+            playback.current.id.startsWith(`${messageId}:`))
+        ) {
+          stopAudioPlayback();
+        }
 
         const tombstone = payload.tombstone;
         const apply = (list: ChatMessage[]) => {
@@ -1576,7 +1590,9 @@ export function useChat() {
           if (controller.signal.aborted) {
             throw new Error("Загрузка отменена");
           }
-          const uploaded = await uploadOne(pair.file);
+          const uploaded = await uploadOne(pair.file, (ratio) => {
+            reportTotal(pair.file.size * ratio);
+          });
           loadedBytes += pair.file.size;
           completed.push(pair.raw);
           reportTotal();
@@ -1596,7 +1612,9 @@ export function useChat() {
           if (controller.signal.aborted) {
             throw new Error("Загрузка отменена");
           }
-          const uploaded = await uploadOne(pair.file);
+          const uploaded = await uploadOne(pair.file, (ratio) => {
+            reportTotal(pair.file.size * ratio);
+          });
           loadedBytes += pair.file.size;
           completed.push(pair.raw);
           reportTotal();
