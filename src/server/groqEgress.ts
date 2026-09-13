@@ -208,7 +208,9 @@ export function markGroqEgressOk(proxy: string) {
 
 export async function resolveGroqEgress(refresh = false) {
   const pinned = pinnedEgress();
-  if (pinned) return pinned;
+  // Pinned proxy is primary; on retries (refresh) fall back to the public
+  // proxy scanner so a dead pinned proxy doesn't kill transcription.
+  if (pinned && !refresh) return pinned;
   if (refresh) {
     const next = spare.shift();
     if (next) {
