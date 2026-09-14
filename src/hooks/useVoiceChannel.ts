@@ -115,11 +115,13 @@ export function useVoiceChannel({
         activeRef.current = null;
         setActive(null);
         setPeers([]);
-        setError(
-          err instanceof Error
-            ? err.message
-            : "SFU недоступен — вышли из канала",
-        );
+        const message =
+          err instanceof Error && /device not found/i.test(err.message)
+            ? "Микрофон не найден — подключите устройство"
+            : err instanceof Error
+              ? err.message
+              : "Не удалось подключиться к каналу";
+        setError(message);
       }
     },
     [socket],

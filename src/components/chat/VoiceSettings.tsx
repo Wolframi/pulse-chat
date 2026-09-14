@@ -25,6 +25,17 @@ function meterCaptureConstraints(deviceId: string): MediaTrackConstraints {
   };
 }
 
+/** Человекочитаемый текст ошибки устройства вместо «Requested device not found». */
+function friendlyDeviceError(err: Error): string {
+  if (/device not found|NotFoundError/i.test(err.name + err.message)) {
+    return "Микрофон не найден — подключите устройство";
+  }
+  if (/NotAllowed|Permission|denied/i.test(err.name + err.message)) {
+    return "Разрешите доступ к микрофону";
+  }
+  return "Не удалось открыть микрофон";
+}
+
 export function VoiceSettings() {
   const [mics, setMics] = useState<AudioDeviceOption[]>([]);
   const [speakers, setSpeakers] = useState<AudioDeviceOption[]>([]);
@@ -72,7 +83,9 @@ export function VoiceSettings() {
       setPermError(null);
     } catch (err) {
       setPermError(
-        err instanceof Error ? err.message : "Нет доступа к микрофону",
+        err instanceof Error
+          ? friendlyDeviceError(err)
+          : "Нет доступа к микрофону",
       );
     }
   }, []);
@@ -155,7 +168,9 @@ export function VoiceSettings() {
         setPermError(null);
       } catch (err) {
         setPermError(
-          err instanceof Error ? err.message : "Не удалось открыть микрофон",
+          err instanceof Error
+            ? friendlyDeviceError(err)
+            : "Не удалось открыть микрофон",
         );
       }
     },

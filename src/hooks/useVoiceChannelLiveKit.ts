@@ -794,10 +794,19 @@ export function useVoiceChannelLiveKit({
           throw cancelled;
         }
         await room.startAudio().catch(() => undefined);
-        await room.localParticipant.setMicrophoneEnabled(
-          !keepMuted,
-          liveKitAudioCapture(validMicId),
-        );
+        // Если микрофона нет/занят — не роняем вход, просто входим без звука.
+        let micFailed = false;
+        try {
+          await room.localParticipant.setMicrophoneEnabled(
+            !keepMuted,
+            liveKitAudioCapture(validMicId),
+          );
+        } catch {
+          micFailed = true;
+          await room.localParticipant
+            .setMicrophoneEnabled(false)
+            .catch(() => undefined);
+        }
         if (attempt !== joinAttemptRef.current || controller.signal.aborted) {
           const cancelled = new Error("SFU join cancelled");
           cancelled.name = "AbortError";
@@ -833,20 +842,21 @@ export function useVoiceChannelLiveKit({
         }
 
         const nextActive = { channelId, groupId, title };
+        const effectiveMuted = keepMuted || micFailed;
         activeRef.current = nextActive;
         setActive(nextActive);
         setPeers(peers);
-        mutedRef.current = keepMuted;
+        mutedRef.current = effectiveMuted;
         deafenedRef.current = keepDeafened;
         cameraOffRef.current = keepCameraOff;
         sharingScreenRef.current = keepSharing;
-        setMuted(keepMuted);
+        setMuted(effectiveMuted);
         setDeafened(keepDeafened);
         setCameraOff(keepCameraOff);
         setSharingScreen(keepSharing);
         syncLocalStream(room);
         emitMediaState(keepCameraOff, keepSharing);
-        if (keepMuted) socket.emit("voice:mute", { muted: true });
+        if (effectiveMuted) socket.emit("voice:mute", { muted: true });
         if (keepDeafened) socket.emit("voice:deafen", { deafened: true });
       } catch (joinError) {
         if (attempt !== joinAttemptRef.current || controller.signal.aborted) {
