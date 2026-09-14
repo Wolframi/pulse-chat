@@ -1,8 +1,18 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { IconChevronLeft, IconChevronRight, IconExpand } from "@/lib/icons";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  IconChevronLeft,
+  IconChevronRight,
+  IconExpand,
+  IconVolume,
+  IconVolumeOff,
+} from "@/lib/icons";
 import { MediaVideo } from "@/components/chat/MediaVideo";
+import {
+  getScreenAudioVolume,
+  setScreenAudioVolume,
+} from "@/lib/screenAudio";
 
 export type ScreenSource = {
   id: string;
@@ -55,6 +65,93 @@ function sourceHasLiveVideo(source: ScreenSource) {
   return source.stream
     .getVideoTracks()
     .some((track) => track.readyState === "live");
+}
+
+/** Ручка громкости демонстрации — как у голосовых сообщений. */
+function ScreenVolumeKnob() {
+  const [volume, setVolume] = useState(() => getScreenAudioVolume());
+  const [open, setOpen] = useState(false);
+  const dragRef = useRef(false);
+  const leaveTimerRef = useRef<number | null>(null);
+  const lastVolumeRef = useRef(getScreenAudioVolume() || 1);
+
+  const apply = useCallback((value: number) => {
+    const next = Math.min(1, Math.max(0, Number(value.toFixed(2))));
+    setVolume(next);
+    setScreenAudioVolume(next);
+  }, []);
+
+  const seekFromClientY = useCallback(
+    (clientY: number, target: HTMLElement) => {
+      const rect = target.getBoundingClientRect();
+      const ratio = 1 - (clientY - rect.top) / Math.max(1, rect.height);
+      apply(ratio);
+    },
+    [apply],
+  );
+
+  const muted = volume <= 0;
+  const percent = Math.round(volume * 100);
+
+  return (
+    <div
+      className={`screen-vol ${open ? "is-open" : ""}`}
+      onPointerEnter={() => {
+        if (leaveTimerRef.current) window.clearTimeout(leaveTimerRef.current);
+        setOpen(true);
+      }}
+      onPointerLeave={() => {
+        if (dragRef.current) return;
+        leaveTimerRef.current = window.setTimeout(() => setOpen(false), 140);
+      }}
+    >
+      <button
+        type="button"
+        className="screen-vol__icon"
+        aria-label="Громкость демонстрации"
+        title="Громкость демонстрации"
+        onClick={() => {
+          if (muted) {
+            apply(lastVolumeRef.current > 0 ? lastVolumeRef.current : 1);
+          } else {
+            lastVolumeRef.current = volume;
+            apply(0);
+          }
+        }}
+      >
+        {muted ? <IconVolumeOff size={16} /> : <IconVolume size={16} />}
+      </button>
+      <div className="screen-vol__pop">
+        <span>{percent}</span>
+        <div
+          className="screen-vol__track"
+          role="slider"
+          aria-label="Громкость демонстрации"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          aria-orientation="vertical"
+          onPointerDown={(event) => {
+            dragRef.current = true;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            seekFromClientY(event.clientY, event.currentTarget);
+          }}
+          onPointerMove={(event) => {
+            if (!dragRef.current) return;
+            seekFromClientY(event.clientY, event.currentTarget);
+          }}
+          onPointerUp={() => {
+            dragRef.current = false;
+          }}
+          onPointerCancel={() => {
+            dragRef.current = false;
+          }}
+        >
+          <i style={{ height: `${percent}%` }} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** Hidden sinks so screen tracks keep decoding while the stage is unmounted. */
@@ -118,6 +215,7 @@ export function ScreenShareStage({ sources }: { sources: ScreenSource[] }) {
         </div>
       ) : null}
       <ScreenPane source={current} hideBadge={multi} />
+      <ScreenVolumeKnob />
     </div>
   );
 }

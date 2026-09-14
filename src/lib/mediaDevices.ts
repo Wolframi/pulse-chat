@@ -101,8 +101,31 @@ export async function applyAudioOutput(
   const sink = (el as Sinkable).setSinkId;
   if (typeof sink !== "function") return;
   const id = getSpeakerDeviceId();
+  if (id) {
+    try {
+      // Сохранённое устройство могли отключить — проверяем, что оно ещё есть.
+      const devices = await navigator.mediaDevices
+        .enumerateDevices()
+        .catch(() => [] as MediaDeviceInfo[]);
+      const exists = devices.some(
+        (device) =>
+          device.kind === "audiooutput" && device.deviceId === id,
+      );
+      if (!exists) {
+        writePref(SPEAKER_KEY, "");
+        emitVoiceSettings({ speaker: true });
+        return;
+      }
+      await sink.call(el, id);
+      return;
+    } catch {
+      // RequestedDeviceNotFoundError и прочие — сбрасываем на выход по умолчанию.
+      writePref(SPEAKER_KEY, "");
+      emitVoiceSettings({ speaker: true });
+    }
+  }
   try {
-    await sink.call(el, id || "default");
+    await sink.call(el, "default");
   } catch {
     try {
       await sink.call(el, "");

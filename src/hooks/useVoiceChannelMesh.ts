@@ -44,6 +44,7 @@ import {
   subscribeVoiceSettings,
   type VoiceSettingsChange,
 } from "@/lib/mediaDevices";
+import { registerScreenAudio, unregisterScreenAudio } from "@/lib/screenAudio";
 
 type UseVoiceChannelOptions = {
   socket: Socket | null;
@@ -76,6 +77,15 @@ export function useVoiceChannelMesh({
 }: UseVoiceChannelOptions) {
   const [active, setActive] = useState<ActiveVoice | null>(null);
   const [peers, setPeers] = useState<VoiceChannelUser[]>([]);
+
+  // Аудио тех, кто демонстрирует экран, — под ручкой громкости демонстрации.
+  useEffect(() => {
+    for (const [peerId, audio] of remoteAudioRef.current.entries()) {
+      const peer = peers.find((p) => p.userId === peerId);
+      if (peer?.sharingScreen) registerScreenAudio(audio);
+      else unregisterScreenAudio(audio);
+    }
+  }, [peers]);
   const [muted, setMuted] = useState(false);
   const [deafened, setDeafened] = useState(false);
   const [error, setError] = useState<string | null>(null);

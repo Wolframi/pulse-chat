@@ -59,6 +59,7 @@ import {
   subscribeVoiceSettings,
   type VoiceSettingsChange,
 } from "@/lib/mediaDevices";
+import { registerScreenAudio, unregisterScreenAudio } from "@/lib/screenAudio";
 import {
   clearMediaResume,
   isPageUnloading,
@@ -202,6 +203,15 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   const [noiseFilterKind, setNoiseFilterKind] =
     useState<NoiseFilterKind>("browser");
   const [remoteSharingScreen, setRemoteSharingScreen] = useState(false);
+
+  // Пока собеседник демонстрирует экран — его аудио участвует в ручке
+  // громкости демонстрации.
+  useEffect(() => {
+    const element = remoteAudioRef.current;
+    if (!element || !remoteSharingScreen) return;
+    registerScreenAudio(element);
+    return () => unregisterScreenAudio(element);
+  }, [remoteSharingScreen]);
   const [remoteCameraOff, setRemoteCameraOff] = useState(true);
   const [minimized, setMinimized] = useState(false);
   const [status, setStatus] = useState("");

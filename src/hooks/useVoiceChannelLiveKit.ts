@@ -32,6 +32,7 @@ import {
   subscribeVoiceSettings,
   type VoiceSettingsChange,
 } from "@/lib/mediaDevices";
+import { registerScreenAudio, unregisterScreenAudio } from "@/lib/screenAudio";
 import {
   configureSpeakingAnalyser,
   createSpeakingSamples,
@@ -260,6 +261,9 @@ export function useVoiceChannelLiveKit({
     const track = remoteAudioTracksRef.current.get(userId);
     if (track) {
       track.detach().forEach((element) => {
+        if (userId.endsWith("::screen")) {
+          unregisterScreenAudio(element as HTMLAudioElement);
+        }
         element.srcObject = null;
         element.remove();
       });
@@ -267,6 +271,7 @@ export function useVoiceChannelLiveKit({
     }
     const element = remoteAudioRef.current.get(userId);
     if (element) {
+      if (userId.endsWith("::screen")) unregisterScreenAudio(element);
       element.srcObject = null;
       element.remove();
       remoteAudioRef.current.delete(userId);
@@ -284,6 +289,7 @@ export function useVoiceChannelLiveKit({
       document.body.appendChild(element);
       remoteAudioTracksRef.current.set(userId, track);
       remoteAudioRef.current.set(userId, element);
+      if (userId.endsWith("::screen")) registerScreenAudio(element);
       void applyAudioOutput(element);
       void roomRef.current?.startAudio().catch(() => undefined);
       if (!element.muted) void element.play().catch(() => undefined);
