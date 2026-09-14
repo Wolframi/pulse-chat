@@ -6426,6 +6426,39 @@ button:active:not(:disabled) {
   flex: 0 0 auto;
 }
 
+/* Ручка громкости прослушивания рингтона */
+.profile__ringtone-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 0 2px;
+}
+
+.profile__ringtone-volume-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.profile__ringtone-volume-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.profile__ringtone-volume-slider {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent, #6d8aad);
+}
+
 .lightbox__hint {
   margin: 8px 0 0;
   text-align: center;

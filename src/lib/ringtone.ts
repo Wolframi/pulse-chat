@@ -243,6 +243,20 @@ async function resolvePlayUrl(saved: SavedRingtone): Promise<string | null> {
   return saved.url;
 }
 
+/** Громкость прослушивания рингтонов (ручка в профиле). */
+let previewVolume = 0.85;
+let activePreviewAudio: HTMLAudioElement | null = null;
+let activePreviewGain: GainNode | null = null;
+
+/** Меняет громкость демки на лету и для будущих прослушиваний. */
+export function setRingtonePreviewVolume(volume: number) {
+  previewVolume = Math.max(0, Math.min(1, volume));
+  if (activePreviewAudio) activePreviewAudio.volume = previewVolume;
+  if (activePreviewGain) {
+    activePreviewGain.gain.value = Math.max(0.0001, 0.04 * previewVolume);
+  }
+}
+
 /** One-shot preview (not looping). Pass null for the built-in beep. */
 export function previewRingtone(
   url: string | null,
@@ -261,27 +275,34 @@ export function previewRingtone(
       const gain = ctx.createGain();
       osc.type = "sine";
       osc.frequency.value = 880;
-      gain.gain.value = 0.04;
+      activePreviewGain = gain;
+      gain.gain.value = 0.04 * previewVolume;
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
       osc.stop(ctx.currentTime + 0.22);
-      window.setTimeout(() => void ctx.close(), 400);
+      window.setTimeout(() => {
+        if (activePreviewGain === gain) activePreviewGain = null;
+        void ctx.close();
+      }, 400);
     });
     return () => {
+      if (activePreviewGain?.context === ctx) activePreviewGain = null;
       void ctx.close();
     };
   }
 
   const audio = new Audio(url);
   audio.preload = "auto";
-  audio.volume = 0.85;
+  audio.volume = previewVolume;
+  activePreviewAudio = audio;
   const fail = () => onError?.("Не удалось воспроизвести");
   audio.addEventListener("error", fail, { once: true });
   void playWhenReady(audio)
     .then(() => applyAudioOutput(audio))
     .catch(fail);
   return () => {
+    if (activePreviewAudio === audio) activePreviewAudio = null;
     audio.removeEventListener("error", fail);
     audio.pause();
     audio.removeAttribute("src");
@@ -298,7 +319,8 @@ export function previewRingtoneFrom(
   if (typeof window === "undefined") return () => undefined;
   const audio = new Audio(url);
   audio.preload = "auto";
-  audio.volume = 0.85;
+  audio.volume = previewVolume;
+  activePreviewAudio = audio;
   void applyAudioOutput(audio);
   const fail = () => onError?.("Не удалось воспроизвести");
   audio.addEventListener("error", fail, { once: true });
@@ -307,6 +329,7 @@ export function previewRingtoneFrom(
     .then(() => applyAudioOutput(audio))
     .catch(fail);
   return () => {
+    if (activePreviewAudio === audio) activePreviewAudio = null;
     audio.removeEventListener("error", fail);
     audio.pause();
     audio.removeAttribute("src");

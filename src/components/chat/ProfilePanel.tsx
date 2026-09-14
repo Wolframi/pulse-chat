@@ -32,6 +32,8 @@ import {
   IconPlay,
   IconTrash,
   IconUpload,
+  IconVolume,
+  IconVolumeOff,
 } from "@/lib/icons";
 import { validateAvatarFile } from "@/lib/files";
 import { sheetSpring, easeOutSoft } from "@/lib/motion";
@@ -50,6 +52,7 @@ import {
   getSavedRingtone,
   previewRingtone,
   previewRingtoneFrom,
+  setRingtonePreviewVolume,
   setSavedRingtone,
   type CatalogRingtone,
   type SavedRingtone,
@@ -109,6 +112,9 @@ export function ProfilePanel({
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [previewVolume, setPreviewVolumeState] = useState(0.85);
+  const [previewMuted, setPreviewMuted] = useState(false);
+  const volumeBeforeMuteRef = useRef(0.85);
   const [hasCustom, setHasCustom] = useState(false);
   const [customTitle, setCustomTitle] = useState("Свой рингтон");
   const [trimFile, setTrimFile] = useState<File | null>(null);
@@ -265,6 +271,25 @@ export function ProfilePanel({
     });
   }
 
+  function handlePreviewVolume(value: number) {
+    setPreviewVolumeState(value);
+    setPreviewMuted(value <= 0);
+    setRingtonePreviewVolume(value);
+  }
+
+  function togglePreviewMute() {
+    if (previewMuted) {
+      const restore = volumeBeforeMuteRef.current || 0.85;
+      setPreviewMuted(false);
+      setPreviewVolumeState(restore);
+      setRingtonePreviewVolume(restore);
+    } else {
+      volumeBeforeMuteRef.current = previewVolume > 0 ? previewVolume : 0.85;
+      setPreviewMuted(true);
+      setRingtonePreviewVolume(0);
+    }
+  }
+
   function handleAvatarPick(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -413,6 +438,39 @@ export function ProfilePanel({
                     {ringtone ? ringtone.title : "стандартный сигнал"}
                   </strong>
                 </p>
+
+                <div className="profile__ringtone-volume">
+                  <button
+                    type="button"
+                    className="profile__ringtone-volume-btn"
+                    aria-label={
+                      previewMuted
+                        ? "Включить звук прослушивания"
+                        : "Выключить звук прослушивания"
+                    }
+                    aria-pressed={previewMuted}
+                    title={previewMuted ? "Включить звук" : "Выключить звук"}
+                    onClick={togglePreviewMute}
+                  >
+                    {previewMuted ? (
+                      <IconVolumeOff size={15} />
+                    ) : (
+                      <IconVolume size={15} />
+                    )}
+                  </button>
+                  <input
+                    type="range"
+                    className="profile__ringtone-volume-slider"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={previewMuted ? 0 : previewVolume}
+                    aria-label="Громкость прослушивания рингтона"
+                    onChange={(event) =>
+                      handlePreviewVolume(Number(event.target.value))
+                    }
+                  />
+                </div>
 
                 <div className="profile__ringtone-custom">
                   <input
