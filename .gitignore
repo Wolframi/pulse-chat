@@ -82,3 +82,6 @@ data/push.json
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# локальный клон репозитория
+pulse-chat/

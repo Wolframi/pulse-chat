@@ -30,7 +30,8 @@ import {
   getMicDeviceId,
   getSpeakerDeviceId,
   resolveMicDeviceId,
-  resolveSpeakerDeviceId,
+  setMicDeviceId,
+  setSpeakerDeviceId,
   subscribeVoiceSettings,
   type VoiceSettingsChange,
 } from "@/lib/mediaDevices";
@@ -724,48 +725,69 @@ export function useVoiceChannelLiveKit({
         }
 
         // Не даём LiveKit упасть на «Requested device not found»:
-        // проверяем сохранённые устройства заранее.
-        const [validMicId, validSpeakerId] = await Promise.all([
-          resolveMicDeviceId(),
-          resolveSpeakerDeviceId(),
-        ]);
+        // микрофон проверяем заранее; аудиовыход вообще не передаём —
+        // каждый удалённый трек цепляется вручную через applyAudioOutput.
+        const validMicId = await resolveMicDeviceId();
 
-        const room = new Room({
-          adaptiveStream: false,
-          dynacast: false,
-          // Client 2.x defaults to /rtc/v1 + a giant join_request query.
-          // LiveKit 1.8 has no v1 path, and Cloudflare/Node abort huge URLs.
-          singlePeerConnection: false,
-          audioCaptureDefaults: liveKitAudioCapture(validMicId),
-          audioOutput: validSpeakerId
-            ? { deviceId: validSpeakerId }
-            : undefined,
-          videoCaptureDefaults: {
-            resolution: VideoPresets.h720.resolution,
-            frameRate: 24,
-          },
-          publishDefaults: ROOM_PUBLISH_DEFAULTS,
-          stopLocalTrackOnUnpublish: true,
-        });
+        const makeRoom = () =>
+          new Room({
+            adaptiveStream: false,
+            dynacast: false,
+            // Client 2.x defaults to /rtc/v1 + a giant join_request query.
+            // LiveKit 1.8 has no v1 path, and Cloudflare/Node abort huge URLs.
+            singlePeerConnection: false,
+            audioCaptureDefaults: liveKitAudioCapture(validMicId),
+            videoCaptureDefaults: {
+              resolution: VideoPresets.h720.resolution,
+              frameRate: 24,
+            },
+            publishDefaults: ROOM_PUBLISH_DEFAULTS,
+            stopLocalTrackOnUnpublish: true,
+          });
+
+        let room = makeRoom();
         pendingRoom = room;
         wireRoom(room);
         roomRef.current = room;
         intentionalDisconnectRef.current = false;
-        // Do not pass iceServers here: livekit-client then skips the SFU's own
-        // ICE/TURN from the join response (P2P /api/ice would win and group
-        // media often never reaches this VM).
-        await room.connect(
-          credentials.serverUrl,
-          credentials.participantToken,
-          {
-            autoSubscribe: true,
-            peerConnectionTimeout: 45_000,
-            websocketTimeout: 20_000,
-            rtcConfig: {
-              iceCandidatePoolSize: 4,
-            },
+        const connectOptions = {
+          autoSubscribe: true,
+          peerConnectionTimeout: 45_000,
+          websocketTimeout: 20_000,
+          rtcConfig: {
+            iceCandidatePoolSize: 4,
           },
-        );
+        };
+        try {
+          // Do not pass iceServers here: livekit-client then skips the SFU's own
+          // ICE/TURN from the join response (P2P /api/ice would win and group
+          // media often never reaches this VM).
+          await room.connect(
+            credentials.serverUrl,
+            credentials.participantToken,
+            connectOptions,
+          );
+        } catch (connectError) {
+          const message =
+            connectError instanceof Error ? connectError.message : "";
+          if (!/device not found/i.test(message)) throw connectError;
+          // Устройство исчезло между проверкой и подключением —
+          // сбрасываем сохранённые настройки и пробуем ещё раз.
+          setMicDeviceId("");
+          setSpeakerDeviceId("");
+          cleanupRoom();
+          pendingRoom = null;
+          room = makeRoom();
+          pendingRoom = room;
+          wireRoom(room);
+          roomRef.current = room;
+          intentionalDisconnectRef.current = false;
+          await room.connect(
+            credentials.serverUrl,
+            credentials.participantToken,
+            connectOptions,
+          );
+        }
         if (attempt !== joinAttemptRef.current || controller.signal.aborted) {
           const cancelled = new Error("SFU join cancelled");
           cancelled.name = "AbortError";
