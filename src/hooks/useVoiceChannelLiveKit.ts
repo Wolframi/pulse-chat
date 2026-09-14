@@ -29,6 +29,8 @@ import {
   applyAudioOutput,
   getMicDeviceId,
   getSpeakerDeviceId,
+  resolveMicDeviceId,
+  resolveSpeakerDeviceId,
   subscribeVoiceSettings,
   type VoiceSettingsChange,
 } from "@/lib/mediaDevices";
@@ -169,15 +171,16 @@ async function enableLiveKitScreenShare(room: Room) {
     : new Error("screen-share-failed");
 }
 
-function liveKitAudioCapture() {
+function liveKitAudioCapture(micId = "") {
   const constraints = audioCaptureConstraints();
-  const micId = getMicDeviceId();
   return {
     echoCancellation: true as const,
     noiseSuppression: Boolean(constraints.noiseSuppression),
     autoGainControl: true as const,
     channelCount: 1,
-    ...(micId ? { deviceId: micId } : {}),
+    // ideal — если микрофон отключили, браузер просто возьмёт дефолтный,
+    // а не упадёт с «Requested device not found».
+    ...(micId ? { deviceId: { ideal: micId } } : {}),
   };
 }
 
@@ -720,15 +723,22 @@ export function useVoiceChannelLiveKit({
           throw new Error(credentials.error || "SFU недоступен");
         }
 
+        // Не даём LiveKit упасть на «Requested device not found»:
+        // проверяем сохранённые устройства заранее.
+        const [validMicId, validSpeakerId] = await Promise.all([
+          resolveMicDeviceId(),
+          resolveSpeakerDeviceId(),
+        ]);
+
         const room = new Room({
           adaptiveStream: false,
           dynacast: false,
           // Client 2.x defaults to /rtc/v1 + a giant join_request query.
           // LiveKit 1.8 has no v1 path, and Cloudflare/Node abort huge URLs.
           singlePeerConnection: false,
-          audioCaptureDefaults: liveKitAudioCapture(),
-          audioOutput: getSpeakerDeviceId()
-            ? { deviceId: getSpeakerDeviceId() }
+          audioCaptureDefaults: liveKitAudioCapture(validMicId),
+          audioOutput: validSpeakerId
+            ? { deviceId: validSpeakerId }
             : undefined,
           videoCaptureDefaults: {
             resolution: VideoPresets.h720.resolution,
@@ -764,7 +774,7 @@ export function useVoiceChannelLiveKit({
         await room.startAudio().catch(() => undefined);
         await room.localParticipant.setMicrophoneEnabled(
           !keepMuted,
-          liveKitAudioCapture(),
+          liveKitAudioCapture(validMicId),
         );
         if (attempt !== joinAttemptRef.current || controller.signal.aborted) {
           const cancelled = new Error("SFU join cancelled");

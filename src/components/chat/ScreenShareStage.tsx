@@ -68,7 +68,7 @@ function sourceHasLiveVideo(source: ScreenSource) {
 }
 
 /** Ручка громкости демонстрации — как у голосовых сообщений. */
-function ScreenVolumeKnob() {
+export function ScreenVolumeKnob() {
   const [volume, setVolume] = useState(() => getScreenAudioVolume());
   const [open, setOpen] = useState(false);
   const dragRef = useRef(false);
@@ -215,7 +215,6 @@ export function ScreenShareStage({ sources }: { sources: ScreenSource[] }) {
         </div>
       ) : null}
       <ScreenPane source={current} hideBadge={multi} />
-      <ScreenVolumeKnob />
     </div>
   );
 }

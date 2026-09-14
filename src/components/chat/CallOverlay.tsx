@@ -29,6 +29,7 @@ import { MediaVideo } from "@/components/chat/MediaVideo";
 import {
   ScreenShareKeepalive,
   ScreenShareStage,
+  ScreenVolumeKnob,
 } from "@/components/chat/ScreenShareStage";
 import { getSoundEnabled } from "@/lib/notify";
 import { applyAudioOutput } from "@/lib/mediaDevices";
@@ -457,6 +458,7 @@ export function CallPanel({
               <IconCamera size={20} />
             )}
           </button>
+          {screenMode ? <ScreenVolumeKnob /> : null}
           <button
             type="button"
             className={`call__btn call__btn--circle ${sharingScreen ? "is-on" : ""}`}

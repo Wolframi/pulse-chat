@@ -100,32 +100,9 @@ export async function applyAudioOutput(
   if (!el) return;
   const sink = (el as Sinkable).setSinkId;
   if (typeof sink !== "function") return;
-  const id = getSpeakerDeviceId();
-  if (id) {
-    try {
-      // Сохранённое устройство могли отключить — проверяем, что оно ещё есть.
-      const devices = await navigator.mediaDevices
-        .enumerateDevices()
-        .catch(() => [] as MediaDeviceInfo[]);
-      const exists = devices.some(
-        (device) =>
-          device.kind === "audiooutput" && device.deviceId === id,
-      );
-      if (!exists) {
-        writePref(SPEAKER_KEY, "");
-        emitVoiceSettings({ speaker: true });
-        return;
-      }
-      await sink.call(el, id);
-      return;
-    } catch {
-      // RequestedDeviceNotFoundError и прочие — сбрасываем на выход по умолчанию.
-      writePref(SPEAKER_KEY, "");
-      emitVoiceSettings({ speaker: true });
-    }
-  }
+  const id = await resolveSpeakerDeviceId();
   try {
-    await sink.call(el, "default");
+    await sink.call(el, id || "default");
   } catch {
     try {
       await sink.call(el, "");
@@ -133,6 +110,52 @@ export async function applyAudioOutput(
       /* Safari / locked output */
     }
   }
+}
+
+/** Сохранённый id колонок, если устройство ещё существует (иначе сброс). */
+export async function resolveSpeakerDeviceId(): Promise<string> {
+  const id = getSpeakerDeviceId();
+  if (!id) return "";
+  try {
+    const devices = await navigator.mediaDevices
+      .enumerateDevices()
+      .catch(() => [] as MediaDeviceInfo[]);
+    if (
+      devices.some(
+        (device) => device.kind === "audiooutput" && device.deviceId === id,
+      )
+    ) {
+      return id;
+    }
+  } catch {
+    /* fall through */
+  }
+  writePref(SPEAKER_KEY, "");
+  emitVoiceSettings({ speaker: true });
+  return "";
+}
+
+/** Сохранённый id микрофона, если он ещё существует (иначе сброс). */
+export async function resolveMicDeviceId(): Promise<string> {
+  const id = getMicDeviceId();
+  if (!id) return "";
+  try {
+    const devices = await navigator.mediaDevices
+      .enumerateDevices()
+      .catch(() => [] as MediaDeviceInfo[]);
+    if (
+      devices.some(
+        (device) => device.kind === "audioinput" && device.deviceId === id,
+      )
+    ) {
+      return id;
+    }
+  } catch {
+    /* fall through */
+  }
+  writePref(MIC_KEY, "");
+  emitVoiceSettings({ mic: true });
+  return "";
 }
 
 function labelFor(device: MediaDeviceInfo, index: number) {

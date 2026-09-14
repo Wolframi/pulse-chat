@@ -28,6 +28,7 @@ import { MediaVideo } from "@/components/chat/MediaVideo";
 import {
   ScreenShareKeepalive,
   ScreenShareStage,
+  ScreenVolumeKnob,
 } from "@/components/chat/ScreenShareStage";
 import {
   pickCameraStream,
@@ -415,6 +416,7 @@ function VoiceStagePanel({
           >
             {cameraOff ? <IconCameraOff size={20} /> : <IconCamera size={20} />}
           </button>
+          {screenCount > 0 ? <ScreenVolumeKnob /> : null}
           <button
             type="button"
             className={`call__btn call__btn--circle ${sharingScreen ? "is-on" : ""}`}
