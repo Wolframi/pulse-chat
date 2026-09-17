@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 type ConfirmDialogProps = {
@@ -24,17 +24,47 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => { onCancelRef.current = onCancel; }, [onCancel]);
   useEffect(() => {
     if (!open) return;
+    const previous = document.activeElement;
+    cancelRef.current?.focus();
+    function containFocus(event: FocusEvent) {
+      if (event.target instanceof Node && !cardRef.current?.contains(event.target)) {
+        cancelRef.current?.focus();
+      }
+    }
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCancel();
+        event.stopPropagation();
+        onCancelRef.current();
+      }
+      if (event.key === "Tab") {
+        const buttons = cardRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
+        if (!buttons?.length) return;
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
+    window.addEventListener("keydown", onKey, true);
+    document.addEventListener("focusin", containFocus);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("focusin", containFocus);
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    };
+  }, [open]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -47,6 +77,7 @@ export function ConfirmDialog({
         onClick={onCancel}
       />
       <div
+        ref={cardRef}
         className="confirm-dialog__card"
         role="dialog"
         aria-modal="true"
@@ -60,6 +91,7 @@ export function ConfirmDialog({
           <button
             type="button"
             className="confirm-dialog__cancel"
+            ref={cancelRef}
             onClick={onCancel}
           >
             {cancelLabel}
@@ -68,7 +100,6 @@ export function ConfirmDialog({
             type="button"
             className={`confirm-dialog__confirm ${danger ? "is-danger" : ""}`}
             onClick={onConfirm}
-            autoFocus
           >
             {confirmLabel}
           </button>

@@ -211,6 +211,16 @@ export function ChatApp() {
   const searchRef = useRef<HTMLInputElement>(null);
   const wasOfflineRef = useRef(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 920px)");
+    const sync = () => {
+      if (sidebarRef.current) sidebarRef.current.inert = query.matches && !sidebarOpen;
+    };
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, [sidebarOpen, account]);
   const [profileOpen, setProfileOpen] = useState(false);
   const [chatInfoOpen, setChatInfoOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
@@ -1397,6 +1407,7 @@ export function ChatApp() {
 
             <div
               className={`workspace__sidebar ${sidebarOpen ? "is-open" : ""}`}
+              ref={sidebarRef}
             >
               <ServerRail
                 focus={sidebarPanel}

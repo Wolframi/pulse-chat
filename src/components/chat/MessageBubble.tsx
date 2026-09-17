@@ -166,17 +166,19 @@ function SendMeta({
   status,
   peerReadAt,
   className,
+  inline = false,
 }: {
   createdAt: number;
   mine?: boolean;
   status?: MessageStatus;
   peerReadAt?: number | null;
   className?: string;
+  inline?: boolean;
 }) {
   const read = Boolean(mine && peerReadAt && peerReadAt >= createdAt);
   const sending = mine && status === "pending";
   const failed = mine && status === "failed";
-  return (
+  const clock = (
     <time
       className={`bubble__time${className ? ` ${className}` : ""}`}
       dateTime={new Date(createdAt).toISOString()}
@@ -200,6 +202,12 @@ function SendMeta({
       )}
     </time>
   );
+  return inline ? (
+    <>
+      <span className="bubble__time-space" aria-hidden="true">{clock}</span>
+      <span className="bubble__time-corner">{clock}</span>
+    </>
+  ) : clock;
 }
 
 function MediaCaption({
@@ -222,6 +230,7 @@ function MediaCaption({
       status={status}
       peerReadAt={peerReadAt}
       className={caption ? undefined : "bubble__media-time"}
+      inline={Boolean(caption)}
     />
   );
   if (caption) {
@@ -900,6 +909,53 @@ function MessageBubbleInner({
   }
 
   const author = resolveAuthor(message, peopleById);
+  const selectedReactions = (message.reactions ?? [])
+    .filter((reaction) => selfId && reaction.userIds.includes(selfId))
+    .map((reaction) => reaction.emoji);
+  const reactionClock = message.kind === "text" && soloEmojiSizePx(message.text) === 0;
+  const quickReaction = onReact && !message.status ? (
+    <button
+      type="button"
+      className="bubble__quick-react"
+      aria-label="Быстрая реакция 👍"
+      aria-pressed={selectedReactions.includes("👍")}
+      title="Поставить 👍 · правая кнопка — другие реакции"
+      onClick={(event) => { event.stopPropagation(); onReact(message.id, "👍"); }}
+      onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); openMenu(); }}
+    >👍</button>
+  ) : null;
+  const reactions = message.reactions?.length ? (
+    <div className="bubble__reactions" role="group" aria-label="Реакции на сообщение">
+      {message.reactions.filter((reaction) => reaction.userIds.length > 0).map((reaction) => {
+        const active = selectedReactions.includes(reaction.emoji);
+        const users = reaction.userIds.map((id) => peopleById?.get(id));
+        const showAvatars = users.every(Boolean);
+        return (
+          <button
+            key={reaction.emoji}
+            type="button"
+            className={`bubble__reaction${active ? " is-active" : ""}`}
+            aria-pressed={active}
+            aria-label={`${reaction.emoji}: ${reaction.userIds.length}. ${active ? "Убрать" : "Поставить"} реакцию`}
+            title={users.map((user, index) => user?.displayName || (reaction.userIds[index] === selfId ? "Вы" : "Участник")).join(", ")}
+            disabled={!onReact || Boolean(message.status)}
+            onClick={() => onReact?.(message.id, reaction.emoji)}
+          >
+            <span className="bubble__reaction-emoji" aria-hidden="true">{reaction.emoji}</span>
+            {showAvatars && (
+              <span className="bubble__reaction-avatars" aria-hidden="true">
+                {users.slice(0, 3).map((user) => (
+                  <Avatar key={user!.id} name={user!.displayName || user!.username} src={user!.avatarUrl} size="sm" className="bubble__reaction-avatar" />
+                ))}
+              </span>
+            )}
+            {(!showAvatars || users.length > 3) && <em aria-hidden="true">{reaction.userIds.length}</em>}
+          </button>
+        );
+      })}
+      {reactionClock && <SendMeta createdAt={message.createdAt} mine={mine} status={message.status} peerReadAt={peerReadAt} />}
+    </div>
+  ) : null;
 
   // ─── Стикер ──────────────────────────────────────────────────────────
   if (message.kind === "sticker" && message.sticker) {
@@ -986,11 +1042,14 @@ function MessageBubbleInner({
           peerReadAt={peerReadAt}
           className="bubble__sticker-time"
         />
+        {reactions}
         </div>
+        {quickReaction}
         <MessageMenu
           open={menuOpen}
           anchorRef={bubbleRef}
           mine={mine}
+          selectedReactions={selectedReactions}
           canCopy={false}
           canDelete={false}
           canEdit={false}
@@ -1120,6 +1179,7 @@ function MessageBubbleInner({
 
   const sendTime = (
     <SendMeta
+      inline={!reactions && !bigEmoji}
       createdAt={message.createdAt}
       mine={mine}
       status={message.status}
@@ -1213,30 +1273,11 @@ function MessageBubbleInner({
             {message.editedAt ? (
               <em className="bubble__edited"> изменено</em>
             ) : null}
-            {sendTime}
+            {!reactions && sendTime}
           </p>
         )}
 
-        {!!message.reactions?.length && (
-          <div className="bubble__reactions">
-            {message.reactions.map((reaction) => {
-              const active = selfId
-                ? reaction.userIds.includes(selfId)
-                : false;
-              return (
-                <button
-                  key={reaction.emoji}
-                  type="button"
-                  className={`bubble__reaction ${active ? "is-active" : ""}`}
-                  onClick={() => onReact?.(message.id, reaction.emoji)}
-                >
-                  <span className="bubble__reaction-emoji">{reaction.emoji}</span>
-                  <em>{reaction.userIds.length}</em>
-                </button>
-              );
-            })}
-          </div>
-        )}
+        {reactions}
 
         {mine && message.status === "failed" && (
           <div className="bubble__fail">
@@ -1260,10 +1301,12 @@ function MessageBubbleInner({
         )}
       </div>
 
+      {quickReaction}
       <MessageMenu
         open={menuOpen}
         anchorRef={bubbleRef}
         mine={mine}
+        selectedReactions={selectedReactions}
         canCopy={canCopy}
         canDelete={Boolean(canDelete && onDelete && !message.status)}
         canEdit={Boolean(canEdit && onEdit && mine && !message.status && message.kind !== "file")}
@@ -1332,10 +1375,14 @@ function MessageBubbleInner({
     title: "Удержите для действий",
     onDoubleClick: (event: { target: EventTarget }) => {
       const node = event.target instanceof Element ? event.target : null;
-      if (node?.closest(".voice-bubble, .voice-transcript, .bubble__audio, button, [role='slider']")) {
+      if (node?.closest(".voice-bubble, .voice-transcript, .bubble__audio, button, a, [role='slider']")) {
         return;
       }
-      onReply?.(message);
+      if (window.matchMedia("(pointer: coarse)").matches && !message.status) {
+        onReact?.(message.id, "👍");
+      } else {
+        onReply?.(message);
+      }
     },
     onTouchStart,
     onTouchMove,

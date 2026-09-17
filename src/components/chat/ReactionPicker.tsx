@@ -17,6 +17,7 @@ type ReactionPickerProps = {
   /** When true, render as a fixed portal near the anchor. */
   portal?: boolean;
   anchorEl?: HTMLElement | null;
+  selectedReactions?: string[];
 };
 
 export function ReactionPicker({
@@ -24,6 +25,7 @@ export function ReactionPicker({
   compact = false,
   portal = false,
   anchorEl = null,
+  selectedReactions = [],
 }: ReactionPickerProps) {
   const [expanded, setExpanded] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -62,12 +64,14 @@ export function ReactionPicker({
       style={portal && pos ? { top: pos.top, left: pos.left } : undefined}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="reaction-picker__quick">
+      <div className="reaction-picker__quick" role="group" aria-label="Реакции на сообщение">
         {QUICK.map((emoji) => (
           <button
             key={emoji}
             type="button"
-            className="reaction-picker__chip"
+            className={`reaction-picker__chip${selectedReactions.includes(emoji) ? " is-active" : ""}`}
+            aria-pressed={selectedReactions.includes(emoji)}
+            aria-label={`${selectedReactions.includes(emoji) ? "Убрать" : "Поставить"} реакцию ${emoji}`}
             onClick={() => onPick(emoji)}
           >
             {emoji}
@@ -77,6 +81,7 @@ export function ReactionPicker({
           type="button"
           className={`reaction-picker__more ${expanded ? "is-open" : ""}`}
           aria-label={expanded ? "Скрыть эмодзи" : "Все эмодзи"}
+          aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? "▴" : "▾"}

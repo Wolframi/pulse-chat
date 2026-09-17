@@ -905,8 +905,9 @@ export function Composer({
               (event.target as HTMLInputElement).value = "";
             }}
           />
-          <label
-            htmlFor={fileInputId}
+          <button
+            type="button"
+            disabled={locked || pending.length >= MAX_PENDING_FILES}
             className={`composer__attach ${
               locked || pending.length >= MAX_PENDING_FILES
                 ? "is-disabled"
@@ -917,11 +918,13 @@ export function Composer({
             onClick={(event) => {
               if (locked || pending.length >= MAX_PENDING_FILES) {
                 event.preventDefault();
+                return;
               }
+              document.getElementById(fileInputId)?.click();
             }}
           >
             <IconAttach size={24} />
-          </label>
+          </button>
 
           <TextareaAutosize
             ref={areaRef}

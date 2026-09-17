@@ -28,6 +28,7 @@ type MessageMenuProps = {
   onReply: () => void;
   onCopy: () => void;
   onReact: (emoji: string) => void;
+  selectedReactions?: string[];
   onEdit?: () => void;
   onForward?: () => void;
   onDelete?: () => void;
@@ -52,6 +53,7 @@ export function MessageMenu({
   onReply,
   onCopy,
   onReact,
+  selectedReactions,
   onEdit,
   onForward,
   onDelete,
@@ -65,7 +67,7 @@ export function MessageMenu({
   useLayoutEffect(() => {
     const el = anchorRef ? anchorRef.current : anchorEl;
     if (!open || !el) {
-      if (pos !== null) setPos(null);
+      setPos(null);
       return;
     }
 
@@ -74,7 +76,7 @@ export function MessageMenu({
       if (!el) return;
       const rect = el.getBoundingClientRect();
       const menu = rootRef.current;
-      const width = 220;
+      const width = menu?.offsetWidth || Math.min(336, window.innerWidth - 20);
       const height = menu?.offsetHeight || 200;
       const mediaLike =
         el.classList.contains("bubble--media") ||
@@ -87,15 +89,18 @@ export function MessageMenu({
       if (top < 10) {
         top = Math.min(rect.bottom + 8, window.innerHeight - height - 10);
       }
-      setPos({ top, left });
+      setPos({ top: Math.max(10, top), left });
     }
 
     place();
     const raf = window.requestAnimationFrame(place);
+    const observer = new ResizeObserver(place);
+    if (rootRef.current) observer.observe(rootRef.current);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
     return () => {
       window.cancelAnimationFrame(raf);
+      observer.disconnect();
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
@@ -142,6 +147,7 @@ export function MessageMenu({
         <div className="msg-menu__reacts">
           <ReactionPicker
             compact
+            selectedReactions={selectedReactions}
             onPick={(emoji) => {
               onReact(emoji);
               onClose();

@@ -187,9 +187,17 @@ export function MessageList({
   const peopleById = useMemo(() => {
     const map = new Map<string, PeopleUser>();
     for (const user of people) map.set(user.id, user);
+    map.set(account.userId, {
+      id: account.userId,
+      username: account.username,
+      displayName: account.displayName,
+      avatarUrl: account.avatarUrl,
+      bio: account.bio,
+      online: true,
+    });
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [peopleAuthorKey]);
+  }, [peopleAuthorKey, account]);
 
   const firstUnreadIndex = useMemo(() => {
     if (!showUnreadMark || unreadAtOpen <= 0) return -1;
