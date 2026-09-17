@@ -913,17 +913,6 @@ function MessageBubbleInner({
     .filter((reaction) => selfId && reaction.userIds.includes(selfId))
     .map((reaction) => reaction.emoji);
   const reactionClock = message.kind === "text" && soloEmojiSizePx(message.text) === 0;
-  const quickReaction = onReact && !message.status ? (
-    <button
-      type="button"
-      className="bubble__quick-react"
-      aria-label="Быстрая реакция 👍"
-      aria-pressed={selectedReactions.includes("👍")}
-      title="Поставить 👍 · правая кнопка — другие реакции"
-      onClick={(event) => { event.stopPropagation(); onReact(message.id, "👍"); }}
-      onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); openMenu(); }}
-    >👍</button>
-  ) : null;
   const reactions = message.reactions?.length ? (
     <div className="bubble__reactions" role="group" aria-label="Реакции на сообщение">
       {message.reactions.filter((reaction) => reaction.userIds.length > 0).map((reaction) => {
@@ -1044,7 +1033,6 @@ function MessageBubbleInner({
         />
         {reactions}
         </div>
-        {quickReaction}
         <MessageMenu
           open={menuOpen}
           anchorRef={bubbleRef}
@@ -1301,7 +1289,6 @@ function MessageBubbleInner({
         )}
       </div>
 
-      {quickReaction}
       <MessageMenu
         open={menuOpen}
         anchorRef={bubbleRef}
@@ -1378,11 +1365,7 @@ function MessageBubbleInner({
       if (node?.closest(".voice-bubble, .voice-transcript, .bubble__audio, button, a, [role='slider']")) {
         return;
       }
-      if (window.matchMedia("(pointer: coarse)").matches && !message.status) {
-        onReact?.(message.id, "👍");
-      } else {
-        onReply?.(message);
-      }
+      onReply?.(message);
     },
     onTouchStart,
     onTouchMove,

@@ -4025,6 +4025,20 @@ button:active:not(:disabled) {
   border-radius: 16px;
 }
 
+/* Expanded emoji selection replaces the message actions. */
+.msg-menu:has(.reaction-picker__panel) {
+  gap: 0;
+}
+
+.msg-menu:has(.reaction-picker__panel) .msg-menu__card {
+  display: none;
+}
+
+.msg-menu__reacts .reaction-picker:has(.reaction-picker__panel) .reaction-picker__quick {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
 .bubble--media > .bubble__reactions {
   margin: 0;
   padding: 7px 8px;
@@ -4113,7 +4127,7 @@ button:active:not(:disabled) {
   right: auto;
   bottom: auto;
   width: 100%;
-  height: 320px;
+  height: min(360px, calc(100dvh - 92px));
   border: 0;
   border-radius: 12px;
   box-shadow: none;
@@ -12595,39 +12609,11 @@ button:active:not(:disabled) {
 .bubble__reaction.is-active .bubble__reaction-avatar {
   border-color: #a9c8eb;
 }
-.bubble__quick-react {
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
-  align-self: flex-end;
-  display: grid;
-  place-items: center;
-  border: 0;
-  padding: 0;
-  border-radius: 50%;
-  background: var(--surface-raised);
-  font-family: var(--font-emoji-stack);
-  font-size: 18px;
-  opacity: 0;
-  pointer-events: none;
-  cursor: pointer;
-}
-.bubble-row:hover > .bubble__quick-react,
-.bubble__quick-react:focus-visible {
-  opacity: 1;
-  pointer-events: auto;
-}
-.bubble__quick-react[aria-pressed="true"] {
-  background: var(--accent-soft);
-}
 .bubble__reaction.is-active .bubble__reaction-emoji {
   animation: reaction-pop 240ms var(--ease-out);
 }
 @keyframes reaction-pop {
   50% { transform: scale(1.25); }
-}
-@media (hover: none), (pointer: coarse) {
-  .bubble__quick-react { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .bubble__reaction.is-active .bubble__reaction-emoji { animation: none; }

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
+import { IconChevronDown, IconChevronUp } from "@/lib/icons";
 
 const EmojiPanel = dynamic(
   () => import("@/components/chat/EmojiPanel").then((mod) => mod.EmojiPanel),
@@ -84,7 +85,7 @@ export function ReactionPicker({
           aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "▴" : "▾"}
+          {expanded ? <IconChevronUp size={18} /> : <IconChevronDown size={18} />}
         </button>
       </div>
       {expanded && (
