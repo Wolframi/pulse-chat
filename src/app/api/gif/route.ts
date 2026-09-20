@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { fetchGiphyApi } from '@/lib/giphyFetch';
 import { giphyApiKey } from '@/lib/giphyKey';
 import { pickGiphyPreviewUrl, pickGiphySendAsset } from '@/lib/giphyMedia';
 
@@ -100,7 +101,7 @@ export async function GET(request: NextRequest) {
     const timer = setTimeout(() => ac.abort(), GIPHY_FETCH_MS);
     let response: Response;
     try {
-      response = await fetch(`${endpoint}?${params.toString()}`, {
+      response = await fetchGiphyApi(`${endpoint}?${params.toString()}`, {
         headers: { Accept: 'application/json' },
         signal: ac.signal,
       });
