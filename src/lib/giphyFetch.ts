@@ -31,10 +31,10 @@ async function giphyDispatcher() {
 export async function fetchGiphyApi(
   url: string,
   init: { headers?: Record<string, string>; signal?: AbortSignal } = {},
-) {
-  return undiciFetch(url, {
+): Promise<Response> {
+  return (await undiciFetch(url, {
     headers: init.headers,
     signal: init.signal,
     dispatcher: await giphyDispatcher(),
-  } as Parameters<typeof undiciFetch>[1]);
+  } as Parameters<typeof undiciFetch>[1])) as unknown as Response;
 }
