@@ -57,6 +57,9 @@ function ScreenPane({
       >
         <IconExpand size={16} />
       </button>
+      <div className="call__screen-vol">
+        <ScreenVolumeKnob owner={source.id} label={source.label} />
+      </div>
     </div>
   );
 }
@@ -67,19 +70,28 @@ function sourceHasLiveVideo(source: ScreenSource) {
     .some((track) => track.readyState === "live");
 }
 
-/** Ручка громкости демонстрации — как у голосовых сообщений. */
-export function ScreenVolumeKnob() {
-  const [volume, setVolume] = useState(() => getScreenAudioVolume());
+/** Ручка громкости демонстрации — своя на каждую демонстрацию. */
+export function ScreenVolumeKnob({
+  owner,
+  label,
+}: {
+  owner?: string;
+  label?: string;
+}) {
+  const [volume, setVolume] = useState(() => getScreenAudioVolume(owner));
   const [open, setOpen] = useState(false);
   const dragRef = useRef(false);
   const leaveTimerRef = useRef<number | null>(null);
-  const lastVolumeRef = useRef(getScreenAudioVolume() || 1);
+  const lastVolumeRef = useRef(getScreenAudioVolume(owner) || 1);
 
-  const apply = useCallback((value: number) => {
-    const next = Math.min(1, Math.max(0, Number(value.toFixed(2))));
-    setVolume(next);
-    setScreenAudioVolume(next);
-  }, []);
+  const apply = useCallback(
+    (value: number) => {
+      const next = Math.min(1, Math.max(0, Number(value.toFixed(2))));
+      setVolume(next);
+      setScreenAudioVolume(next, owner);
+    },
+    [owner],
+  );
 
   const seekFromClientY = useCallback(
     (clientY: number, target: HTMLElement) => {
@@ -92,6 +104,7 @@ export function ScreenVolumeKnob() {
 
   const muted = volume <= 0;
   const percent = Math.round(volume * 100);
+  const name = label ? ` демонстрации «${label}»` : " демонстрации";
 
   return (
     <div
@@ -108,8 +121,8 @@ export function ScreenVolumeKnob() {
       <button
         type="button"
         className="screen-vol__icon"
-        aria-label="Громкость демонстрации"
-        title="Громкость демонстрации"
+        aria-label={`Громкость${name}`}
+        title={`Громкость${name}`}
         onClick={() => {
           if (muted) {
             apply(lastVolumeRef.current > 0 ? lastVolumeRef.current : 1);
@@ -126,7 +139,7 @@ export function ScreenVolumeKnob() {
         <div
           className="screen-vol__track"
           role="slider"
-          aria-label="Громкость демонстрации"
+          aria-label={`Громкость${name}`}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={percent}

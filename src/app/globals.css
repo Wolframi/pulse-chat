@@ -5700,15 +5700,15 @@ button:active:not(:disabled) {
   overflow: hidden;
   cursor: zoom-in;
   background: #0b0d0c;
-  container-type: size;
 }
 
 .bubble__video-play {
   position: absolute;
   inset: 0;
   margin: auto;
-  width: clamp(32px, 18cqmin, 56px);
-  height: clamp(32px, 18cqmin, 56px);
+  width: clamp(32px, 22%, 56px);
+  aspect-ratio: 1;
+  height: auto;
   display: grid;
   place-items: center;
   border-radius: 999px;
@@ -8834,6 +8834,13 @@ button:active:not(:disabled) {
 
 .call__screen-pane:fullscreen .call__screen-fs {
   display: none;
+}
+
+.call__screen-vol {
+  position: absolute;
+  right: 10px;
+  bottom: 52px;
+  z-index: 4;
 }
 
 .call__tiles {

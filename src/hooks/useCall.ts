@@ -209,7 +209,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   useEffect(() => {
     const element = remoteAudioRef.current;
     if (!element || !remoteSharingScreen) return;
-    registerScreenAudio(element);
+    registerScreenAudio(element, peerRef.current?.peerId || "remote");
     return () => unregisterScreenAudio(element);
   }, [remoteSharingScreen]);
   const [remoteCameraOff, setRemoteCameraOff] = useState(true);

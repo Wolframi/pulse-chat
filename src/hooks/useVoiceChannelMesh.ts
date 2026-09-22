@@ -82,7 +82,7 @@ export function useVoiceChannelMesh({
   useEffect(() => {
     for (const [peerId, audio] of remoteAudioRef.current.entries()) {
       const peer = peers.find((p) => p.userId === peerId);
-      if (peer?.sharingScreen) registerScreenAudio(audio);
+      if (peer?.sharingScreen) registerScreenAudio(audio, peerId);
       else unregisterScreenAudio(audio);
     }
   }, [peers]);

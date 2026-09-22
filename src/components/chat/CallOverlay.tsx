@@ -458,7 +458,7 @@ export function CallPanel({
               <IconCamera size={20} />
             )}
           </button>
-          {screenMode ? <ScreenVolumeKnob /> : null}
+          {screenMode ? <ScreenVolumeKnob owner={active.peerId} /> : null}
           <button
             type="button"
             className={`call__btn call__btn--circle ${sharingScreen ? "is-on" : ""}`}

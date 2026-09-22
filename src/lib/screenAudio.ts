@@ -1,48 +1,97 @@
 "use client";
 
-/** Громкость звука демонстраций экрана (единая ручка в стейдже). */
+/** Громкость звука демонстраций экрана — отдельная ручка на каждую демонстрацию. */
 
 const SCREEN_VOLUME_KEY = "pulse-screen-volume";
 
-let screenVolume = 1;
+const DEFAULT_OWNER = "__default__";
 let loaded = false;
-const registered = new Set<HTMLAudioElement>();
+const volumeByOwner = new Map<string, number>();
+const elementsByOwner = new Map<string, Set<HTMLAudioElement>>();
+const ownerByElement = new WeakMap<HTMLAudioElement, string>();
 
 function clamp(value: number) {
   return Math.min(1, Math.max(0, value));
 }
 
-export function getScreenAudioVolume(): number {
-  if (!loaded) {
-    loaded = true;
-    try {
-      const raw = Number(localStorage.getItem(SCREEN_VOLUME_KEY));
-      if (Number.isFinite(raw)) screenVolume = clamp(raw);
-    } catch {
-      /* ignore */
-    }
-  }
-  return screenVolume;
+function ownerKey(owner?: string | null) {
+  return owner ? String(owner) : DEFAULT_OWNER;
 }
 
-export function setScreenAudioVolume(volume: number) {
-  screenVolume = clamp(volume);
+function load() {
+  if (loaded) return;
+  loaded = true;
   try {
-    localStorage.setItem(SCREEN_VOLUME_KEY, String(screenVolume));
+    const raw = localStorage.getItem(SCREEN_VOLUME_KEY);
+    if (raw === null) return;
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === "number" && Number.isFinite(parsed)) {
+      // Старый формат — единая громкость для всех демонстраций.
+      volumeByOwner.set(DEFAULT_OWNER, clamp(parsed));
+      return;
+    }
+    if (parsed && typeof parsed === "object") {
+      for (const [key, value] of Object.entries(
+        parsed as Record<string, unknown>,
+      )) {
+        if (typeof value === "number" && Number.isFinite(value)) {
+          volumeByOwner.set(key, clamp(value));
+        }
+      }
+    }
   } catch {
     /* ignore */
   }
-  for (const element of registered) {
-    element.volume = screenVolume;
+}
+
+function persist() {
+  try {
+    const map: Record<string, number> = {};
+    for (const [key, value] of volumeByOwner) map[key] = value;
+    localStorage.setItem(SCREEN_VOLUME_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getScreenAudioVolume(owner?: string | null): number {
+  load();
+  return volumeByOwner.get(ownerKey(owner)) ?? 1;
+}
+
+export function setScreenAudioVolume(volume: number, owner?: string | null) {
+  load();
+  const key = ownerKey(owner);
+  const next = clamp(volume);
+  volumeByOwner.set(key, next);
+  persist();
+  const elements = elementsByOwner.get(key);
+  if (elements) {
+    for (const element of elements) element.volume = next;
   }
 }
 
 /** Регистрирует аудиоэлемент звука демонстрации (сразу применяет громкость). */
-export function registerScreenAudio(element: HTMLAudioElement) {
-  registered.add(element);
-  element.volume = getScreenAudioVolume();
+export function registerScreenAudio(
+  element: HTMLAudioElement,
+  owner?: string | null,
+) {
+  load();
+  const key = ownerKey(owner);
+  const set = elementsByOwner.get(key) ?? new Set<HTMLAudioElement>();
+  set.add(element);
+  elementsByOwner.set(key, set);
+  ownerByElement.set(element, key);
+  element.volume = volumeByOwner.get(key) ?? 1;
 }
 
 export function unregisterScreenAudio(element: HTMLAudioElement) {
-  registered.delete(element);
+  const key = ownerByElement.get(element);
+  if (!key) return;
+  ownerByElement.delete(element);
+  const set = elementsByOwner.get(key);
+  if (set) {
+    set.delete(element);
+    if (!set.size) elementsByOwner.delete(key);
+  }
 }

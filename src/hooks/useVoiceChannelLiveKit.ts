@@ -293,7 +293,9 @@ export function useVoiceChannelLiveKit({
       document.body.appendChild(element);
       remoteAudioTracksRef.current.set(userId, track);
       remoteAudioRef.current.set(userId, element);
-      if (userId.endsWith("::screen")) registerScreenAudio(element);
+      if (userId.endsWith("::screen")) {
+        registerScreenAudio(element, userId.replace(/::screen$/, ""));
+      }
       void applyAudioOutput(element);
       void roomRef.current?.startAudio().catch(() => undefined);
       if (!element.muted) void element.play().catch(() => undefined);
