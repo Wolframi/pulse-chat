@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { IconEye, IconEyeOff } from "@/lib/icons";
 import { easeOutSoft } from "@/lib/motion";
@@ -14,6 +14,9 @@ type JoinGateProps = {
 
 type AuthMode = "login" | "register";
 
+const MASCOT_LOOP_START_S = 6.767;
+const MASCOT_LOOP_END_S = 16.767;
+
 export function JoinGate({
   connected,
   error,
@@ -21,6 +24,7 @@ export function JoinGate({
   onLogin,
 }: JoinGateProps) {
   const reduceMotion = useReducedMotion();
+  const mascotRef = useRef<HTMLVideoElement>(null);
   const [mode, setMode] = useState<AuthMode>("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -28,6 +32,61 @@ export function JoinGate({
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const video = mascotRef.current;
+    if (!video) return;
+
+    let stopped = false;
+    let animationFrame = 0;
+    let videoFrame = 0;
+    const frameAwareVideo = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (callback: () => void) => number;
+      cancelVideoFrameCallback?: (handle: number) => void;
+    };
+
+    const restartLoop = () => {
+      if (stopped) return;
+      try {
+        video.currentTime = MASCOT_LOOP_START_S;
+      } catch {
+        return;
+      }
+      void video.play().catch(() => {});
+    };
+
+    const watchLoopEnd = () => {
+      if (stopped) return;
+      if (
+        !video.paused &&
+        !video.seeking &&
+        video.currentTime >= MASCOT_LOOP_END_S
+      ) {
+        restartLoop();
+      }
+
+      if (typeof frameAwareVideo.requestVideoFrameCallback === "function") {
+        videoFrame = frameAwareVideo.requestVideoFrameCallback(watchLoopEnd);
+      } else {
+        animationFrame = window.requestAnimationFrame(watchLoopEnd);
+      }
+    };
+
+    video.addEventListener("ended", restartLoop);
+    watchLoopEnd();
+
+    return () => {
+      stopped = true;
+      video.removeEventListener("ended", restartLoop);
+      window.cancelAnimationFrame(animationFrame);
+      if (
+        videoFrame &&
+        typeof frameAwareVideo.cancelVideoFrameCallback === "function"
+      ) {
+        frameAwareVideo.cancelVideoFrameCallback(videoFrame);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (error) setSubmitting(false);
@@ -93,15 +152,16 @@ export function JoinGate({
         transition={{ duration: 0.55 * d, ease: easeOutSoft }}
       >
         <video
+          ref={mascotRef}
           className="join__mascot"
-          poster="/maiko/maiko-intro-poster-v9.png"
+          poster="/maiko/maiko-intro-poster-v10.png"
           autoPlay
-          loop
           muted
           playsInline
           preload="auto"
           aria-hidden
         >
+          <source src="/maiko/maiko-intro-v10.webm" type="video/webm" />
           <source src="/maiko/maiko-intro-v9.mp4" type="video/mp4" />
         </video>
       </motion.section>
