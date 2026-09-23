@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -12,12 +18,15 @@ import { MediaVideo } from "@/components/chat/MediaVideo";
 import {
   getScreenAudioVolume,
   setScreenAudioVolume,
+  subscribeScreenAudioVolume,
 } from "@/lib/screenAudio";
 
 export type ScreenSource = {
   id: string;
   label: string;
   stream: MediaStream;
+  /** Своя демонстрация — её звук локально не играет, ручка не нужна. */
+  local?: boolean;
 };
 
 function ScreenPane({
@@ -57,9 +66,11 @@ function ScreenPane({
       >
         <IconExpand size={16} />
       </button>
-      <div className="call__screen-vol">
-        <ScreenVolumeKnob owner={source.id} label={source.label} />
-      </div>
+      {source.local ? null : (
+        <div className="call__screen-vol">
+          <ScreenVolumeKnob owner={source.id} label={source.label} />
+        </div>
+      )}
     </div>
   );
 }
@@ -78,16 +89,23 @@ export function ScreenVolumeKnob({
   owner?: string;
   label?: string;
 }) {
-  const [volume, setVolume] = useState(() => getScreenAudioVolume(owner));
+  const volume = useSyncExternalStore(
+    subscribeScreenAudioVolume,
+    () => getScreenAudioVolume(owner),
+    () => 1,
+  );
   const [open, setOpen] = useState(false);
   const dragRef = useRef(false);
   const leaveTimerRef = useRef<number | null>(null);
-  const lastVolumeRef = useRef(getScreenAudioVolume(owner) || 1);
+  const lastVolumeRef = useRef(volume || 1);
+
+  useEffect(() => {
+    lastVolumeRef.current = getScreenAudioVolume(owner) || 1;
+  }, [owner]);
 
   const apply = useCallback(
     (value: number) => {
       const next = Math.min(1, Math.max(0, Number(value.toFixed(2))));
-      setVolume(next);
       setScreenAudioVolume(next, owner);
     },
     [owner],
@@ -227,7 +245,7 @@ export function ScreenShareStage({ sources }: { sources: ScreenSource[] }) {
           </button>
         </div>
       ) : null}
-      <ScreenPane source={current} hideBadge={multi} />
+      <ScreenPane key={current.id} source={current} hideBadge={multi} />
     </div>
   );
 }

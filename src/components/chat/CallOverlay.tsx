@@ -30,6 +30,7 @@ import {
   ScreenShareKeepalive,
   ScreenShareStage,
   ScreenVolumeKnob,
+  type ScreenSource,
 } from "@/components/chat/ScreenShareStage";
 import { getSoundEnabled } from "@/lib/notify";
 import { applyAudioOutput } from "@/lib/mediaDevices";
@@ -206,17 +207,18 @@ export function CallPanel({
   const localCamera = !cameraOff && Boolean(localCameraStream);
   const cameraMode = !screenMode && (remoteCamera || localCamera);
 
-  const screenSources: { id: string; label: string; stream: MediaStream }[] = [];
+  const screenSources: ScreenSource[] = [];
   if (localIsScreen && localScreenStream) {
     screenSources.push({
       id: "local",
       label: "Ваш экран",
       stream: localScreenStream,
+      local: true,
     });
   }
   if (remoteIsScreen && (remoteScreenStream || remoteStream)) {
     screenSources.push({
-      id: "remote",
+      id: active.peerId,
       label: "Экран собеседника",
       stream: remoteScreenStream || remoteStream!,
     });
@@ -458,7 +460,7 @@ export function CallPanel({
               <IconCamera size={20} />
             )}
           </button>
-          {screenMode ? <ScreenVolumeKnob owner={active.peerId} /> : null}
+          {remoteIsScreen ? <ScreenVolumeKnob owner={active.peerId} /> : null}
           <button
             type="button"
             className={`call__btn call__btn--circle ${sharingScreen ? "is-on" : ""}`}

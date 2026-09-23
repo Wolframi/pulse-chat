@@ -28,6 +28,7 @@ import { MediaVideo } from "@/components/chat/MediaVideo";
 import {
   ScreenShareKeepalive,
   ScreenShareStage,
+  type ScreenSource,
 } from "@/components/chat/ScreenShareStage";
 import {
   pickCameraStream,
@@ -101,12 +102,13 @@ function collectScreenSources(
   sharingScreen: boolean,
 ) {
   const localScreenStream = pickScreenStream(localStream);
-  const list: { id: string; label: string; stream: MediaStream }[] = [];
+  const list: ScreenSource[] = [];
   if (sharingScreen && localScreenStream) {
     list.push({
       id: "self",
       label: "Ваш экран",
       stream: localScreenStream,
+      local: true,
     });
   }
   for (const peer of peers) {

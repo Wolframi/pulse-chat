@@ -9,6 +9,15 @@ let loaded = false;
 const volumeByOwner = new Map<string, number>();
 const elementsByOwner = new Map<string, Set<HTMLAudioElement>>();
 const ownerByElement = new WeakMap<HTMLAudioElement, string>();
+const listeners = new Set<() => void>();
+
+/** Подписка на изменения громкости (чтобы все ручки одного владельца были в синхроне). */
+export function subscribeScreenAudioVolume(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
 
 function clamp(value: number) {
   return Math.min(1, Math.max(0, value));
@@ -69,6 +78,7 @@ export function setScreenAudioVolume(volume: number, owner?: string | null) {
   if (elements) {
     for (const element of elements) element.volume = next;
   }
+  for (const listener of listeners) listener();
 }
 
 /** Регистрирует аудиоэлемент звука демонстрации (сразу применяет громкость). */
@@ -78,6 +88,12 @@ export function registerScreenAudio(
 ) {
   load();
   const key = ownerKey(owner);
+  const previous = ownerByElement.get(element);
+  if (previous && previous !== key) {
+    const old = elementsByOwner.get(previous);
+    old?.delete(element);
+    if (old && !old.size) elementsByOwner.delete(previous);
+  }
   const set = elementsByOwner.get(key) ?? new Set<HTMLAudioElement>();
   set.add(element);
   elementsByOwner.set(key, set);
@@ -89,6 +105,8 @@ export function unregisterScreenAudio(element: HTMLAudioElement) {
   const key = ownerByElement.get(element);
   if (!key) return;
   ownerByElement.delete(element);
+  // В звонке и mesh это тот же элемент, что играет голос собеседника.
+  element.volume = 1;
   const set = elementsByOwner.get(key);
   if (set) {
     set.delete(element);
