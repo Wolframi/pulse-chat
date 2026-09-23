@@ -17,6 +17,10 @@ async function giphyDispatcher() {
     connect: {
       lookup(hostname, options, callback) {
         if (hostname === GIPHY_API_HOST) {
+          if (options && options.all) {
+            callback(null, [{ address, family: 4 }]);
+            return;
+          }
           callback(null, address, 4);
           return;
         }
