@@ -82,7 +82,7 @@ export function getNotifyCapabilityHint(): string | null {
   if (typeof window === "undefined") return null;
   if (!("Notification" in window) || !("serviceWorker" in navigator)) {
     if (isIosSafari() && !isStandalonePwa()) {
-      return "На iPhone: Поделиться → На экран «Домой», откройте Pulse как приложение и разрешите уведомления.";
+      return "На iPhone: Поделиться → На экран «Домой», откройте Майко как приложение и разрешите уведомления.";
     }
     return "Этот браузер не поддерживает push-уведомления.";
   }

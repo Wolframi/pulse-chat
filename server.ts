@@ -776,7 +776,7 @@ function loadPersistedState() {
           if (!member?.userId) continue;
           members.set(member.userId, {
             userId: member.userId,
-            name: String(member.name || "Pulse"),
+            name: String(member.name || "Майко"),
             muted: Boolean(member.muted),
             deafened: Boolean(member.deafened),
             speaking: false,
@@ -818,7 +818,7 @@ setInterval(() => {
       emitToUser(ioServer, leftId, "call:signal", {
         callId: call.callId,
         fromUserId: goneId,
-        fromName: gone?.displayName || gone?.username || "Pulse",
+        fromName: gone?.displayName || gone?.username || "Майко",
         type: "peer-left",
         data: { reason: "stale" },
       });
@@ -1145,7 +1145,7 @@ function makeDeletedTombstone(message: ChatMessage): ChatMessage {
   return {
     id: message.id,
     room: message.room,
-    author: "Pulse",
+    author: "Майко",
     text: fileGone ? "Файл удалён из сообщения" : "Сообщение удалено",
     createdAt: message.createdAt,
     kind: "system",
@@ -1675,7 +1675,7 @@ function pushMessage(io: Server, chat: ChatMeta, message: ChatMessage) {
     if (chat.type === "channel") {
       const ping = {
         room: chat.id,
-        author: "Pulse",
+        author: "Майко",
         text: `Новое сообщение в #${chat.title}`,
       };
       for (const [socketId, presence] of usersBySocket.entries()) {
@@ -1703,7 +1703,7 @@ function pushMessage(io: Server, chat: ChatMeta, message: ChatMessage) {
         // Wake suspended phone tabs that dropped the socket.
         if (!viewing) {
           void sendPushToUser(userId, {
-            title: String(message.author || "Pulse"),
+            title: String(message.author || "Майко"),
             body: String(preview || "Новое сообщение").slice(0, 180),
             chatId: chat.id,
             kind: "message",
@@ -1824,7 +1824,7 @@ function pushSystem(room: string, text: string) {
   const message: ChatMessage = {
     id: randomUUID(),
     room,
-    author: "Pulse",
+    author: "Майко",
     text,
     createdAt: Date.now(),
     kind: "system",
@@ -1946,7 +1946,7 @@ function afterAuth(io: Server, socket: Socket, account: AuthAccount) {
     socket.emit("call:incoming", {
       callId: ringing.callId,
       fromUserId: ringing.callerId,
-      fromName: caller?.displayName || caller?.username || "Pulse",
+      fromName: caller?.displayName || caller?.username || "Майко",
       mode: ringing.mode,
       chatId: ringing.chatId,
     });
@@ -1967,7 +1967,7 @@ function afterAuth(io: Server, socket: Socket, account: AuthAccount) {
       socket.emit("call:resume", {
         callId: liveCall.callId,
         peerId,
-        peerName: peer?.displayName || peer?.username || "Pulse",
+        peerName: peer?.displayName || peer?.username || "Майко",
         mode: liveCall.mode,
         chatId: liveCall.chatId,
         role: liveCall.callerId === account.userId ? "caller" : "callee",
@@ -4334,7 +4334,7 @@ app.prepare().then(() => {
             emitToUser(io, account.userId, "call:signal", {
               callId,
               fromUserId: toUserId,
-              fromName: "Pulse",
+              fromName: "Майко",
               type: "end",
               data: { reason: "timeout" },
             });
@@ -4983,7 +4983,7 @@ app.prepare().then(() => {
   });
 
   httpServer.listen(port, hostname, () => {
-    console.log(`> Pulse Chat ready on http://${hostname}:${port}`);
+    console.log(`> Майко ready on http://${hostname}:${port}`);
     console.log(`> Local  http://127.0.0.1:${port}`);
     for (const ip of lanIPv4Addresses()) {
       console.log(`> LAN    http://${ip}:${port}`);

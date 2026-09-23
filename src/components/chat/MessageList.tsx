@@ -538,7 +538,7 @@ export function MessageList({
           </div>
         ) : messages.length === 0 ? (
           <div className="room__empty room__empty--thread">
-            <p className="room__empty-brand">Pulse</p>
+            <p className="room__empty-brand">Майко</p>
             <p className="room__empty-copy">Напишите первое сообщение</p>
           </div>
         ) : (

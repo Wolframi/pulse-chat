@@ -6,15 +6,11 @@ import {
   IconMic,
   IconMicOff,
   IconPhoneOff,
-  IconVolume,
 } from "@/lib/icons";
 
 type VoiceDockProps = {
-  channelTitle: string;
-  groupTitle?: string;
   muted: boolean;
   deafened: boolean;
-  peerCount: number;
   onToggleMute: () => void;
   onToggleDeafen: () => void;
   onLeave: () => void;
@@ -22,11 +18,8 @@ type VoiceDockProps = {
 };
 
 export function VoiceDock({
-  channelTitle,
-  groupTitle,
   muted,
   deafened,
-  peerCount,
   onToggleMute,
   onToggleDeafen,
   onLeave,
@@ -34,18 +27,6 @@ export function VoiceDock({
 }: VoiceDockProps) {
   return (
     <div className="voice-dock" role="status" aria-live="polite">
-      <div className="voice-dock__meta">
-        <IconVolume size={16} />
-        <div>
-          <strong>Голос · {channelTitle}</strong>
-          <span>
-            {groupTitle ? `${groupTitle} · ` : ""}
-            {peerCount === 0
-              ? "только вы"
-              : `ещё ${peerCount}`}
-          </span>
-        </div>
-      </div>
       <div className="voice-dock__actions">
         {onExpand ? (
           <button

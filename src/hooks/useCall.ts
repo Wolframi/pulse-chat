@@ -1893,7 +1893,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
       // OS banner when permission already granted (request only from Profile UI).
       if (getNotifyPermission() === "granted") {
         showIncomingCallNotify(
-          payload.fromName || "Pulse",
+          payload.fromName || "Майко",
           payload.chatId,
           payload.callId,
         );
@@ -2188,7 +2188,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
         setMinimized(false);
         setActive({
           peerId,
-          peerName: payload.peerName || "Pulse",
+          peerName: payload.peerName || "Майко",
           mode,
           chatId,
           outbound: payload?.role !== "callee",
@@ -2212,7 +2212,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
       setMinimized(false);
       setActive({
         peerId,
-        peerName: payload.peerName || "Pulse",
+        peerName: payload.peerName || "Майко",
         mode,
         chatId,
         outbound: payload?.role !== "callee",

@@ -1,4 +1,4 @@
-# Pulse Chat
+# Майко
 
 Realtime-мессенджер: чаты как в Telegram, группы и звонки как в Discord.
 

@@ -637,7 +637,7 @@ export function useChat() {
           (expectedRoomRef.current || sessionRef.current?.room) === room;
         if (viewingOther) return;
         playMessageBeep();
-        showDesktopNotify(String(ping.author || "Pulse"), String(ping.text || ""), {
+        showDesktopNotify(String(ping.author || "Майко"), String(ping.text || ""), {
           chatId: room,
         });
       },
@@ -1797,7 +1797,7 @@ export function useChat() {
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    document.title = unreadTotal > 0 ? `(${unreadTotal}) Pulse` : "Pulse";
+    document.title = unreadTotal > 0 ? `(${unreadTotal}) Майко` : "Майко";
   }, [unreadTotal]);
 
   useEffect(() => {

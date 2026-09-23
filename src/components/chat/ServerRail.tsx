@@ -42,14 +42,17 @@ export function ServerRail({
         className={`server-rail__orb server-rail__orb--home ${
           focus === "home" ? "is-active" : ""
         }`}
-        aria-label="Чаты"
-        title="Чаты"
+        aria-label="Майко — чаты"
+        title="Майко — чаты"
         aria-current={focus === "home" ? "true" : undefined}
         onClick={onSelectHome}
       >
-        <span className="server-rail__pulse" aria-hidden>
-          P
-        </span>
+        <img
+          className="server-rail__mascot"
+          src="/maiko/maiko-icon-192.png?v=4"
+          alt=""
+          draggable={false}
+        />
         {unreadHome > 0 && (
           <em className="server-rail__badge">
             {unreadHome > 99 ? "99+" : unreadHome}

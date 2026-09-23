@@ -14,18 +14,18 @@ const body = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "Pulse — чат",
+  title: "Майко — чат",
   description: "Минималистичный онлайн-чат: ЛС, группы и каналы",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "Pulse",
+    title: "Майко",
     statusBarStyle: "black-translucent",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0e0e10",
+  themeColor: "#0b0c10",
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",

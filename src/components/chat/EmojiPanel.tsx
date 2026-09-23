@@ -101,7 +101,7 @@ export function EmojiPanel({
         emojiSize={emojiSize}
         emojiButtonSize={emojiSize + 12}
         emojiButtonRadius="8px"
-        emojiButtonColors={["rgba(109, 138, 173, 0.28)"]}
+        emojiButtonColors={["rgba(76, 109, 169, 0.28)"]}
         maxFrequentRows={1}
         onEmojiSelect={handleSelect}
       />

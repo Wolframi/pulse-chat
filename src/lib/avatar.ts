@@ -1,12 +1,12 @@
 const PALETTE = [
-  "#5a6b7c",
-  "#6d8aad",
-  "#4f6678",
-  "#73899c",
-  "#5c6e7a",
-  "#6a7f90",
-  "#556677",
-  "#64788a",
+  "#355070",
+  "#4c6da9",
+  "#2d446d",
+  "#5d7aa0",
+  "#3a5578",
+  "#4a6288",
+  "#2a3f65",
+  "#5d6d8f",
 ];
 
 export function avatarColor(name: string) {

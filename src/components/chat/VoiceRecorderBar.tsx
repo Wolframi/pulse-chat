@@ -211,7 +211,7 @@ export function VoiceRecorderBar({
       const x = i * step;
       const y = (height - barHeight) / 2;
       const alpha = 0.4 + barLevel * 0.6;
-      ctx.fillStyle = `rgba(109, 138, 173, ${alpha.toFixed(2)})`;
+      ctx.fillStyle = `rgba(76, 109, 169, ${alpha.toFixed(2)})`;
       ctx.beginPath();
       if (typeof ctx.roundRect === "function") {
         ctx.roundRect(x, y, barWidth, barHeight, dpr);

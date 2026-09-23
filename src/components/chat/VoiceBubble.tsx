@@ -52,8 +52,8 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
   );
 
   const waveColor = mine ? "#7a8590" : "#505058";
-  const progressColor = mine ? "#f0f2f4" : "#6d8aad";
-  const cursorColor = mine ? "#ffffff" : "#87a0be";
+  const progressColor = mine ? "#f0f2f4" : "#4c6da9";
+  const cursorColor = mine ? "#ffffff" : "#6784b7";
 
   const paint = useCallback(
     (progress = 0) => {

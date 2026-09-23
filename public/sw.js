@@ -1,4 +1,4 @@
-/* Pulse — push + notification service worker */
+/* Майко — push + notification service worker */
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -10,7 +10,7 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("push", (event) => {
   let data = {
-    title: "Pulse",
+    title: "Майко",
     body: "Новое уведомление",
     chatId: "",
     callId: "",
@@ -39,6 +39,8 @@ self.addEventListener("push", (event) => {
 
   const options = {
     body: String(data.body || ""),
+    icon: "/maiko/maiko-icon-192.png",
+    badge: "/maiko/maiko-icon-192.png",
     tag,
     renotify: true,
     requireInteraction: data.kind === "call",
@@ -52,7 +54,7 @@ self.addEventListener("push", (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(String(data.title || "Pulse"), options),
+    self.registration.showNotification(String(data.title || "Майко"), options),
   );
 });
 

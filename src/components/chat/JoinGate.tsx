@@ -92,71 +92,18 @@ export function JoinGate({
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.55 * d, ease: easeOutSoft }}
       >
-        <div className="join__hero-pulse" aria-hidden>
-          <span />
-          <span />
-          <span />
-        </div>
-
-        <motion.p
-          className="join__brand"
-          initial={reduceMotion ? false : { opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 * d, delay: 0.05 * d, ease: easeOutSoft }}
+        <video
+          className="join__mascot"
+          poster="/maiko/maiko-loop-poster.png?v=4"
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          aria-hidden
         >
-          Pulse
-        </motion.p>
-
-        <motion.h1
-          className="join__title"
-          initial={reduceMotion ? false : { opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.55 * d, delay: 0.14 * d, ease: easeOutSoft }}
-        >
-          Чат без лишнего
-        </motion.h1>
-
-        <motion.p
-          className="join__lead"
-          initial={reduceMotion ? false : { opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 * d, delay: 0.22 * d, ease: easeOutSoft }}
-        >
-          Личные сообщения, группы, файлы и звонки — спокойно и по делу.
-        </motion.p>
-
-        <motion.ul
-          className="join__points"
-          initial="hidden"
-          animate="show"
-          variants={{
-            hidden: {},
-            show: {
-              transition: {
-                staggerChildren: 0.07 * d,
-                delayChildren: 0.3 * d,
-              },
-            },
-          }}
-        >
-          {["Профиль и аватар", "ЛС и групповые чаты", "Аудио и видеозвонки"].map(
-            (item) => (
-              <motion.li
-                key={item}
-                variants={{
-                  hidden: { opacity: 0, y: 8 },
-                  show: {
-                    opacity: 1,
-                    y: 0,
-                    transition: { duration: 0.4 * d, ease: easeOutSoft },
-                  },
-                }}
-              >
-                {item}
-              </motion.li>
-            ),
-          )}
-        </motion.ul>
+          <source src="/maiko/maiko-loop-fallback.mp4?v=4" type="video/mp4" />
+        </video>
       </motion.section>
 
       <motion.section

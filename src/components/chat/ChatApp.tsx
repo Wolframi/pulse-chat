@@ -7,7 +7,6 @@ import { useChat } from "@/hooks/useChat";
 import { useCall } from "@/hooks/useCall";
 import { useVoiceChannel } from "@/hooks/useVoiceChannel";
 import { JoinGate } from "@/components/chat/JoinGate";
-import { JoinBackdrop } from "@/components/chat/JoinBackdrop";
 import { Composer } from "@/components/chat/Composer";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { ServerRail, type RailFocus } from "@/components/chat/ServerRail";
@@ -657,7 +656,7 @@ export function ChatApp() {
       ? `#${currentChat.title}`
       : currentChat?.type === "group"
         ? "#general"
-        : currentChat?.title || pendingTitle || "Pulse";
+        : currentChat?.title || pendingTitle || "Майко";
 
   const subtitle = !session
     ? connected
@@ -1331,21 +1330,6 @@ export function ChatApp() {
         />
       )}
 
-      <AnimatePresence>
-        {showAuthScene && (
-          <motion.div
-            key="auth-backdrop"
-            className="join-backdrop-host"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.55, ease: easeOut }}
-          >
-            <JoinBackdrop />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <AnimatePresence mode="wait">
         {introVisible ? (
           <motion.div
@@ -1356,15 +1340,13 @@ export function ChatApp() {
             exit={{ opacity: 0, scale: 1.015 }}
             transition={{ duration: 0.42, ease: easeOut }}
           >
-            <span className="boot__ring" aria-hidden />
-            <span className="boot__ring boot__ring--delayed" aria-hidden />
             <motion.p
               className="boot__word"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.55, delay: 0.06, ease: easeOut }}
             >
-              Pulse
+              Майко
             </motion.p>
           </motion.div>
         ) : !account ? (
@@ -1496,14 +1478,8 @@ export function ChatApp() {
               />
               {voice.active && (
                 <VoiceDock
-                  channelTitle={voice.active.title}
-                  groupTitle={
-                    chats.find((chat) => chat.id === voice.active?.groupId)
-                      ?.title
-                  }
                   muted={voice.muted}
                   deafened={voice.deafened}
-                  peerCount={voice.peers.length}
                   onToggleMute={voice.toggleMute}
                   onToggleDeafen={voice.toggleDeafen}
                   onLeave={voice.leave}
@@ -1609,14 +1585,14 @@ export function ChatApp() {
                   >
                     <AnimatePresence mode="wait" initial={false}>
                       <motion.p
-                        key={session ? chatLabel : "pulse"}
+                        key={session ? chatLabel : "maiko"}
                         className="room__brand"
                         initial={{ opacity: 0, y: 4 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -4 }}
                       transition={{ duration: 0.26, ease: easeOut }}
                     >
-                      {session ? chatLabel : "Pulse"}
+                      {session ? chatLabel : "Майко"}
                       {session &&
                         currentChat?.type !== "dm" &&
                         chatMuted && (
@@ -1898,7 +1874,7 @@ export function ChatApp() {
 
               {!session ? (
                 <div className="room__empty-state">
-                  <p className="room__empty-brand">Pulse</p>
+                  <p className="room__empty-brand">Майко</p>
                   <p className="room__empty-copy">
                     Выберите чат слева или найдите человека, чтобы начать
                     переписку.
