@@ -28,6 +28,7 @@ import { MediaVideo } from "@/components/chat/MediaVideo";
 import {
   ScreenShareKeepalive,
   ScreenShareStage,
+  ScreenVolumeKnob,
   type ScreenSource,
 } from "@/components/chat/ScreenShareStage";
 import {
@@ -260,6 +261,10 @@ function VoiceStagePanel({
   );
   const screenCount = screenSources.length;
   const screenMode = screenCount > 0;
+  const [currentScreenId, setCurrentScreenId] = useState<string | null>(null);
+  const currentScreen = screenMode
+    ? screenSources.find((source) => source.id === currentScreenId)
+    : undefined;
 
   useEffect(() => {
     const timer = window.setTimeout(() => endRef.current?.focus(), 40);
@@ -304,7 +309,10 @@ function VoiceStagePanel({
         {screenMode ? (
           <div className="call__stage-body">
             <section className="call__main-area">
-              <ScreenShareStage sources={screenSources} />
+              <ScreenShareStage
+                sources={screenSources}
+                onCurrentChange={setCurrentScreenId}
+              />
             </section>
 
             <aside
@@ -417,6 +425,13 @@ function VoiceStagePanel({
           >
             {cameraOff ? <IconCameraOff size={20} /> : <IconCamera size={20} />}
           </button>
+          {currentScreen && !currentScreen.local ? (
+            <ScreenVolumeKnob
+              key={currentScreen.id}
+              owner={currentScreen.id}
+              label={currentScreen.label}
+            />
+          ) : null}
           <button
             type="button"
             className={`call__btn call__btn--circle ${sharingScreen ? "is-on" : ""}`}

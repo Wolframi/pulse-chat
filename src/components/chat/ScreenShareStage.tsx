@@ -66,11 +66,6 @@ function ScreenPane({
       >
         <IconExpand size={16} />
       </button>
-      {source.local ? null : (
-        <div className="call__screen-vol">
-          <ScreenVolumeKnob owner={source.id} label={source.label} />
-        </div>
-      )}
     </div>
   );
 }
@@ -138,7 +133,7 @@ export function ScreenVolumeKnob({
     >
       <button
         type="button"
-        className="screen-vol__icon"
+        className={`call__btn call__btn--circle ${muted ? "is-off" : ""}`}
         aria-label={`Громкость${name}`}
         title={`Громкость${name}`}
         onClick={() => {
@@ -150,7 +145,7 @@ export function ScreenVolumeKnob({
           }
         }}
       >
-        {muted ? <IconVolumeOff size={16} /> : <IconVolume size={16} />}
+        {muted ? <IconVolumeOff size={20} /> : <IconVolume size={20} />}
       </button>
       <div className="screen-vol__pop">
         <span>{percent}</span>
@@ -198,7 +193,14 @@ export function ScreenShareKeepalive({ sources }: { sources: ScreenSource[] }) {
   );
 }
 
-export function ScreenShareStage({ sources }: { sources: ScreenSource[] }) {
+export function ScreenShareStage({
+  sources,
+  onCurrentChange,
+}: {
+  sources: ScreenSource[];
+  /** Какая демонстрация сейчас на экране — для ручки громкости в панели. */
+  onCurrentChange?: (id: string | null) => void;
+}) {
   const liveSources = sources.filter(sourceHasLiveVideo);
   const [index, setIndex] = useState(0);
   const count = liveSources.length;
@@ -208,6 +210,12 @@ export function ScreenShareStage({ sources }: { sources: ScreenSource[] }) {
   useEffect(() => {
     if (index > 0 && index >= count) setIndex(Math.max(0, count - 1));
   }, [count, index]);
+
+  const currentId = current?.id ?? null;
+  useEffect(() => {
+    onCurrentChange?.(currentId);
+  }, [currentId, onCurrentChange]);
+  useEffect(() => () => onCurrentChange?.(null), [onCurrentChange]);
 
   if (!current) return null;
 

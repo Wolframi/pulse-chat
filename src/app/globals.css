@@ -8355,22 +8355,6 @@ button:active:not(:disabled) {
   flex: 0 0 auto;
 }
 
-.screen-vol__icon {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  cursor: pointer;
-}
-
-.screen-vol__icon:hover {
-  background: rgba(0, 0, 0, 0.75);
-}
-
 .screen-vol__pop {
   position: absolute;
   left: 50%;
@@ -8490,13 +8474,6 @@ button:active:not(:disabled) {
 
 .call__screen-pane:fullscreen .call__screen-fs {
   display: none;
-}
-
-.call__screen-vol {
-  position: absolute;
-  right: 10px;
-  bottom: 52px;
-  z-index: 4;
 }
 
 .call__tiles {
