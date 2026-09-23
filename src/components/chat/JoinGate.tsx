@@ -154,14 +154,14 @@ export function JoinGate({
         <video
           ref={mascotRef}
           className="join__mascot"
-          poster="/maiko/maiko-intro-poster-v10.png"
+          poster="/maiko/maiko-intro-poster-v11.png?v=11"
           autoPlay
           muted
           playsInline
           preload="auto"
           aria-hidden
         >
-          <source src="/maiko/maiko-intro-v10.webm" type="video/webm" />
+          <source src="/maiko/maiko-intro-v11.webm?v=11" type="video/webm" />
           <source src="/maiko/maiko-intro-v9.mp4" type="video/mp4" />
         </video>
       </motion.section>
