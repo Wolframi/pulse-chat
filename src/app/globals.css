@@ -211,7 +211,7 @@ button:active:not(:disabled) {
 .join__hero {
   position: relative;
   overflow: hidden;
-  background: #0c0c0e;
+  background: #0c0b0e;
   border-right: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
 }
 

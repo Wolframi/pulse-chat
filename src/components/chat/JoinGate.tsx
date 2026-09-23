@@ -94,7 +94,7 @@ export function JoinGate({
       >
         <video
           className="join__mascot"
-          poster="/maiko/maiko-loop-poster.png?v=4"
+          poster="/maiko/maiko-intro-poster-v9.png"
           autoPlay
           loop
           muted
@@ -102,7 +102,7 @@ export function JoinGate({
           preload="auto"
           aria-hidden
         >
-          <source src="/maiko/maiko-loop-fallback.mp4?v=4" type="video/mp4" />
+          <source src="/maiko/maiko-intro-v9.mp4" type="video/mp4" />
         </video>
       </motion.section>
 
