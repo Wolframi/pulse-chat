@@ -5,7 +5,12 @@ export function bareMediaUrl(url: string) {
 }
 
 /** Encode non-ASCII path segments so <img>/<video>/download links always resolve. */
+export function isLocalMediaUrl(url?: string | null) {
+  return String(url || "").startsWith("blob:");
+}
+
 export function mediaSrc(url: string) {
+  if (isLocalMediaUrl(url)) return url;
   const bare = bareMediaUrl(url);
   if (!bare) return "";
   const q = bare.lastIndexOf("/");
@@ -22,6 +27,7 @@ export function mediaSrc(url: string) {
 
 /** Keep ?exp&sig (and other query) while encoding the path for Cyrillic names. */
 export function signedMediaSrc(url: string) {
+  if (isLocalMediaUrl(url)) return url;
   const encoded = mediaSrc(url);
   if (!encoded) return "";
   const q = String(url || "").indexOf("?");
@@ -30,6 +36,7 @@ export function signedMediaSrc(url: string) {
 }
 
 export function downloadHref(url: string) {
+  if (isLocalMediaUrl(url)) return url;
   const encoded = mediaSrc(url);
   if (!encoded) return "#";
   const q = String(url || "").indexOf("?");
@@ -40,6 +47,7 @@ export function downloadHref(url: string) {
 
 /** Thumbnail URL for chat bubbles — server resizes JPEGs on the fly. */
 export function thumbSrc(url: string, width = 430) {
+  if (isLocalMediaUrl(url)) return url;
   const encoded = signedMediaSrc(url) || mediaSrc(url);
   if (!encoded) return "";
   return `${encoded}${encoded.includes("?") ? "&" : "?"}w=${width}`;

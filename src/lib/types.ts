@@ -60,6 +60,8 @@ export type ChatMessage = {
   invite?: GroupInvite;
   reactions?: MessageReaction[];
   status?: MessageStatus;
+  /** Client-only: 0..1 while attachments are uploading from this device. */
+  uploadProgress?: number;
   /** Whisper transcript for voice notes. */
   transcription?: string;
   transcriptionStatus?: "pending" | "ready" | "error";

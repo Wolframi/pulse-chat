@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { mediaSrc, signedMediaSrc } from "@/lib/files";
+import { isLocalMediaUrl, mediaSrc, signedMediaSrc } from "@/lib/files";
 import { IconPlay } from "@/lib/icons";
 
 type VideoThumbProps = {
@@ -17,7 +17,7 @@ export function VideoThumb({ url, onOpen }: VideoThumbProps) {
   const base = signedMediaSrc(url) || mediaSrc(url);
   const [bust, setBust] = useState(0);
   const tries = useRef(0);
-  const src = bust > 0 ? `${base}${base.includes("?") ? "&" : "?"}v=${bust}` : base;
+  const src = bust > 0 && !isLocalMediaUrl(base) ? `${base}${base.includes("?") ? "&" : "?"}v=${bust}` : base;
 
   useEffect(() => {
     tries.current = 0;

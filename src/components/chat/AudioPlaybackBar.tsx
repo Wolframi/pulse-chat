@@ -44,6 +44,7 @@ export function AudioPlaybackBar({
   const visible = useAudioPlaybackSelector((state) => state.visible);
   const track = useAudioPlaybackSelector((state) => state.current);
   const playing = useAudioPlaybackSelector((state) => state.playing);
+  const buffering = useAudioPlaybackSelector((state) => state.buffering);
   const duration = useAudioPlaybackSelector((state) => state.duration);
   const volume = useAudioPlaybackSelector((state) => state.volume);
   const playbackRate = useAudioPlaybackSelector((state) => state.playbackRate);
@@ -116,8 +117,9 @@ export function AudioPlaybackBar({
           </button>
           <button
             type="button"
-            className="audio-bar__play"
+            className={`audio-bar__play ${buffering ? "is-buffering" : ""}`}
             aria-label={playing ? "Пауза" : "Слушать"}
+            aria-busy={buffering || undefined}
             onClick={() => toggleAudioPlayback()}
           >
             {playing ? <IconPause size={16} /> : <IconPlay size={16} />}

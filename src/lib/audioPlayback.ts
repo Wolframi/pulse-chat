@@ -5,6 +5,7 @@ import {
   audioDisplayName,
   bareMediaUrl,
   isAudioAttachment,
+  isLocalMediaUrl,
   isVoiceNote,
   messageAttachments,
   signedMediaSrc,
@@ -35,6 +36,8 @@ export type AudioPlaybackState = {
   playbackRate: number;
   volume: number;
   visible: boolean;
+  /** Playback is wanted but the element is waiting for data (seek into unloaded range, slow network). */
+  buffering: boolean;
 };
 
 const RATE_KEY = "pulse-audio-rate";
@@ -65,6 +68,22 @@ let clockWall = 0;
 let clockMedia = 0;
 let clockRate = 1;
 
+/** No forward progress for this long while playback is wanted → reload the source. */
+const STALL_MS = 7000;
+const MAX_RECOVERIES = 3;
+/** From this attempt on, fetch the whole file into a blob (fixes seeking in cue-less WebM voice notes). */
+const BLOB_FALLBACK_ATTEMPT = 2;
+const BLOB_FALLBACK_MAX_BYTES = 40 * 1024 * 1024;
+
+let wantPlay = false;
+let recovering = false;
+let recoveries = 0;
+let autoAdvanced = false;
+let watchdog = 0;
+let lastProgressAt = 0;
+let lastProgressTime = -1;
+let blobSrc: string | null = null;
+
 function readStoredRate(): number {
   if (typeof window === "undefined") return 1;
   try {
@@ -94,6 +113,7 @@ let state: AudioPlaybackState = {
   playbackRate: 1,
   volume: 1,
   visible: false,
+  buffering: false,
 };
 
 function emit() {
@@ -204,9 +224,13 @@ export function getLivePlaybackTime() {
   const audio = audioEl;
   if (audio && state.current && !closing && audio.src) {
     return {
-      currentTime: audio.currentTime,
+      currentTime: pendingSeek ?? audio.currentTime,
       duration: state.duration,
-      playing: !audio.paused && !audio.ended,
+      playing:
+        !audio.paused &&
+        !audio.ended &&
+        !audio.seeking &&
+        audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA,
       rate: audio.playbackRate || 1,
     };
   }
@@ -323,6 +347,8 @@ export function peekAdjacentTrack(direction: 1 | -1, from = state.current) {
 
 function applyPendingSeek(audio: HTMLAudioElement) {
   if (pendingSeek == null) return;
+  // Before metadata some browsers silently drop the seek; loadedmetadata retries it.
+  if (audio.readyState < HTMLMediaElement.HAVE_METADATA) return;
   const duration = Number.isFinite(audio.duration) ? audio.duration : 0;
   const time = duration > 0 ? Math.min(Math.max(pendingSeek, 0), duration) : Math.max(pendingSeek, 0);
   try {
@@ -384,6 +410,147 @@ function setVoiceBothEars(on: boolean) {
   }
 }
 
+function setBuffering(on: boolean) {
+  if (state.buffering !== on) patch({ buffering: on });
+}
+
+function releaseBlobSrc() {
+  if (!blobSrc) return;
+  const url = blobSrc;
+  blobSrc = null;
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function markProgress(audio: HTMLAudioElement) {
+  const time = audio.currentTime;
+  if (Math.abs(time - lastProgressTime) < 0.01) return;
+  const advancing = !audio.paused && !audio.seeking && lastProgressTime >= 0 && time > lastProgressTime;
+  lastProgressTime = time;
+  lastProgressAt = nowMs();
+  if (advancing) {
+    recoveries = 0;
+    setBuffering(false);
+  }
+}
+
+function touchProgress() {
+  lastProgressAt = nowMs();
+  lastProgressTime = audioEl?.currentTime ?? -1;
+}
+
+function stopWatchdog() {
+  if (!watchdog) return;
+  window.clearInterval(watchdog);
+  watchdog = 0;
+}
+
+function startWatchdog() {
+  touchProgress();
+  if (watchdog || typeof window === "undefined") return;
+  watchdog = window.setInterval(checkStall, 1000);
+}
+
+function handlePlayError(error: unknown) {
+  // AbortError = src changed / load() interrupted play — a newer play() is in flight.
+  // NotSupportedError comes with a media `error` event, which drives recovery itself.
+  const name = (error as DOMException | null)?.name;
+  if (name === "AbortError" || name === "NotSupportedError") return;
+  wantPlay = false;
+  stopWatchdog();
+  patch({ playing: false, buffering: false });
+}
+
+function checkStall() {
+  const audio = audioEl;
+  if (!audio || closing || !wantPlay || !state.current) {
+    stopWatchdog();
+    return;
+  }
+  if (recovering || audio.ended) return;
+  markProgress(audio);
+  const stuckFor = nowMs() - lastProgressAt;
+  const starving =
+    audio.paused || audio.seeking || audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA;
+  if (starving && stuckFor > 600) setBuffering(true);
+  if (audio.paused && !audio.seeking && audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+    void audio.play().catch(handlePlayError);
+    return;
+  }
+  if (stuckFor > STALL_MS) void recoverPlayback();
+}
+
+async function fetchAsObjectUrl(src: string) {
+  try {
+    const response = await fetch(src, { cache: "no-store" });
+    if (!response.ok) return null;
+    const length = Number(response.headers.get("content-length") || 0);
+    if (length > BLOB_FALLBACK_MAX_BYTES) {
+      void response.body?.cancel().catch(() => undefined);
+      return null;
+    }
+    const blob = await response.blob();
+    if (!blob.size || blob.size > BLOB_FALLBACK_MAX_BYTES) return null;
+    return URL.createObjectURL(blob);
+  } catch {
+    return null;
+  }
+}
+
+function giveUpOnTrack(track: AudioTrack) {
+  failedSrcs.add(track.src);
+  if (failedSrcs.size > FAILED_SRCS_MAX) {
+    // Evict the oldest failure so the set never grows unbounded.
+    const oldest = failedSrcs.values().next().value;
+    if (oldest) failedSrcs.delete(oldest);
+  }
+  wantPlay = false;
+  stopWatchdog();
+  patch({ playing: false, buffering: false });
+  if (!autoAdvanced) return;
+  const next = peekAdjacentTrack(1, track);
+  if (next && next.src !== track.src && !failedSrcs.has(next.src)) {
+    void playAudioTrack(next, { auto: true });
+  }
+}
+
+/** Reload the current source at the current position (network hiccup, stalled seek, expired buffer). */
+async function recoverPlayback() {
+  const audio = audioEl;
+  const track = state.current;
+  if (!audio || !track || closing || recovering) return;
+  if (recoveries >= MAX_RECOVERIES) {
+    giveUpOnTrack(track);
+    return;
+  }
+  recoveries += 1;
+  recovering = true;
+  const time = pendingSeek ?? (audio.currentTime > 0 ? audio.currentTime : state.currentTime);
+  if (wantPlay) setBuffering(true);
+  try {
+    let src = blobSrc || track.src;
+    if (!blobSrc && recoveries >= BLOB_FALLBACK_ATTEMPT && !isLocalMediaUrl(track.src)) {
+      const objectUrl = await fetchAsObjectUrl(track.src);
+      if (state.current !== track || closing) {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      if (objectUrl) {
+        blobSrc = objectUrl;
+        src = objectUrl;
+      }
+    }
+    pendingSeek = time > 0 ? time : null;
+    audio.src = src;
+    audio.defaultPlaybackRate = state.playbackRate;
+    audio.playbackRate = state.playbackRate;
+    audio.volume = state.volume;
+    touchProgress();
+    if (wantPlay) await audio.play().catch(handlePlayError);
+  } finally {
+    recovering = false;
+  }
+}
+
 function bindAudio(audio: HTMLAudioElement) {
   if (bound) return;
   bound = true;
@@ -394,12 +561,48 @@ function bindAudio(audio: HTMLAudioElement) {
     applyPendingSeek(audio);
     adoptDuration(readMediaDuration(audio));
   });
+  audio.addEventListener("waiting", () => {
+    if (closing || !wantPlay) return;
+    setBuffering(true);
+    startWatchdog();
+  });
+  audio.addEventListener("stalled", () => {
+    if (closing || !wantPlay) return;
+    startWatchdog();
+  });
+  audio.addEventListener("seeking", () => {
+    if (closing) return;
+    touchProgress();
+  });
+  audio.addEventListener("seeked", () => {
+    if (closing) return;
+    resetPlaybackClock();
+    touchProgress();
+    if (wantPlay && audio.paused && !audio.ended) {
+      void audio.play().catch(handlePlayError);
+    }
+  });
+  audio.addEventListener("canplay", () => {
+    if (closing) return;
+    applyPendingSeek(audio);
+    if (wantPlay && audio.paused && !audio.seeking && !recovering) {
+      void audio.play().catch(handlePlayError);
+    }
+  });
+  audio.addEventListener("playing", () => {
+    if (closing) return;
+    resetPlaybackClock();
+    touchProgress();
+    setBuffering(false);
+  });
   audio.addEventListener("durationchange", () => {
     if (closing) return;
     adoptDuration(readMediaDuration(audio));
   });
   audio.addEventListener("timeupdate", () => {
     if (closing) return;
+    markProgress(audio);
+    if (pendingSeek != null) return;
     const now = typeof performance !== "undefined" ? performance.now() : Date.now();
     const minGap = audio.playbackRate > 1.2 ? 220 : 160;
     if (now - lastTimeEmit < minGap && !audio.paused) return;
@@ -415,21 +618,32 @@ function bindAudio(audio: HTMLAudioElement) {
     if (playbackCtx?.state === "suspended") {
       void playbackCtx.resume().catch(() => undefined);
     }
+    wantPlay = true;
+    startWatchdog();
     resetPlaybackClock();
     patch({ playing: true, visible: true });
   });
   audio.addEventListener("pause", () => {
     if (closing || audio.ended) return;
-    patch({ playing: false, currentTime: audio.currentTime });
+    if (recovering) return;
+    wantPlay = false;
+    stopWatchdog();
+    patch({
+      playing: false,
+      buffering: false,
+      currentTime: pendingSeek ?? audio.currentTime,
+    });
   });
   audio.addEventListener("ended", () => {
     if (closing) return;
+    wantPlay = false;
+    stopWatchdog();
     const next = peekAdjacentTrack(1);
     if (next) {
-      void playAudioTrack(next);
+      void playAudioTrack(next, { auto: true });
       return;
     }
-    patch({ playing: false, currentTime: 0 });
+    patch({ playing: false, buffering: false, currentTime: 0 });
     try {
       audio.currentTime = 0;
     } catch {
@@ -437,22 +651,12 @@ function bindAudio(audio: HTMLAudioElement) {
     }
   });
   audio.addEventListener("error", () => {
-    if (closing) return;
-    const current = state.current;
-    if (current?.src) {
-      failedSrcs.add(current.src);
-      if (failedSrcs.size > FAILED_SRCS_MAX) {
-        // Evict the oldest failure so the set never grows unbounded.
-        const oldest = failedSrcs.values().next().value;
-        if (oldest) failedSrcs.delete(oldest);
-      }
-    }
-    const next = peekAdjacentTrack(1);
-    if (next && next.src !== current?.src && !failedSrcs.has(next.src)) {
-      void playAudioTrack(next);
+    if (closing || !state.current || !audio.getAttribute("src")) return;
+    if (recovering) {
+      window.setTimeout(() => void recoverPlayback(), 400);
       return;
     }
-    patch({ playing: false });
+    void recoverPlayback();
   });
 }
 
@@ -504,6 +708,7 @@ export function getAudioPlaybackServerState(): AudioPlaybackState {
     playbackRate: 1,
     volume: 1,
     visible: false,
+    buffering: false,
   };
 }
 
@@ -538,7 +743,10 @@ function probeExactDuration(src: string) {
   probe.src = src;
 }
 
-export async function playAudioTrack(track: AudioTrack, opts?: { time?: number }) {
+export async function playAudioTrack(
+  track: AudioTrack,
+  opts?: { time?: number; auto?: boolean },
+) {
   closing = false;
   const audio = getAudio();
   if (!audio) return;
@@ -547,6 +755,8 @@ export async function playAudioTrack(track: AudioTrack, opts?: { time?: number }
   if (playbackCtx?.state === "suspended") {
     void playbackCtx.resume().catch(() => undefined);
   }
+  // An explicit tap always gets a fresh chance, even if this file failed earlier.
+  if (!opts?.auto) failedSrcs.delete(track.src);
 
   const same =
     state.current &&
@@ -555,28 +765,28 @@ export async function playAudioTrack(track: AudioTrack, opts?: { time?: number }
     !audio.error;
 
   if (opts?.time != null) pendingSeek = opts.time;
+  wantPlay = true;
+  startWatchdog();
 
   if (same) {
+    if (!opts?.auto) recoveries = 0;
     applyPendingSeek(audio);
-    if (audio.paused) {
-      try {
-        await audio.play();
-      } catch {
-        patch({ playing: false });
-      }
-    }
+    if (audio.paused) await audio.play().catch(handlePlayError);
     return;
   }
 
   const list = playlistFor(track);
   const fresh = list.find((item) => sameTrack(item, track)) || track;
 
+  autoAdvanced = Boolean(opts?.auto);
+  recoveries = 0;
   durationSource = "none";
   resetPlaybackClock(opts?.time ?? 0);
   patch({
     current: fresh,
     visible: true,
     playing: false,
+    buffering: true,
     currentTime: opts?.time ?? 0,
     duration: 0,
   });
@@ -586,6 +796,8 @@ export async function playAudioTrack(track: AudioTrack, opts?: { time?: number }
   audio.preservesPitch = true;
   releaseWarmer(fresh.src);
   audio.src = fresh.src;
+  releaseBlobSrc();
+  audio.defaultPlaybackRate = state.playbackRate;
   audio.playbackRate = state.playbackRate;
   audio.volume = state.volume;
   applyPendingSeek(audio);
@@ -593,29 +805,42 @@ export async function playAudioTrack(track: AudioTrack, opts?: { time?: number }
   const upcoming = peekAdjacentTrack(1, fresh);
   if (upcoming) prefetchAudioSrc(upcoming.src);
 
-  try {
-    await audio.play();
-  } catch {
-    patch({ playing: false });
-  }
+  await audio.play().catch(handlePlayError);
 }
 
 export function toggleAudioPlayback() {
   const audio = getAudio();
   if (!audio || !state.current) return;
   if (audio.paused) {
-    void audio.play().catch(() => patch({ playing: false }));
+    wantPlay = true;
+    startWatchdog();
+    if (audio.error || !audio.currentSrc || audio.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) {
+      failedSrcs.delete(state.current.src);
+      recoveries = 0;
+      void recoverPlayback();
+      return;
+    }
+    void audio.play().catch(handlePlayError);
     return;
   }
+  wantPlay = false;
+  stopWatchdog();
   audio.pause();
 }
 
 export function seekAudioPlayback(time: number) {
   const audio = getAudio();
-  pendingSeek = time;
-  resetPlaybackClock(Math.max(time, 0));
-  patch({ currentTime: Math.max(time, 0) });
+  pendingSeek = Math.max(time, 0);
+  resetPlaybackClock(pendingSeek);
+  patch({ currentTime: pendingSeek });
   if (!audio?.src) return;
+  if (audio.error) {
+    recoveries = 0;
+    void recoverPlayback();
+    return;
+  }
+  // Seeking into an unloaded range can hang; give the watchdog a fresh window.
+  if (wantPlay) startWatchdog();
   applyPendingSeek(audio);
 }
 
@@ -663,6 +888,10 @@ export function skipAudioPlayback(direction: 1 | -1) {
 
 export function stopAudioPlayback() {
   closing = true;
+  wantPlay = false;
+  autoAdvanced = false;
+  recoveries = 0;
+  stopWatchdog();
   pendingSeek = null;
   durationSource = "none";
   resetPlaybackClock(0);
@@ -672,9 +901,11 @@ export function stopAudioPlayback() {
     audio.removeAttribute("src");
     audio.load();
   }
+  releaseBlobSrc();
   patch({
     current: null,
     playing: false,
+    buffering: false,
     currentTime: 0,
     duration: 0,
     visible: false,

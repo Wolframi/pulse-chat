@@ -1187,6 +1187,103 @@ button:active:not(:disabled) {
   opacity: 0.92;
 }
 
+.bubble--uploading {
+  opacity: 1;
+}
+
+.bubble--uploading .bubble__video-play {
+  display: none;
+}
+
+.bubble__upload-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+
+.bubble__upload-slot {
+  position: relative;
+  min-width: 0;
+}
+
+.upload-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.upload-ring:hover {
+  transform: scale(1.05);
+}
+
+.upload-ring--media {
+  width: 52px;
+  height: 52px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.upload-ring--file {
+  width: 42px;
+  height: 42px;
+  background: color-mix(in srgb, var(--accent) 78%, #111);
+}
+
+.upload-ring--voice {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 36px;
+  height: 36px;
+  transform: translateY(-50%);
+  background: var(--accent);
+}
+
+.upload-ring--voice:hover {
+  transform: translateY(-50%) scale(1.05);
+}
+
+.upload-ring__svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  animation: upload-ring-spin 1.6s linear infinite;
+}
+
+.upload-ring__bar {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 50% 50%;
+  transition: stroke-dashoffset 0.3s ease-out;
+}
+
+@keyframes upload-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-ring__svg {
+    animation: none;
+  }
+}
+
 .bubble--failed {
   background: color-mix(in srgb, var(--danger-soft) 28%, var(--bubble-me));
   animation: fail-shake 0.35s ease;
@@ -1205,14 +1302,24 @@ button:active:not(:disabled) {
   font-size: 0.68rem;
 }
 
-.bubble__spinner {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid currentColor;
-  border-right-color: transparent;
-  animation: spin 0.7s linear infinite;
-  opacity: 0.8;
+/* Telegram-style "sending" clock: fast minute hand, slow hour hand. */
+.bubble__clock {
+  opacity: 0.85;
+}
+
+.bubble__clock-hour,
+.bubble__clock-minute {
+  transform-box: view-box;
+  transform-origin: 6px 6px;
+  animation: spin linear infinite;
+}
+
+.bubble__clock-minute {
+  animation-duration: 1s;
+}
+
+.bubble__clock-hour {
+  animation-duration: 6s;
 }
 
 @keyframes spin {
@@ -2901,6 +3008,29 @@ button:active:not(:disabled) {
 
 .audio-bar__play:hover {
   filter: brightness(1.08);
+}
+
+.audio-bar__play,
+.voice-bubble__play {
+  position: relative;
+}
+
+.audio-bar__play.is-buffering::after,
+.voice-bubble__play.is-buffering::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  border-right-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+  pointer-events: none;
+}
+
+.voice-bubble--mine .voice-bubble__play.is-buffering::after {
+  border-top-color: #fff;
+  border-right-color: #fff;
 }
 
 .audio-bar__icon,
@@ -5245,52 +5375,6 @@ button:active:not(:disabled) {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-}
-
-.composer__progress {
-  position: relative;
-  margin: 0 0 8px;
-  min-height: 28px;
-  border-radius: 999px;
-  background: var(--bg-deep);
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 0.72rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 0 8px;
-}
-
-.composer__progress-bar {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: var(--accent-soft);
-  transition: width var(--dur-med) var(--ease-out);
-}
-
-.composer__progress span {
-  position: relative;
-  z-index: 1;
-}
-
-.composer__cancel {
-  position: relative;
-  z-index: 1;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--ink);
-  padding: 3px 10px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.composer__cancel:hover {
-  background: rgba(166, 27, 27, 0.12);
-  color: var(--danger);
 }
 
 .composer__error {

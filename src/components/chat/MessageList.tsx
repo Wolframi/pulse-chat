@@ -25,6 +25,7 @@ type MessageListProps = {
   onJumpTo?: (messageId: string) => void;
   onCopied?: () => void;
   onRetry?: (messageId: string) => void;
+  onCancelUpload?: (messageId: string) => void;
   onDiscard?: (messageId: string) => void;
   onDelete?: (messageId: string) => void;
   onEdit?: (message: ChatMessage) => void;
@@ -151,6 +152,7 @@ export function MessageList({
   onJumpTo,
   onCopied,
   onRetry,
+  onCancelUpload,
   onDiscard,
   onDelete,
   onEdit,
@@ -164,6 +166,7 @@ export function MessageList({
 }: MessageListProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
+  const jumpingRef = useRef(false);
   const firstRender = useRef(true);
   const prevCountRef = useRef(messages.length);
   const prevTailKeyRef = useRef<string | null>(null);
@@ -318,6 +321,11 @@ export function MessageList({
       const el = scrollerRef.current;
       if (!el) return;
       const near = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      // Smooth "jump to bottom" passes through far positions — don't unpin mid-flight.
+      if (jumpingRef.current) {
+        if (!near) return;
+        jumpingRef.current = false;
+      }
       nearBottomRef.current = near;
       setShowJump(!near);
       if (near) {
@@ -327,9 +335,45 @@ export function MessageList({
       }
     }
 
+    // Media grows the list after it decodes; stay pinned if we were at the bottom.
+    function onMediaLoad() {
+      const el = scrollerRef.current;
+      if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight;
+    }
+
+    function cancelJump() {
+      jumpingRef.current = false;
+    }
+
+    // Anything that changes height without a scroll event (waveforms, previews,
+    // reactions, entry animations, composer/keyboard resizing the viewport).
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(onMediaLoad) : null;
+    const observeChildren = () => {
+      if (!resizeObserver) return;
+      resizeObserver.disconnect();
+      resizeObserver.observe(node);
+      for (const child of Array.from(node.children)) resizeObserver.observe(child);
+    };
+    const mutationObserver = resizeObserver ? new MutationObserver(observeChildren) : null;
+    observeChildren();
+    mutationObserver?.observe(node, { childList: true });
+
     node.addEventListener("scroll", onScroll, { passive: true });
+    node.addEventListener("load", onMediaLoad, true);
+    node.addEventListener("loadedmetadata", onMediaLoad, true);
+    node.addEventListener("wheel", cancelJump, { passive: true });
+    node.addEventListener("touchstart", cancelJump, { passive: true });
     onScroll();
-    return () => node.removeEventListener("scroll", onScroll);
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      node.removeEventListener("scroll", onScroll);
+      node.removeEventListener("load", onMediaLoad, true);
+      node.removeEventListener("loadedmetadata", onMediaLoad, true);
+      node.removeEventListener("wheel", cancelJump);
+      node.removeEventListener("touchstart", cancelJump);
+    };
   }, [onMarkRead]);
 
   function stickToBottom() {
@@ -429,6 +473,7 @@ export function MessageList({
     const node = scrollerRef.current;
     if (!node) return;
     nearBottomRef.current = true;
+    jumpingRef.current = true;
     setShowJump(false);
     setPendingNew(0);
     setShowUnreadMark(false);
@@ -489,6 +534,7 @@ export function MessageList({
           onJumpTo={onJumpTo}
           onCopied={onCopied}
           onRetry={onRetry}
+          onCancelUpload={onCancelUpload}
           onDiscard={onDiscard}
           onDelete={onDelete}
           onEdit={onEdit}

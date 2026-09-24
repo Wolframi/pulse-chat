@@ -26,6 +26,7 @@ import {
   fileIconKind,
   IconPlay,
   IconImage,
+  IconClose,
 } from "@/lib/icons";
 import { ConfirmDialog } from "@/components/chat/ConfirmDialog";
 import {
@@ -80,6 +81,7 @@ type MessageBubbleProps = {
   onJumpTo?: (messageId: string) => void;
   onCopied?: () => void;
   onRetry?: (messageId: string) => void;
+  onCancelUpload?: (messageId: string) => void;
   onDiscard?: (messageId: string) => void;
   onDelete?: (messageId: string) => void;
   onEdit?: (message: ChatMessage) => void;
@@ -192,7 +194,11 @@ function SendMeta({
           }
         >
           {sending ? (
-            <i className="bubble__spinner" aria-hidden />
+            <svg className="bubble__clock" width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+              <circle cx="6" cy="6" r="5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+              <line className="bubble__clock-hour" x1="6" y1="6" x2="6" y2="3.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              <line className="bubble__clock-minute" x1="6" y1="6" x2="6" y2="2.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
           ) : read ? (
             <IconTgRead size={16} />
           ) : (
@@ -417,6 +423,61 @@ function GifMedia({
   );
 }
 
+const RING_RADIUS = 20;
+const RING_LENGTH = 2 * Math.PI * RING_RADIUS;
+
+/** Telegram-style upload ring: spinning arc that fills with progress; tap cancels. */
+function UploadRing({
+  progress,
+  onCancel,
+  variant,
+}: {
+  progress: number;
+  onCancel?: () => void;
+  variant: "media" | "file" | "voice";
+}) {
+  const ratio = Math.min(1, Math.max(0.04, progress));
+  return (
+    <button
+      type="button"
+      className={`upload-ring upload-ring--${variant}`}
+      aria-label={`Отменить загрузку (${Math.round(progress * 100)}%)`}
+      title="Отменить загрузку"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel?.();
+      }}
+    >
+      <svg className="upload-ring__svg" viewBox="0 0 48 48" aria-hidden>
+        <circle
+          className="upload-ring__bar"
+          cx="24"
+          cy="24"
+          r={RING_RADIUS}
+          strokeDasharray={RING_LENGTH}
+          strokeDashoffset={RING_LENGTH * (1 - ratio)}
+        />
+      </svg>
+      <IconClose size={variant === "media" ? 18 : 14} />
+    </button>
+  );
+}
+
+function MediaUploadOverlay({
+  progress,
+  onCancel,
+}: {
+  progress: number;
+  onCancel?: () => void;
+}) {
+  return (
+    <div className="bubble__upload-overlay">
+      <UploadRing progress={progress} onCancel={onCancel} variant="media" />
+    </div>
+  );
+}
+
 /** Image with one cache-busted retry and a clickable broken placeholder. */
 function PhotoImage({
   src,
@@ -496,18 +557,26 @@ function FileBodyInner({
   peerReadAt,
   onOpenImage,
   onTranscribe,
+  onCancelUpload,
 }: {
   message: ChatMessage;
   mine?: boolean;
   peerReadAt?: number | null;
   onOpenImage?: (src: string, name: string, kind?: "image" | "video") => void;
   onTranscribe?: (messageId: string) => void;
+  onCancelUpload?: (messageId: string) => void;
 }) {
   const attachments = messageAttachments(message);
   if (!attachments.length) return null;
 
   const caption = (message.text || "").trim();
   const album = attachments.length > 1;
+  const uploadProgress = message.uploadProgress;
+  const uploading = uploadProgress !== undefined;
+  const cancelUpload = () => onCancelUpload?.(message.id);
+  const mediaUpload = uploading ? (
+    <MediaUploadOverlay progress={uploadProgress} onCancel={cancelUpload} />
+  ) : null;
 
   if (album && attachments.every((file) => isMediaAttachment(file))) {
     const count = Math.min(attachments.length, 10);
@@ -525,14 +594,17 @@ function FileBodyInner({
           files={visible}
           onOpenImage={onOpenImage}
           overlay={
-            userCaption ? undefined : (
-              <MediaCaption
-                createdAt={message.createdAt}
-                mine={mine}
-                status={message.status}
-                peerReadAt={peerReadAt}
-              />
-            )
+            <>
+              {mediaUpload}
+              {userCaption ? null : (
+                <MediaCaption
+                  createdAt={message.createdAt}
+                  mine={mine}
+                  status={message.status}
+                  peerReadAt={peerReadAt}
+                />
+              )}
+            </>
           }
         />
         {userCaption ? (
@@ -588,6 +660,7 @@ function FileBodyInner({
             <PhotoImage src={thumbSrc(file.url, 430)} className="bubble__image" />
           </button>
         )}
+        {mediaUpload}
         <MediaCaption
           caption={userCaption ? caption : undefined}
           createdAt={message.createdAt}
@@ -607,6 +680,7 @@ function FileBodyInner({
           url={file.url}
           onOpen={() => onOpenImage?.(openSrc, file.name, "video")}
         />
+        {mediaUpload}
         <MediaCaption
           caption={userCaption ? caption : undefined}
           createdAt={message.createdAt}
@@ -655,7 +729,18 @@ function FileBodyInner({
                   <span className="bubble__audio-size">{formatBytes(item.size)}</span>
                 </div>
               )}
-              <VoiceBubble src={src} mine={mine} track={track} />
+              {uploading ? (
+                <div className="bubble__upload-slot">
+                  <VoiceBubble src={src} mine={mine} track={track} />
+                  <UploadRing
+                    progress={uploadProgress}
+                    onCancel={cancelUpload}
+                    variant="voice"
+                  />
+                </div>
+              ) : (
+                <VoiceBubble src={src} mine={mine} track={track} />
+              )}
               {voice ? (
                 <VoiceTranscript
                   message={message}
@@ -718,19 +803,30 @@ function FileBodyInner({
             download={title}
             title={title}
           >
-            <span className={`bubble__file-icon bubble__file-icon--${kind}`} aria-hidden>
-              <IconFileKind kind={kind} size={20} />
-            </span>
+            {uploading ? (
+              <UploadRing
+                progress={uploadProgress}
+                onCancel={cancelUpload}
+                variant="file"
+              />
+            ) : (
+              <span className={`bubble__file-icon bubble__file-icon--${kind}`} aria-hidden>
+                <IconFileKind kind={kind} size={20} />
+              </span>
+            )}
             <span className="bubble__file-meta">
               <strong className="bubble__file-name">{title}</strong>
               <span className="bubble__file-size">
-                {ext ? `${ext} · ` : ""}
-                {formatBytes(item.size)}
+                {uploading
+                  ? `${formatBytes(Math.round(item.size * uploadProgress))} / ${formatBytes(item.size)}`
+                  : `${ext ? `${ext} · ` : ""}${formatBytes(item.size)}`}
               </span>
             </span>
-            <span className="bubble__download" aria-hidden>
-              <IconDownload size={16} />
-            </span>
+            {uploading ? null : (
+              <span className="bubble__download" aria-hidden>
+                <IconDownload size={16} />
+              </span>
+            )}
           </a>
         );
       })}
@@ -764,9 +860,11 @@ const FileBody = memo(FileBodyInner, (prev, next) => {
     prev.mine !== next.mine ||
     prev.peerReadAt !== next.peerReadAt ||
     prev.message.status !== next.message.status ||
+    prev.message.uploadProgress !== next.message.uploadProgress ||
     prev.message.createdAt !== next.message.createdAt ||
     prev.onOpenImage !== next.onOpenImage ||
     prev.onTranscribe !== next.onTranscribe ||
+    prev.onCancelUpload !== next.onCancelUpload ||
     prev.message.text !== next.message.text ||
     prev.message.transcription !== next.message.transcription ||
     prev.message.transcriptionStatus !== next.message.transcriptionStatus ||
@@ -811,6 +909,7 @@ function MessageBubbleInner({
   onJumpTo,
   onCopied,
   onRetry,
+  onCancelUpload,
   onDiscard,
   onDelete,
   onEdit,
@@ -1192,7 +1291,7 @@ function MessageBubbleInner({
           menuOpen ? "is-actions-open" : ""
         } ${message.status === "pending" ? "bubble--pending" : ""} ${
           message.status === "failed" ? "bubble--failed" : ""
-        }`}
+        } ${message.uploadProgress !== undefined ? "bubble--uploading" : ""}`}
         onContextMenu={(event) => {
           event.preventDefault();
           openMenu();
@@ -1233,6 +1332,7 @@ function MessageBubbleInner({
             peerReadAt={peerReadAt}
             onOpenImage={onOpenImage}
             onTranscribe={onTranscribe}
+            onCancelUpload={onCancelUpload}
           />
         ) : bigEmoji ? (
           <>

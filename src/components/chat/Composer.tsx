@@ -55,7 +55,6 @@ type ComposerProps = {
     options?: {
       caption?: string;
       replyToId?: string;
-      onProgress?: (ratio: number) => void;
     },
   ) => Promise<{ ok: boolean; completed: File[] }>;
   onSendRemoteFile?: (
@@ -63,12 +62,9 @@ type ComposerProps = {
     options?: { caption?: string; replyToId?: string },
   ) => Promise<boolean>;
   onTyping: (isTyping: boolean) => void;
-  uploading?: boolean;
   disabled?: boolean;
-  uploadProgress?: number;
   error?: string | null;
   onClearError?: () => void;
-  onCancelUpload?: () => void;
   replyTo?: ReplyDraft | null;
   onClearReply?: () => void;
   focusToken?: string | number;
@@ -102,12 +98,9 @@ export function Composer({
   onSendFiles,
   onSendRemoteFile,
   onTyping,
-  uploading = false,
   disabled = false,
-  uploadProgress = 0,
   error,
   onClearError,
-  onCancelUpload,
   replyTo = null,
   onClearReply,
   focusToken,
@@ -160,7 +153,7 @@ export function Composer({
   const pendingRef = useRef<PendingFile[]>([]);
   const draftsRef = useRef(new Map<string, string>());
   const chatKeyRef = useRef("");
-  const locked = uploading || disabled;
+  const locked = disabled;
 
   useEffect(() => {
     textRef.current = text;
@@ -465,40 +458,49 @@ export function Composer({
     if (pendingFiles.length) {
       sendingRef.current = true;
       const caption = text.trim();
-      const files = [...pendingFiles];
+      const items = [...pending];
+      // Files leave the composer at once; progress lives in the chat bubble.
+      setPending([]);
+      setText("");
+      if (chatKeyAtStart) {
+        draftsRef.current.set(chatKeyAtStart, "");
+        clearDraft(chatKeyAtStart);
+      }
+      if (typingRef.current) {
+        typingRef.current = false;
+        onTyping(false);
+      }
       try {
-        const result = await onSendFiles(files, {
-          caption,
-          replyToId: replyTo?.id,
-        });
+        const result = await onSendFiles(
+          items.map((item) => item.file),
+          { caption, replyToId: replyTo?.id },
+        );
 
         const done = new Set(result.completed);
-        setPending((prev) => {
-          const keep: PendingFile[] = [];
-          for (const item of prev) {
-            if (done.has(item.file)) {
-              if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-            } else {
-              keep.push(item);
-            }
+        const restore = items.filter((item) => !done.has(item.file));
+        items.forEach((item) => {
+          if (done.has(item.file) && item.previewUrl) {
+            URL.revokeObjectURL(item.previewUrl);
           }
-          return keep;
         });
 
-        if (!result.ok) return;
-        if (chatKeyRef.current !== chatKeyAtStart) return;
-
-        setText("");
-        if (chatKeyAtStart) {
-          draftsRef.current.set(chatKeyAtStart, "");
-          clearDraft(chatKeyAtStart);
+        if (!result.ok && chatKeyRef.current === chatKeyAtStart) {
+          setPending((prev) =>
+            [...restore, ...prev].slice(0, MAX_PENDING_FILES),
+          );
+          if (!textRef.current && caption) {
+            setText(caption);
+            persistDraft(caption);
+          }
+          return;
         }
+        restore.forEach((item) => {
+          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        });
+        if (!result.ok) return;
+
         onClearReply?.();
         pulseSend();
-        if (typingRef.current) {
-          typingRef.current = false;
-          onTyping(false);
-        }
       } finally {
         sendingRef.current = false;
       }
@@ -633,10 +635,6 @@ export function Composer({
 
   const canSend = Boolean(text.trim() || pendingFiles.length) && !locked;
   const showMic = !canSend && !voiceOpen && !locked;
-  const progressPct = Math.round(
-    Math.min(1, Math.max(0, uploadProgress)) * 100,
-  );
-
   function closeVoiceUi() {
     setVoiceOpen(false);
     setVoiceSlideX(0);
@@ -858,27 +856,6 @@ export function Composer({
         </p>
       )}
 
-      {uploading && (
-        <div className="composer__progress" aria-live="polite">
-          <div
-            className="composer__progress-bar"
-            style={{ width: `${progressPct}%` }}
-          />
-          <span>
-            {progressPct >= 97 ? "Отправка…" : `Загрузка ${progressPct}%`}
-          </span>
-          {onCancelUpload && (
-            <button
-              type="button"
-              className="composer__cancel"
-              onClick={onCancelUpload}
-            >
-              Отмена
-            </button>
-          )}
-        </div>
-      )}
-
       {voiceOpen ? (
         <div className="composer__box composer__box--voice">
           <VoiceRecorderBar
@@ -956,9 +933,7 @@ export function Composer({
                 ? "Открываем чат…"
                 : pending.length
                   ? "Подпись к файлу (необязательно)"
-                  : uploading
-                    ? "Загрузка…"
-                    : "Написать сообщение…"
+                  : "Написать сообщение…"
             }
             maxLength={2000}
             minRows={1}

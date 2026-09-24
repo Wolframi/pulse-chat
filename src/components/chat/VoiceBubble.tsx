@@ -47,6 +47,9 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
   const playing = useAudioPlaybackSelector(
     (state) => state.playing && state.current?.id === track.id,
   );
+  const buffering = useAudioPlaybackSelector(
+    (state) => state.buffering && state.current?.id === track.id,
+  );
   const storeDuration = useAudioPlaybackSelector((state) =>
     state.current?.id === track.id ? state.duration : 0,
   );
@@ -196,8 +199,9 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
     >
       <button
         type="button"
-        className="voice-bubble__play"
+        className={`voice-bubble__play ${buffering ? "is-buffering" : ""}`}
         aria-label={playing ? "Пауза" : "Слушать"}
+        aria-busy={buffering || undefined}
         onClick={handleToggle}
       >
         {playing ? (

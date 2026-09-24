@@ -224,8 +224,6 @@ export function ChatApp() {
   const [chatInfoOpen, setChatInfoOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [groupAvatarBusy, setGroupAvatarBusy] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [savingProfile, setSavingProfile] = useState(false);
   const [sidebarPanel, setSidebarPanel] = useState<SidebarPanel>("home");
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
@@ -679,26 +677,14 @@ export function ChatApp() {
       options?: {
         caption?: string;
         replyToId?: string;
-        onProgress?: (ratio: number) => void;
       },
     ) => {
-      setUploading(true);
-      setUploadProgress(0);
-      try {
-        const result = await sendFiles(files, {
-          caption: options?.caption,
-          replyToId: options?.replyToId,
-          onProgress: (ratio) => {
-            setUploadProgress(ratio);
-            options?.onProgress?.(ratio);
-          },
-        });
-        if (result.ok) setReplyDraft(null);
-        return result;
-      } finally {
-        setUploading(false);
-        setUploadProgress(0);
-      }
+      const result = await sendFiles(files, {
+        caption: options?.caption,
+        replyToId: options?.replyToId,
+      });
+      if (result.ok) setReplyDraft(null);
+      return result;
     },
     [sendFiles, setReplyDraft],
   );
@@ -2031,6 +2017,7 @@ export function ChatApp() {
                       onJumpTo={jumpToMessage}
                       onCopied={handleCopied}
                       onRetry={retryMessage}
+                      onCancelUpload={cancelUpload}
                       onDiscard={handleDiscard}
                       onDelete={handleDeleteMessage}
                       onEdit={handleEditMessage}
@@ -2066,12 +2053,9 @@ export function ChatApp() {
                     onSendFiles={handleSendFiles}
                     onSendRemoteFile={handleSendRemoteFile}
                     onTyping={setTyping}
-                    uploading={uploading}
                     disabled={historyLoading && !messages.length}
-                    uploadProgress={uploadProgress}
                     error={composerError}
                     onClearError={clearComposerError}
-                    onCancelUpload={cancelUpload}
                     replyTo={replyTo}
                     onClearReply={() => setReplyDraft(null)}
                     focusToken={session.room}

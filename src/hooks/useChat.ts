@@ -63,6 +63,29 @@ type SessionAck = {
   error?: string;
 };
 
+/** One outgoing file message; `uploaded` caches finished parts for retry. */
+type UploadJob = {
+  chatId: string;
+  files: File[];
+  previews: string[];
+  text: string;
+  replyToId?: string;
+  uploaded: (FileAttachment | undefined)[];
+  controller: AbortController | null;
+};
+
+function newClientId() {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `f_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function revokePreviews(job: UploadJob, delayMs = 0) {
+  window.setTimeout(() => {
+    job.previews.forEach((url) => URL.revokeObjectURL(url));
+  }, delayMs);
+}
+
 export function useChat() {
   const socketRef = useRef<Socket | null>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
@@ -95,7 +118,8 @@ export function useChat() {
   const accountRef = useRef<AuthAccount | null>(null);
   const sessionRef = useRef<Session | null>(null);
   const messagesRef = useRef<ChatMessage[]>([]);
-  const uploadAbortRef = useRef<AbortController | null>(null);
+  const uploadJobsRef = useRef(new Map<string, UploadJob>());
+  const uploadQueueRef = useRef<Promise<void>>(Promise.resolve());
   const expectedRoomRef = useRef<string | null>(null);
   const switchSeqRef = useRef(0);
   const pendingAckTimersRef = useRef(new Map<string, number>());
@@ -528,14 +552,21 @@ export function useChat() {
           // Server assigns its own id; replace matching optimistic bubble.
           const selfId = accountRef.current?.userId;
           if (selfId && message.authorId === selfId) {
-            const pendingIdx = prev.findIndex(
-              (item) =>
-                item.status === "pending" &&
-                item.authorId === selfId &&
-                item.room === message.room &&
-                item.kind === (message.kind || "text") &&
-                item.text === message.text,
-            );
+            const byClientId = message.clientId
+              ? prev.findIndex((item) => item.id === message.clientId)
+              : -1;
+            const pendingIdx =
+              byClientId >= 0
+                ? byClientId
+                : prev.findIndex(
+                    (item) =>
+                      item.status === "pending" &&
+                      item.uploadProgress === undefined &&
+                      item.authorId === selfId &&
+                      item.room === message.room &&
+                      item.kind === (message.kind || "text") &&
+                      item.text === message.text,
+                  );
             if (pendingIdx >= 0) {
               const oldId = prev[pendingIdx].id;
               const timer = pendingAckTimersRef.current.get(oldId);
@@ -1388,6 +1419,146 @@ export function useChat() {
     return true;
   }, [historyLoading, emitPendingMessage]);
 
+  const patchMessage = useCallback(
+    (messageId: string, patch: Partial<ChatMessage>) => {
+      setMessages((prev) => {
+        const index = prev.findIndex((item) => item.id === messageId);
+        if (index < 0) return prev;
+        const next = [...prev];
+        next[index] = { ...prev[index], ...patch };
+        return next;
+      });
+    },
+    [],
+  );
+
+  /** Socket send with 3 attempts — server dedupes by clientId. */
+  const emitFileMessage = useCallback(
+    (payload: Record<string, unknown>, clientId: string) =>
+      new Promise<void>((resolve, reject) => {
+        const attempt = (left: number) => {
+          const socket = socketRef.current;
+          if (!socket?.connected) {
+            reject(new Error("Нет соединения"));
+            return;
+          }
+          const timer = window.setTimeout(() => {
+            if (left > 1) {
+              attempt(left - 1);
+            } else {
+              reject(new Error("Сервер не ответил на отправку файла"));
+            }
+          }, 15_000);
+          socket.emit(
+            "message:file",
+            { ...payload, clientId },
+            (ack: { ok: boolean; error?: string }) => {
+              window.clearTimeout(timer);
+              if (!ack?.ok) {
+                reject(new Error(ack?.error || "Файл не отправился"));
+                return;
+              }
+              resolve();
+            },
+          );
+        };
+        attempt(3);
+      }),
+    [],
+  );
+
+  const runUploadJob = useCallback(
+    async (clientId: string) => {
+      const job = uploadJobsRef.current.get(clientId);
+      if (!job) return;
+      const token = accountRef.current?.token;
+      if (!token) {
+        patchMessage(clientId, { status: "failed", uploadProgress: undefined });
+        return;
+      }
+
+      const controller = new AbortController();
+      job.controller = controller;
+      const sizes = job.files.map((file) => file.size);
+      const total = sizes.reduce((sum, size) => sum + size, 0) || 1;
+      const loaded = sizes.map((size, index) =>
+        job.uploaded[index] ? size : 0,
+      );
+      let shownPct = -1;
+      const report = () => {
+        const ratio = loaded.reduce((sum, value) => sum + value, 0) / total;
+        const pct = Math.floor(Math.min(0.98, ratio) * 100);
+        if (pct === shownPct) return;
+        shownPct = pct;
+        patchMessage(clientId, { uploadProgress: pct / 100 });
+      };
+      report();
+
+      try {
+        const results = await runPool(job.files, 3, async (file, index) => {
+          const done = job.uploaded[index];
+          if (done) return done;
+          const [uploaded, pixels] = await Promise.all([
+            uploadFileWithRetry(file, token, {
+              signal: controller.signal,
+              onProgress: (ratio) => {
+                loaded[index] = sizes[index] * ratio;
+                report();
+              },
+            }),
+            readMediaSize(file),
+          ]);
+          const size = parseMediaSize(pixels);
+          const result = size ? { ...uploaded, ...size } : uploaded;
+          job.uploaded[index] = result;
+          loaded[index] = sizes[index];
+          report();
+          return result;
+        });
+        if (controller.signal.aborted) return;
+
+        await emitFileMessage(
+          {
+            chatId: job.chatId,
+            files: results.length > 1 ? results : undefined,
+            file: results[0],
+            text: job.text,
+            replyToId: job.replyToId,
+          },
+          clientId,
+        );
+        uploadJobsRef.current.delete(clientId);
+        patchMessage(clientId, { status: undefined, uploadProgress: undefined });
+        revokePreviews(job, 60_000);
+      } catch (error) {
+        if (
+          controller.signal.aborted ||
+          uploadJobsRef.current.get(clientId) !== job
+        ) {
+          return;
+        }
+        job.controller = null;
+        patchMessage(clientId, { status: "failed", uploadProgress: undefined });
+        if (sessionRef.current?.room === job.chatId) {
+          setComposerError(
+            error instanceof Error ? error.message : "Не удалось загрузить файл",
+          );
+        }
+      }
+    },
+    [emitFileMessage, patchMessage],
+  );
+
+  /** Uploads go one message at a time so they land in the chat in order. */
+  const enqueueUpload = useCallback(
+    (clientId: string) => {
+      uploadQueueRef.current = uploadQueueRef.current
+        .then(() => runUploadJob(clientId))
+        .catch(() => undefined);
+    },
+    [runUploadJob],
+  );
+
   const retryMessage = useCallback((messageId: string) => {
     const socket = socketRef.current;
     const session = sessionRef.current;
@@ -1398,6 +1569,12 @@ export function useChat() {
 
     const message = messagesRef.current.find((item) => item.id === messageId);
     if (!message || message.status !== "failed") return;
+
+    if (uploadJobsRef.current.has(messageId)) {
+      patchMessage(messageId, { status: "pending", uploadProgress: 0 });
+      enqueueUpload(messageId);
+      return;
+    }
 
     setMessages((prev) =>
       prev.map((item) =>
@@ -1411,10 +1588,21 @@ export function useChat() {
       chatId: session.room,
     });
     emitPendingMessage(messageId);
-  }, [emitPendingMessage]);
+  }, [emitPendingMessage, enqueueUpload, patchMessage]);
 
-  const cancelUpload = useCallback(() => {
-    uploadAbortRef.current?.abort();
+  /** Stop an in-chat upload and drop its bubble. */
+  const cancelUpload = useCallback((messageId: string) => {
+    const job = uploadJobsRef.current.get(messageId);
+    if (job) {
+      uploadJobsRef.current.delete(messageId);
+      job.controller?.abort();
+      revokePreviews(job);
+    }
+    setMessages((prev) =>
+      prev.filter(
+        (item) => !(item.id === messageId && item.uploadProgress !== undefined),
+      ),
+    );
   }, []);
 
   const sendFiles = useCallback(
@@ -1423,9 +1611,9 @@ export function useChat() {
       options?: {
         caption?: string;
         replyToId?: string;
-        onProgress?: (ratio: number) => void;
       },
     ): Promise<{ ok: boolean; completed: File[] }> => {
+      const account = accountRef.current;
       if (!account?.token) {
         setComposerError("Нужен вход");
         return { ok: false, completed: [] };
@@ -1442,8 +1630,7 @@ export function useChat() {
         return { ok: false, completed: [] };
       }
 
-      const batchRaw = files;
-      const batch = await compressUploadBatch(batchRaw);
+      const batch = await compressUploadBatch(files);
       for (const file of batch) {
         const invalid = validateFile(file);
         if (invalid) {
@@ -1454,207 +1641,90 @@ export function useChat() {
 
       setComposerError(null);
       const caption = options?.caption?.trim() || "";
-      const totalBytes = batch.reduce((sum, file) => sum + file.size, 0) || 1;
-      let loadedBytes = 0;
-      const completed: File[] = [];
-      const uploadedFiles: {
-        url: string;
-        name: string;
-        size: number;
-        mime: string;
-        width?: number;
-        height?: number;
-      }[] = [];
-
-      const controller = new AbortController();
-      uploadAbortRef.current = controller;
-
-      const newClientId = () =>
-        typeof crypto !== "undefined" && crypto.randomUUID
-          ? crypto.randomUUID()
-          : `f_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-
-      /** Socket send with 3 attempts — server dedupes by clientId. */
-      const emitFileMessage = (
-        payload: Record<string, unknown>,
-        clientId: string,
-      ) =>
-        new Promise<void>((resolve, reject) => {
-          const attempt = (left: number) => {
-            const socket = socketRef.current;
-            if (!socket?.connected) {
-              reject(new Error("Нет соединения"));
-              return;
-            }
-            const timer = window.setTimeout(() => {
-              if (left > 1) {
-                attempt(left - 1);
-              } else {
-                reject(new Error("Сервер не ответил на отправку файла"));
-              }
-            }, 15_000);
-            socket.emit(
-              "message:file",
-              { ...payload, clientId },
-              (ack: { ok: boolean; error?: string }) => {
-                window.clearTimeout(timer);
-                if (!ack?.ok) {
-                  reject(new Error(ack?.error || "Файл не отправился"));
-                  return;
-                }
-                resolve();
-              },
-            );
-          };
-          attempt(3);
-        });
-
-      // Partition: photos/videos go as one album, docs each as own message.
-      // A single non-media file (e.g. desktop.ini in a folder drag) must not
-      // demote the whole batch to singles.
-      const pairs = batch.map((file, index) => ({
-        file,
-        raw: batchRaw[index] ?? file,
-      }));
-      const mediaPairs = pairs.filter((pair) =>
-        isMediaAttachment(pair.file),
-      );
-      const otherPairs = pairs.filter(
-        (pair) => !isMediaAttachment(pair.file),
-      );
-      const album = mediaPairs.length > 1;
-
-      try {
-        let captionUsed = false;
-
-        const uploadOne = async (
-          file: File,
-          onRatio?: (ratio: number) => void,
-        ) => {
-          const [uploaded, pixels] = await Promise.all([
-            uploadFileWithRetry(file, account.token, {
-              signal: controller.signal,
-              onProgress: onRatio,
-            }),
-            readMediaSize(file),
-          ]);
-          const size = parseMediaSize(pixels);
-          return size ? { ...uploaded, ...size } : uploaded;
-        };
-
-        const reportTotal = (extra = 0) => {
-          options?.onProgress?.(
-            Math.min(0.97, (loadedBytes + extra) / totalBytes),
-          );
-        };
-
-        if (album) {
-          const uploadedList = await runPool(
-            mediaPairs,
-            3,
-            async (pair) => {
-              if (controller.signal.aborted) {
-                throw new Error("Загрузка отменена");
-              }
-              const uploaded = await uploadOne(pair.file, (ratio) => {
-                reportTotal(pair.file.size * ratio);
-              });
-              loadedBytes += pair.file.size;
-              completed.push(pair.raw);
-              reportTotal();
-              return uploaded;
-            },
-          );
-          uploadedFiles.push(...uploadedList);
-          options?.onProgress?.(0.99);
-          const albums = chunkItems(uploadedFiles, MAX_FILES_AT_ONCE);
-          for (let albumIndex = 0; albumIndex < albums.length; albumIndex += 1) {
-            const chunk = albums[albumIndex];
-            const firstAlbum = albumIndex === 0 && !captionUsed;
-            await emitFileMessage(
-              {
-                chatId,
-                files: chunk.length > 1 ? chunk : undefined,
-                file: chunk[0],
-                text: firstAlbum ? caption : "",
-                replyToId: firstAlbum
-                  ? options?.replyToId || undefined
-                  : undefined,
-              },
-              newClientId(),
-            );
-            if (firstAlbum) captionUsed = true;
+      const replyToId = options?.replyToId || undefined;
+      const source = replyToId
+        ? messagesRef.current.find((item) => item.id === replyToId)
+        : undefined;
+      const replyPreview = source
+        ? {
+            id: source.id,
+            author: source.author,
+            text:
+              source.kind === "file"
+                ? `Файл: ${source.file?.name || source.text}`
+                : source.text.slice(0, 140),
           }
-        } else if (mediaPairs.length === 1) {
-          const pair = mediaPairs[0];
-          if (controller.signal.aborted) {
-            throw new Error("Загрузка отменена");
-          }
-          const uploaded = await uploadOne(pair.file, (ratio) => {
-            reportTotal(pair.file.size * ratio);
-          });
-          loadedBytes += pair.file.size;
-          completed.push(pair.raw);
-          reportTotal();
-          await emitFileMessage(
-            {
-              chatId,
-              file: uploaded,
-              text: caption,
-              replyToId: options?.replyToId || undefined,
-            },
-            newClientId(),
-          );
-          captionUsed = true;
-        }
+        : undefined;
 
-        for (const pair of otherPairs) {
-          if (controller.signal.aborted) {
-            throw new Error("Загрузка отменена");
-          }
-          const uploaded = await uploadOne(pair.file, (ratio) => {
-            reportTotal(pair.file.size * ratio);
-          });
-          loadedBytes += pair.file.size;
-          completed.push(pair.raw);
-          reportTotal();
-          const text = isAudioAttachment(uploaded)
-            ? isVoiceNote(uploaded)
+      // Photos/videos go as albums, docs each as own message. A single
+      // non-media file (e.g. desktop.ini in a folder drag) must not demote
+      // the whole batch to singles.
+      const isMedia = (file: File) =>
+        isMediaAttachment({ name: file.name, mime: file.type });
+      const media = batch.filter(isMedia);
+      const groups: File[][] = [
+        ...chunkItems(media, MAX_FILES_AT_ONCE),
+        ...batch.filter((file) => !isMedia(file)).map((file) => [file]),
+      ];
+
+      const now = Date.now();
+      let captionUsed = false;
+      const optimistic = groups.map((group, index): ChatMessage => {
+        const clientId = newClientId();
+        const first = group[0];
+        let text = captionUsed ? "" : caption;
+        if (!isMedia(first)) {
+          const like = { name: first.name, mime: first.type };
+          const label = isAudioAttachment(like)
+            ? isVoiceNote(like)
               ? "Голосовое сообщение"
-              : audioDisplayName(uploaded)
-            : uploaded.name;
-          await emitFileMessage(
-            {
-              chatId,
-              file: uploaded,
-              text: captionUsed ? text : caption || text,
-              replyToId: captionUsed
-                ? undefined
-                : options?.replyToId || undefined,
-            },
-            newClientId(),
-          );
-          captionUsed = true;
+              : audioDisplayName(like)
+            : first.name;
+          text = captionUsed ? label : caption || label;
         }
+        const withReply = !captionUsed;
+        captionUsed = true;
 
-        options?.onProgress?.(1);
-        return { ok: true, completed };
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : completed.length
-              ? "Часть файлов не отправилась"
-              : "Не удалось загрузить файл";
-        setComposerError(message);
-        return { ok: false, completed };
-      } finally {
-        if (uploadAbortRef.current === controller) {
-          uploadAbortRef.current = null;
-        }
-      }
+        const previews = group.map((file) => URL.createObjectURL(file));
+        const attachments: FileAttachment[] = group.map((file, fileIndex) => ({
+          url: previews[fileIndex],
+          name: file.name,
+          size: file.size,
+          mime: file.type,
+        }));
+        uploadJobsRef.current.set(clientId, {
+          chatId,
+          files: group,
+          previews,
+          text,
+          replyToId: withReply ? replyToId : undefined,
+          uploaded: [],
+          controller: null,
+        });
+        return {
+          id: clientId,
+          clientKey: clientId,
+          clientId,
+          room: chatId,
+          author: account.displayName || account.username,
+          authorId: account.userId,
+          text,
+          createdAt: now + index,
+          kind: "file",
+          file: attachments[0],
+          files: attachments.length > 1 ? attachments : undefined,
+          replyTo: withReply ? replyPreview : undefined,
+          status: "pending",
+          uploadProgress: 0,
+        };
+      });
+
+      setMessages((prev) => [...prev, ...optimistic]);
+      socketRef.current?.emit("typing", false);
+      optimistic.forEach((message) => enqueueUpload(message.id));
+      return { ok: true, completed: files };
     },
-    [account?.token],
+    [enqueueUpload],
   );
 
   const sendFile = useCallback(
@@ -1821,6 +1891,11 @@ export function useChat() {
     if (timer) {
       window.clearTimeout(timer);
       pendingAckTimersRef.current.delete(messageId);
+    }
+    const job = uploadJobsRef.current.get(messageId);
+    if (job) {
+      uploadJobsRef.current.delete(messageId);
+      revokePreviews(job);
     }
     setMessages((prev) =>
       prev.filter(
