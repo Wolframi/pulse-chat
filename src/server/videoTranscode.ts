@@ -105,7 +105,6 @@ async function probeNeedsTranscode(filePath: string, ext: string): Promise<boole
       "-hide_banner",
       "-loglevel",
       "error",
-      "-nostdin",
       "-select_streams",
       "v:0",
       "-show_entries",
@@ -191,7 +190,7 @@ async function transcodeInPlace(filePath: string, mime?: string): Promise<boolea
     "-pix_fmt",
     "yuv420p",
     "-vf",
-    "scale=720:-2:force_original_aspect_ratio=decrease,setsar=1",
+    "scale=720:-2:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
     "-c:a",
     "aac",
     "-b:a",
@@ -242,14 +241,23 @@ async function transcodeInPlace(filePath: string, mime?: string): Promise<boolea
 }
 
 /** Fire-and-forget: upload responds immediately; file is swapped when ready. */
-export function scheduleBrowserVideoTranscode(filePath: string, mime?: string) {
+export function scheduleBrowserVideoTranscode(
+  filePath: string,
+  mime?: string,
+  onComplete?: (filename: string, changed: boolean) => Promise<void>,
+) {
   if (!isTranscodableVideoPath(filePath, mime)) return;
   const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".webm" && String(mime || "").startsWith("audio/")) return;
+  if (ext === ".webm" && String(mime || "").startsWith("audio/")) {
+    void onComplete?.(filePath, false).catch((error) => console.warn("[video] cleanup failed", error));
+    return;
+  }
 
   void enqueue(async () => {
     try {
-      await transcodeInPlace(filePath, mime);
+      const changed = await transcodeInPlace(filePath, mime);
+      const finalPath = changed ? filePath.replace(/\.[^.]+$/i, "") + ".mp4" : filePath;
+      await onComplete?.(finalPath, changed);
     } catch (error) {
       console.warn("[video] background transcode error", error);
     }

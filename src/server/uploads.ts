@@ -8,6 +8,15 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import Busboy from "busboy";
+import { pipeline } from "node:stream/promises";
+import {
+  headObject,
+  isObjectNotFound,
+  putObjectFile,
+  readObject,
+  s3Enabled,
+  withObjectFile,
+} from "./objectStorage";
 import { isDevAccessibleHost } from "../lib/devHosts";
 import { restoreSession } from "./auth";
 import { rateLimit } from "./rateLimit";
@@ -523,7 +532,7 @@ function isAllowedUploadOrigin(req: IncomingMessage) {
   return false;
 }
 
-function looksLikeImage(filePath: string) {
+export function looksLikeImage(filePath: string) {
   try {
     const fd = openSync(filePath, "r");
     const buf = Buffer.alloc(16);
@@ -583,8 +592,8 @@ function looksLikeImage(filePath: string) {
   }
 }
 
-/** True if url points at an existing avatar-safe upload on disk. */
-export function isValidStoredAvatar(url: string) {
+/** Validate the actual image bytes, including after migration to S3. */
+export async function isValidStoredAvatar(url: string) {
   const bare = bareUploadUrl(url);
   if (
     !/^\/uploads\/[0-9a-f-]{36}(?:_[^/\\]+)?\.(png|jpe?g|gif|webp)$/i.test(
@@ -594,9 +603,11 @@ export function isValidStoredAvatar(url: string) {
   ) {
     return false;
   }
-  const full = uploadPathFromUrl(bare);
-  if (!full) return false;
-  return looksLikeImage(full);
+  try {
+    return await withUploadFile(bare, looksLikeImage);
+  } catch {
+    return false;
+  }
 }
 
 function cleanupPath(filePath: string | null) {
@@ -608,31 +619,73 @@ function cleanupPath(filePath: string | null) {
   }
 }
 
-export function uploadPathFromUrl(url: string) {
+export function uploadNameFromUrl(url: string) {
   const bare = bareUploadUrl(url);
   if (!bare.startsWith("/uploads/")) return null;
-  const fileName = path.basename(bare);
-  if (!fileName || fileName !== bare.slice("/uploads/".length)) return null;
-  const full = path.join(UPLOAD_DIR, fileName);
-  if (!existsSync(full)) return null;
-  return full;
+  try {
+    const fileName = decodeURIComponent(bare.slice("/uploads/".length));
+    if (!fileName || /[/\\\u0000-\u001f]/.test(fileName) || fileName === "." || fileName === ".." || fileName.includes(":")) return null;
+    return fileName;
+  } catch {
+    return null;
+  }
 }
 
-const STREAM_CHUNK = 256 * 1024;
+export async function getUploadInfo(url: string) {
+  const fileName = uploadNameFromUrl(url);
+  if (!fileName) return null;
+  if (s3Enabled) {
+    const stored = await headObject(`uploads/${fileName}`);
+    if (!stored) return null;
+    return {
+      fileName, size: stored.ContentLength || 0,
+      mtime: stored.LastModified || new Date(0),
+      etag: stored.ETag || "",
+      image: stored.Metadata?.image === "true",
+      mime: stored.ContentType || mimeFromName(fileName),
+    };
+  }
+  const full = path.join(UPLOAD_DIR, fileName);
+  try {
+    const stat = statSync(full);
+    if (!stat.isFile()) return null;
+    return { fileName, size: stat.size, mtime: stat.mtime,
+      etag: `"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`,
+      image: looksLikeImage(full), mime: mimeFromName(fileName) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
 
-function pipeUpload(
-  filePath: string,
+export async function withUploadFile<T>(url: string, consume: (filename: string) => Promise<T> | T) {
+  const fileName = uploadNameFromUrl(url);
+  if (!fileName) throw new Error("Invalid upload URL");
+  return s3Enabled
+    ? withObjectFile(`uploads/${fileName}`, consume)
+    : consume(path.join(UPLOAD_DIR, fileName));
+}
+
+async function pipeUpload(
+  fileName: string,
   res: ServerResponse,
+  status: number,
+  headers: Record<string, string | number>,
   range?: { start: number; end: number },
 ) {
-  const stream = createReadStream(filePath, {
-    ...range,
-    highWaterMark: STREAM_CHUNK,
-  });
-  stream.on("error", () => {
-    if (!res.writableEnded) res.destroy();
-  });
-  stream.pipe(res);
+  const abort = new AbortController();
+  const close = () => abort.abort();
+  res.once("close", close);
+  try {
+    const stream = s3Enabled
+      ? (await readObject(`uploads/${fileName}`, range, abort.signal, String(headers.ETag || "") || undefined)).body
+      : createReadStream(path.join(UPLOAD_DIR, fileName), { ...range, highWaterMark: 256 * 1024 });
+    if (res.destroyed) { stream.destroy(); return; }
+    res.writeHead(status, headers);
+    await pipeline(stream, res);
+  } finally {
+    res.off("close", close);
+  }
 }
 
 /** Delete uploads nothing references, older than ORPHAN_MIN_AGE_MS. */
@@ -703,6 +756,9 @@ export function sweepOrphanUploads(
   isReferenced: (fileName: string) => boolean,
   now = Date.now(),
 ): { removed: number; freedBytes: number } {
+  // In S3 mode local originals are a rollback backup, not an orphan cache.
+  // Remote retention must include group avatars and installed sticker packs.
+  if (s3Enabled) return { removed: 0, freedBytes: 0 };
   let removed = 0;
   let freedBytes = 0;
   let entries: string[] = [];
@@ -736,12 +792,30 @@ export function sweepOrphanUploads(
 export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
   const url = req.url || "";
   if (!url.startsWith("/uploads/")) return false;
+  void serveUpload(req, res).catch((error) => {
+    if (res.destroyed) return;
+    console.error("[uploads] read failed", (error as Error).name);
+    if (res.headersSent) { res.destroy(); return; }
+    res.statusCode = isObjectNotFound(error) ? 404 : 503;
+    res.setHeader("Cache-Control", "no-store");
+    res.end(res.statusCode === 404 ? "Not found" : "Media storage unavailable");
+  });
+  return true;
+}
+
+async function serveUpload(req: IncomingMessage, res: ServerResponse) {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.writeHead(405, { Allow: "GET, HEAD" });
+    res.end("Method not allowed");
+    return;
+  }
+  const url = req.url || "";
 
   const parsed = new URL(url, "http://localhost");
-  const fileName = decodeURIComponent(path.basename(parsed.pathname));
+  const info = await getUploadInfo(parsed.pathname);
+  const fileName = info?.fileName || "";
   const bare = `/uploads/${fileName}`;
-  const filePath = path.join(UPLOAD_DIR, fileName);
-  if (!fileName || !existsSync(filePath)) {
+  if (!info) {
     res.statusCode = 404;
     res.setHeader("Cache-Control", "no-store");
     res.end("Not found");
@@ -756,7 +830,7 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
       ? stripped
       : fileName;
   const ext = path.extname(fileName).toLowerCase() || path.extname(original).toLowerCase();
-  const looksImage = looksLikeImage(filePath);
+  const looksImage = info.image;
   const isInlineVisual =
     INLINE_MEDIA_EXT.has(ext) ||
     looksImage ||
@@ -777,10 +851,9 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
     }
   }
 
-  const stat = statSync(filePath);
-  const size = stat.size;
+  const size = info.size;
   const isVoiceName = /^voice[-_]/i.test(original);
-  let mime = mimeFromName(fileName);
+  let mime = info.mime;
   if (looksImage && !mime.startsWith("image/")) {
     mime = "image/jpeg";
   }
@@ -800,7 +873,7 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
   ) {
     mime = ext === ".mov" ? "video/quicktime" : "video/mp4";
   }
-  if (ext === ".webm" && !isVoiceName && !mime.startsWith("audio/")) {
+  if (ext === ".webm" && !isVoiceName && !mime.startsWith("audio/") && mime !== "video/mp4") {
     mime = "video/webm";
   }
 
@@ -817,35 +890,24 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
     (ext === ".jpg" || ext === ".jpeg") &&
     size > 120_000 // small files already stream fine
   ) {
-    const width = Number(wantW);
-    const thumbName = `${fileName}.w${width}.jpg`;
-    const thumbPath = path.join(THUMB_DIR, thumbName);
-    if (!existsSync(thumbPath) && rateLimit("thumb-gen", 120, 60_000)) {
-      resizeThumbSync(filePath, thumbPath, width);
-    }
-    if (existsSync(thumbPath) && isJpegFile(thumbPath)) {
-      let thumbSize = 0;
-      try {
-        thumbSize = statSync(thumbPath).size;
-      } catch {
-        /* ignore */
-      }
-      if (thumbSize > 0) {
-        res.writeHead(200, {
+    const thumbName = `${fileName}.w${wantW}.jpg`;
+    const thumbSize = await ensureThumbnail(fileName, thumbName, Number(wantW));
+    if (thumbSize > 0) {
+      const headers = {
           "Content-Type": "image/jpeg",
           "Cache-Control": "public, max-age=31536000, immutable",
           "Content-Length": thumbSize,
           "X-Content-Type-Options": "nosniff",
-        });
-        createReadStream(thumbPath).pipe(res);
-        return true;
-      }
+      };
+      if (req.method === "HEAD") { res.writeHead(200, headers); res.end(); }
+      else await pipeUpload(`thumbs/${thumbName}`, res, 200, headers);
+      return true;
     }
   }
   // Videos are often replaced after HEVC→H.264 — short cache + ETag so PC
   // browsers pick up the converted file instead of a stale audio-only copy.
-  const etag = `"${size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
-  const cacheControl = isVideo
+  const etag = info.etag;
+  const cacheControl = isVideo || !isInlineVisual
     ? "private, max-age=60, must-revalidate"
     : "public, max-age=31536000, immutable";
 
@@ -853,7 +915,7 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
     "Content-Type": mime,
     "Cache-Control": cacheControl,
     ETag: etag,
-    "Last-Modified": stat.mtime.toUTCString(),
+    "Last-Modified": info.mtime.toUTCString(),
     "X-Content-Type-Options": "nosniff",
     "Accept-Ranges": "bytes",
     "X-Permitted-Cross-Domain-Policies": "none",
@@ -905,18 +967,44 @@ export function tryServeUpload(req: IncomingMessage, res: ServerResponse) {
       end = Math.min(size - 1, start + 2 * 1024 * 1024 - 1);
     }
     const chunkSize = end - start + 1;
-    res.writeHead(206, {
+    await pipeUpload(fileName, res, 206, {
       ...baseHeaders,
       "Content-Range": `bytes ${start}-${end}/${size}`,
       "Content-Length": chunkSize,
-    });
-    pipeUpload(filePath, res, { start, end });
+    }, { start, end });
     return true;
   }
 
-  res.writeHead(200, { ...baseHeaders, "Content-Length": size });
-  pipeUpload(filePath, res);
+  await pipeUpload(fileName, res, 200, { ...baseHeaders, "Content-Length": size });
   return true;
+}
+
+const thumbnailJobs = new Map<string, Promise<number>>();
+function ensureThumbnail(fileName: string, thumbName: string, width: number) {
+  const existing = thumbnailJobs.get(thumbName);
+  if (existing) return existing;
+  const job = (async () => {
+    const key = `uploads/thumbs/${thumbName}`;
+    const target = path.join(THUMB_DIR, thumbName);
+    if (s3Enabled) {
+      const remote = await headObject(key);
+      if (remote) return remote.ContentLength || 0;
+    } else if (existsSync(target) && isJpegFile(target)) {
+      return statSync(target).size;
+    }
+    if (!rateLimit("thumb-gen", 120, 60_000)) return 0;
+    try {
+      const ok = await withUploadFile(`/uploads/${fileName}`, (source) => resizeThumbSync(source, target, width));
+      if (!ok) return 0;
+      const size = statSync(target).size;
+      if (s3Enabled) await putObjectFile(key, target, "image/jpeg", { image: "true" });
+      return size;
+    } finally {
+      if (s3Enabled) cleanupPath(target);
+    }
+  })().finally(() => thumbnailJobs.delete(thumbName));
+  thumbnailJobs.set(thumbName, job);
+  return job;
 }
 
 export function handleUpload(req: IncomingMessage, res: ServerResponse) {
@@ -1093,6 +1181,7 @@ export function handleUpload(req: IncomingMessage, res: ServerResponse) {
           let finalPath = full;
           let finalStored = stored;
           const finalSize = size;
+          let transcode = false;
 
           // Respond immediately; HEVC→H.264 runs in background and replaces the file.
           if (!isAvatar && isTranscodableVideoPath(full, savedMime)) {
@@ -1102,12 +1191,17 @@ export function handleUpload(req: IncomingMessage, res: ServerResponse) {
               finalStored = path.basename(normalized.path);
               savedMime = normalized.mime || savedMime;
               storedPath = finalPath;
-              scheduleBrowserVideoTranscode(finalPath, savedMime);
+              transcode = true;
             } catch (error) {
               console.warn("[upload] video normalize skipped", error);
             }
           }
 
+          if (s3Enabled) {
+            await putObjectFile(`uploads/${finalStored}`, finalPath, savedMime, {
+              image: String(looksLikeImage(finalPath)),
+            });
+          }
           const displaySource = originalNameField || original;
           saved = {
             url: `/uploads/${finalStored}`,
@@ -1115,8 +1209,23 @@ export function handleUpload(req: IncomingMessage, res: ServerResponse) {
             size: finalSize,
             mime: savedMime,
           };
+          if (transcode) {
+            scheduleBrowserVideoTranscode(finalPath, savedMime, s3Enabled ? async (convertedPath, changed) => {
+              if (changed) await putObjectFile(`uploads/${finalStored}`, convertedPath, "video/mp4", { image: "false" });
+              cleanupPath(convertedPath);
+              if (convertedPath !== finalPath) cleanupPath(finalPath);
+            } : undefined);
+          } else if (s3Enabled) {
+            cleanupPath(finalPath);
+          }
           resolve();
-        })();
+        })().catch((error) => {
+          console.error("[upload] storage failed", (error as Error).name);
+          writeError = error instanceof Error ? error : new Error("Storage failed");
+          saved = null;
+          cleanupPath(storedPath);
+          resolve();
+        });
       });
 
       file.on("error", (error) => {

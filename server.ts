@@ -11,7 +11,6 @@ import {
   writeFileSync,
   renameSync,
   unlinkSync,
-  statSync,
 } from "node:fs";
 import path from "node:path";
 import { parse } from "node:url";
@@ -81,7 +80,8 @@ import {
 import {
   handleUpload,
   tryServeUpload,
-  uploadPathFromUrl,
+  getUploadInfo,
+  withUploadFile,
   mimeFromName,
   isBlockedUpload,
   isValidStoredAvatar,
@@ -92,6 +92,7 @@ import {
   sweepOrphanUploads,
 } from "./src/server/uploads";
 import { handleRingtones } from "./src/server/ringtones";
+import { s3Enabled } from "./src/server/objectStorage";
 import { rateLimit } from "./src/server/rateLimit";
 import { buildIceServers } from "./src/lib/iceServers";
 import {
@@ -1741,20 +1742,12 @@ function startVoiceTranscription(
     return;
   }
 
-  const diskPath = uploadPathFromUrl(voice.url);
-  if (!diskPath) {
-    message.transcriptionStatus = "error";
-    persistMessages();
-    io.to(chat.id).emit("message:update", publicMessage(message));
-    return;
-  }
-
   message.transcriptionStatus = "pending";
   persistMessages();
   io.to(chat.id).emit("message:update", publicMessage(message));
 
   void queueTranscription(message.id, () =>
-    transcribeAudioFile(diskPath, voice.name, voice.mime),
+    withUploadFile(voice.url, (diskPath) => transcribeAudioFile(diskPath, voice.name, voice.mime)),
   )
     .then((text) => {
       const current = messagesFor(chat.id).find((item) => item.id === message.id);
@@ -2076,7 +2069,7 @@ app.prepare().then(() => {
       res.statusCode = 200;
       res.setHeader("Content-Type", "application/json");
       res.setHeader("Cache-Control", "no-store");
-      res.end(JSON.stringify({ ok: true, service: "pulse", bootId: APP_BOOT_ID }));
+      res.end(JSON.stringify({ ok: true, service: "pulse", bootId: APP_BOOT_ID, mediaStorage: s3Enabled ? "s3" : "local" }));
       return;
     }
     if (url.startsWith("/api/livekit/token")) {
@@ -2498,7 +2491,7 @@ app.prepare().then(() => {
 
     socket.on(
       "profile:update",
-      (
+      async (
         payload: {
           displayName?: string;
           bio?: string;
@@ -2524,7 +2517,7 @@ app.prepare().then(() => {
         let avatarUrl = payload?.avatarUrl;
         if (typeof avatarUrl === "string" && avatarUrl) {
           avatarUrl = bareUploadUrl(avatarUrl);
-          if (!isValidStoredAvatar(avatarUrl)) {
+          if (!(await isValidStoredAvatar(avatarUrl))) {
             ack?.({ ok: false, error: "Некорректный аватар" });
             return;
           }
@@ -3089,7 +3082,7 @@ app.prepare().then(() => {
 
     socket.on(
       "group:avatar",
-      (
+      async (
         payload: { chatId?: string; avatarUrl?: string | null },
         ack?: (result: { ok: boolean; error?: string }) => void,
       ) => {
@@ -3119,7 +3112,7 @@ app.prepare().then(() => {
         let avatarUrl = payload?.avatarUrl;
         if (typeof avatarUrl === "string" && avatarUrl) {
           avatarUrl = bareUploadUrl(avatarUrl);
-          if (!isValidStoredAvatar(avatarUrl)) {
+          if (!(await isValidStoredAvatar(avatarUrl))) {
             ack?.({ ok: false, error: "Некорректный аватар" });
             return;
           }
@@ -3930,7 +3923,7 @@ app.prepare().then(() => {
 
     socket.on(
       "message:file",
-      (
+      async (
         payload: {
           chatId?: string;
           clientId?: string;
@@ -4041,8 +4034,14 @@ app.prepare().then(() => {
             continue;
           }
 
-          const diskPath = uploadPathFromUrl(url);
-          if (!file?.name || !diskPath) {
+          let stored;
+          try {
+            stored = await getUploadInfo(url);
+          } catch {
+            ack?.({ ok: false, error: "Хранилище временно недоступно" });
+            return;
+          }
+          if (!file?.name || !stored) {
             ack?.({ ok: false, error: "Файл не передан" });
             return;
           }
@@ -4054,7 +4053,7 @@ app.prepare().then(() => {
             .split(";")[0]
             .trim()
             .toLowerCase();
-          const fromName = mimeFromName(diskPath);
+          const fromName = stored.mime || mimeFromName(stored.fileName);
           const isAudio =
             clientMime.startsWith("audio/") ||
             /^voice[-_]/i.test(safeFileName) ||
@@ -4075,7 +4074,7 @@ app.prepare().then(() => {
             : fromName;
           if (
             isBlockedUpload(safeFileName, serverMime) ||
-            isBlockedUpload(diskPath, serverMime)
+            isBlockedUpload(stored.fileName, serverMime)
           ) {
             ack?.({ ok: false, error: "Этот тип файла запрещён" });
             return;
@@ -4085,13 +4084,7 @@ app.prepare().then(() => {
             return;
           }
 
-          let size = Number(file.size) || 0;
-          try {
-            size = statSync(diskPath).size;
-          } catch {
-            ack?.({ ok: false, error: "Файл не найден на сервере" });
-            return;
-          }
+          const size = stored.size;
 
           resolved.push({
             url: bareUploadUrl(url),
@@ -4103,6 +4096,15 @@ app.prepare().then(() => {
           });
         }
 
+        // S3 checks yield to other socket events; recheck access and deduplication.
+        if (!canAccessChat(chat, account.userId) || getSocketAccount(socket.id)?.userId !== account.userId) {
+          ack?.({ ok: false, error: "Нет доступа" });
+          return;
+        }
+        if (clientId && messagesFor(chatId).some((item) => item.clientId === clientId && item.authorId === account.userId)) {
+          ack?.({ ok: true });
+          return;
+        }
         const albumMedia =
           resolved.length > 1 &&
           resolved.every((item) =>

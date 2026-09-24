@@ -51,6 +51,7 @@ git clean -fd \
   --exclude=data \
   --exclude=uploads \
   --exclude=.env \
+  --exclude=.s3-storage.json \
   --exclude=.giphy-api-key \
   --exclude=.groq-api-key \
   --exclude=.groq-proxy-url \

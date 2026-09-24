@@ -61,6 +61,7 @@ yarn-error.log*
 
 # env files
 .env*
+.s3-storage.json
 .giphy-api-key
 .groq-api-key
 .groq-proxy-url

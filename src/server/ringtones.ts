@@ -12,6 +12,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { parse as parseUrl } from "node:url";
 import { rateLimit } from "./rateLimit";
+import { headObject, putObjectBuffer, readObjectBuffer, s3Enabled } from "./objectStorage";
 import {
   fadeFilter,
   findDynamicStartSecAsync,
@@ -116,7 +117,8 @@ function writePageMirror(page: number, items: RingtoneItem[], pages: number) {
   }
 }
 
-function readLocalAudio(remoteUrl: string): Buffer | null {
+async function readLocalAudio(remoteUrl: string): Promise<Buffer | null> {
+  if (s3Enabled) return readObjectBuffer(`ringtones/audio/${audioKey(remoteUrl)}.mp3`);
   const file = path.join(AUDIO_DIR, `${audioKey(remoteUrl)}.mp3`);
   if (!existsSync(file)) return null;
   try {
@@ -127,7 +129,11 @@ function readLocalAudio(remoteUrl: string): Buffer | null {
   }
 }
 
-function writeLocalAudio(remoteUrl: string, buffer: Buffer) {
+async function writeLocalAudio(remoteUrl: string, buffer: Buffer) {
+  if (s3Enabled) {
+    await putObjectBuffer(`ringtones/audio/${audioKey(remoteUrl)}.mp3`, buffer, "audio/mpeg");
+    return;
+  }
   try {
     ensureMirrorDirs();
     writeFileSync(path.join(AUDIO_DIR, `${audioKey(remoteUrl)}.mp3`), buffer);
@@ -302,7 +308,8 @@ function runFfmpegCut(
 }
 
 /** Cache a ringtone clip that already starts at the dynamic section. */
-function readPreparedClip(remoteUrl: string): Buffer | null {
+async function readPreparedClip(remoteUrl: string): Promise<Buffer | null> {
+  if (s3Enabled) return readObjectBuffer(`ringtones/audio/${path.basename(fromPeakPath(remoteUrl))}`);
   const out = fromPeakPath(remoteUrl);
   if (!existsSync(out)) return null;
   try {
@@ -318,7 +325,7 @@ async function buildPreparedClip(
   full: Buffer,
 ): Promise<Buffer | null> {
   ensureMirrorDirs();
-  const existing = readPreparedClip(remoteUrl);
+  const existing = await readPreparedClip(remoteUrl);
   if (existing) return existing;
   const { startSec, durationSec } = await detectPeakStart(remoteUrl, full);
   const clipSec = Math.min(
@@ -330,11 +337,16 @@ async function buildPreparedClip(
   try {
     writeFileSync(tmpIn, full);
     await runFfmpegCut(tmpIn, out, startSec, clipSec);
-    return readPreparedClip(remoteUrl);
+    const clip = readFileSync(out);
+    if (s3Enabled) await putObjectBuffer(`ringtones/audio/${path.basename(out)}`, clip, "audio/mpeg");
+    return clip;
   } catch (error) {
     console.error("[ringtones:cut]", error);
     return null;
   } finally {
+    if (s3Enabled) {
+      try { unlinkSync(out); } catch { /* already removed */ }
+    }
     try {
       unlinkSync(tmpIn);
     } catch {
@@ -364,7 +376,7 @@ async function materializeFromPeak(
   full: Buffer,
 ): Promise<{ buffer: Buffer; startSec: number }> {
   ensureMirrorDirs();
-  const cached = readPreparedClip(remoteUrl);
+  const cached = await readPreparedClip(remoteUrl);
   if (cached) return { buffer: cached, startSec: 0 };
   const prepared = await Promise.race([
     clipJob(remoteUrl, full).catch((error) => {
@@ -673,7 +685,9 @@ async function downloadRemoteAudio(target: string) {
 }
 
 async function proxyRingtoneAudioOnce(target: string) {
-  const local = readLocalAudio(target);
+  const clip = await readPreparedClip(target);
+  if (clip) return { buffer: clip, startSec: 0, contentType: "audio/mpeg" };
+  const local = await readLocalAudio(target);
   if (local) {
     const prepared = await materializeFromPeak(target, local);
     return { ...prepared, contentType: "audio/mpeg" };
@@ -683,12 +697,12 @@ async function proxyRingtoneAudioOnce(target: string) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const { buffer, contentType } = await downloadRemoteAudio(target);
-      writeLocalAudio(target, buffer);
+      await writeLocalAudio(target, buffer);
       const prepared = await materializeFromPeak(target, buffer);
       return { ...prepared, contentType };
     } catch (error) {
       lastError = error;
-      const again = readLocalAudio(target);
+      const again = await readLocalAudio(target);
       if (again) {
         const prepared = await materializeFromPeak(target, again);
         return { ...prepared, contentType: "audio/mpeg" };
@@ -751,7 +765,9 @@ export async function handleRingtones(
       const remote = String(parsed.query.u || "");
       const target = normalizeRemoteUrl(remote);
       const cached = target
-        ? Boolean(readLocalAudio(target) || readPreparedClip(target))
+        ? s3Enabled
+          ? Boolean(await headObject(`ringtones/audio/${audioKey(target)}.mp3`))
+          : Boolean(await readLocalAudio(target) || await readPreparedClip(target))
         : false;
       if (!cached && !rateLimit(`ringtone-proxy:${ip}`, 90, 60_000)) {
         json(res, 429, { ok: false, error: "Слишком много запросов" });

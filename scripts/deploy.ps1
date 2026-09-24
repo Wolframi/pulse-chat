@@ -25,6 +25,7 @@ tar -czf $tarball `
   --exclude=uploads `
   --exclude=.git `
   --exclude=.deploy `
+  --exclude=.s3-storage.json `
   --exclude=tools/cloudflared.exe `
   --exclude=test-results `
   --exclude=playwright-report `
