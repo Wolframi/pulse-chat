@@ -41,7 +41,8 @@ export type AudioPlaybackState = {
 };
 
 const RATE_KEY = "pulse-audio-rate";
-const VOLUME_KEY = "pulse-audio-volume";
+/** v2: v1 could hold a bogus 0 persisted by the old null → 0 read. */
+const VOLUME_KEY = "pulse-audio-volume-v2";
 
 const listeners = new Set<() => void>();
 const roomTracks = new Map<string, AudioTrack[]>();
@@ -97,7 +98,10 @@ function readStoredRate(): number {
 function readStoredVolume(): number {
   if (typeof window === "undefined") return 1;
   try {
-    const raw = Number(localStorage.getItem(VOLUME_KEY));
+    const stored = localStorage.getItem(VOLUME_KEY);
+    // Number(null) === 0 — a first visit must not start muted.
+    if (stored == null || stored.trim() === "") return 1;
+    const raw = Number(stored);
     if (!Number.isFinite(raw)) return 1;
     return Math.min(1, Math.max(0, raw));
   } catch {

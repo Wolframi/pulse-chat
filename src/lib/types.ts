@@ -62,6 +62,8 @@ export type ChatMessage = {
   status?: MessageStatus;
   /** Client-only: 0..1 while attachments are uploading from this device. */
   uploadProgress?: number;
+  /** Client-only: per-attachment 0..1 (same order as `files`), 1 = that file is done. */
+  uploadFileProgress?: number[];
   /** Whisper transcript for voice notes. */
   transcription?: string;
   transcriptionStatus?: "pending" | "ready" | "error";

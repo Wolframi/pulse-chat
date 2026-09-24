@@ -1473,7 +1473,7 @@ export function useChat() {
       if (!job) return;
       const token = accountRef.current?.token;
       if (!token) {
-        patchMessage(clientId, { status: "failed", uploadProgress: undefined });
+        patchMessage(clientId, { status: "failed", uploadProgress: undefined, uploadFileProgress: undefined });
         return;
       }
 
@@ -1484,13 +1484,22 @@ export function useChat() {
       const loaded = sizes.map((size, index) =>
         job.uploaded[index] ? size : 0,
       );
-      let shownPct = -1;
+      let shownKey = "";
       const report = () => {
         const ratio = loaded.reduce((sum, value) => sum + value, 0) / total;
         const pct = Math.floor(Math.min(0.98, ratio) * 100);
-        if (pct === shownPct) return;
-        shownPct = pct;
-        patchMessage(clientId, { uploadProgress: pct / 100 });
+        const perFile = sizes.map((size, index) => {
+          if (job.uploaded[index]) return 1;
+          const part = size > 0 ? loaded[index] / size : 0;
+          return Math.floor(Math.min(0.98, part) * 50) / 50;
+        });
+        const key = `${pct}|${perFile.join(",")}`;
+        if (key === shownKey) return;
+        shownKey = key;
+        patchMessage(clientId, {
+          uploadProgress: pct / 100,
+          uploadFileProgress: perFile.length > 1 ? perFile : undefined,
+        });
       };
       report();
 
@@ -1528,7 +1537,7 @@ export function useChat() {
           clientId,
         );
         uploadJobsRef.current.delete(clientId);
-        patchMessage(clientId, { status: undefined, uploadProgress: undefined });
+        patchMessage(clientId, { status: undefined, uploadProgress: undefined, uploadFileProgress: undefined });
         revokePreviews(job, 60_000);
       } catch (error) {
         if (
@@ -1538,7 +1547,7 @@ export function useChat() {
           return;
         }
         job.controller = null;
-        patchMessage(clientId, { status: "failed", uploadProgress: undefined });
+        patchMessage(clientId, { status: "failed", uploadProgress: undefined, uploadFileProgress: undefined });
         if (sessionRef.current?.room === job.chatId) {
           setComposerError(
             error instanceof Error ? error.message : "Не удалось загрузить файл",
@@ -1571,7 +1580,7 @@ export function useChat() {
     if (!message || message.status !== "failed") return;
 
     if (uploadJobsRef.current.has(messageId)) {
-      patchMessage(messageId, { status: "pending", uploadProgress: 0 });
+      patchMessage(messageId, { status: "pending", uploadProgress: 0, uploadFileProgress: undefined });
       enqueueUpload(messageId);
       return;
     }

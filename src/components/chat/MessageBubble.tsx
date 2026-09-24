@@ -256,10 +256,15 @@ function AlbumMosaic({
   files,
   onOpenImage,
   overlay,
+  uploads,
+  onCancelUpload,
 }: {
   files: FileAttachment[];
   onOpenImage?: (src: string, name: string, kind?: "image" | "video") => void;
   overlay?: ReactNode;
+  /** Per-cell upload progress; cells at 1 are finished and show no ring. */
+  uploads?: number[];
+  onCancelUpload?: () => void;
 }) {
   const [probed, setProbed] = useState<Record<string, { width: number; height: number }>>(
     {},
@@ -358,6 +363,28 @@ function AlbumMosaic({
           </button>
         );
       })}
+      {uploads
+        ? files.map((file, index) => {
+            const cell = cells[index];
+            const progress = uploads[index];
+            if (!cell || progress === undefined || progress >= 1) return null;
+            return (
+              // Sibling of the cell button — a ring button can't nest inside it.
+              <div
+                key={`upload-${file.url}:${index}`}
+                className="bubble__upload-overlay bubble__upload-overlay--cell"
+                style={{
+                  left: `${(cell.x / box.width) * 100}%`,
+                  top: `${(cell.y / box.height) * 100}%`,
+                  width: `${(cell.width / box.width) * 100}%`,
+                  height: `${(cell.height / box.height) * 100}%`,
+                }}
+              >
+                <UploadRing progress={progress} onCancel={onCancelUpload} variant="media" />
+              </div>
+            );
+          })
+        : null}
       {overlay}
     </div>
   );
@@ -593,9 +620,11 @@ function FileBodyInner({
         <AlbumMosaic
           files={visible}
           onOpenImage={onOpenImage}
+          uploads={uploading ? message.uploadFileProgress?.slice(0, count) : undefined}
+          onCancelUpload={cancelUpload}
           overlay={
             <>
-              {mediaUpload}
+              {uploading && !message.uploadFileProgress ? mediaUpload : null}
               {userCaption ? null : (
                 <MediaCaption
                   createdAt={message.createdAt}
@@ -861,6 +890,7 @@ const FileBody = memo(FileBodyInner, (prev, next) => {
     prev.peerReadAt !== next.peerReadAt ||
     prev.message.status !== next.message.status ||
     prev.message.uploadProgress !== next.message.uploadProgress ||
+    prev.message.uploadFileProgress !== next.message.uploadFileProgress ||
     prev.message.createdAt !== next.message.createdAt ||
     prev.onOpenImage !== next.onOpenImage ||
     prev.onTranscribe !== next.onTranscribe ||

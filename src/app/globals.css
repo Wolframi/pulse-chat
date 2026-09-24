@@ -1205,6 +1205,16 @@ button:active:not(:disabled) {
   pointer-events: none;
 }
 
+.bubble__upload-overlay--cell {
+  inset: auto;
+  border-radius: 6px;
+}
+
+.bubble__upload-overlay--cell .upload-ring--media {
+  width: 40px;
+  height: 40px;
+}
+
 .bubble__upload-slot {
   position: relative;
   min-width: 0;
