@@ -3198,6 +3198,8 @@ button:active:not(:disabled) {
   height: 14px;
   margin: 0 -14px;
   cursor: pointer;
+  touch-action: none;
+  user-select: none;
 }
 
 .audio-bar__progress::before {
@@ -6670,6 +6672,8 @@ button:active:not(:disabled) {
   overflow: hidden;
   padding-inline: 1px;
   cursor: pointer;
+  touch-action: none;
+  user-select: none;
 }
 
 .voice-bubble__wave > div {

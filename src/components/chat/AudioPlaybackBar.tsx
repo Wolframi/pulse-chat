@@ -63,26 +63,30 @@ export function AudioPlaybackBar({
     setAudioVolume(Math.min(1, Math.max(0, ratio)));
   }, []);
 
-  const seekFromClientX = useCallback((clientX: number, target: HTMLElement) => {
+  const seekFromClientX = useCallback((clientX: number, target: HTMLElement, commit: boolean) => {
     const live = getSmoothPlaybackTime();
     const total = live.duration;
     const rect = target.getBoundingClientRect();
     if (rect.width <= 0 || total <= 0) return;
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    seekAudioPlayback(ratio * total);
+    if (progressRef.current) progressRef.current.style.width = `${ratio * 100}%`;
+    if (elapsedRef.current) elapsedRef.current.textContent = formatPlaybackTime(ratio * total);
+    if (commit) seekAudioPlayback(ratio * total);
   }, []);
 
   useEffect(() => {
     if (!visible || !track) return;
     let raf = 0;
     const tick = () => {
-      const live = getSmoothPlaybackTime();
-      const total = live.duration;
-      const progress = total > 0 ? Math.min(live.currentTime / total, 1) : 0;
-      if (progressRef.current) progressRef.current.style.width = `${progress * 100}%`;
-      if (elapsedRef.current) {
-        const show = live.playing || live.currentTime > 0 ? live.currentTime : 0;
-        elapsedRef.current.textContent = formatPlaybackTime(show);
+      if (!dragRef.current) {
+        const live = getSmoothPlaybackTime();
+        const total = live.duration;
+        const progress = total > 0 ? Math.min(live.currentTime / total, 1) : 0;
+        if (progressRef.current) progressRef.current.style.width = `${progress * 100}%`;
+        if (elapsedRef.current) {
+          const show = live.playing || live.currentTime > 0 ? live.currentTime : 0;
+          elapsedRef.current.textContent = formatPlaybackTime(show);
+        }
       }
       raf = window.requestAnimationFrame(tick);
     };
@@ -237,15 +241,18 @@ export function AudioPlaybackBar({
         aria-valuemax={Math.round(duration)}
         aria-valuenow={0}
         onPointerDown={(event) => {
+          event.preventDefault();
           dragRef.current = true;
           event.currentTarget.setPointerCapture(event.pointerId);
-          seekFromClientX(event.clientX, event.currentTarget);
+          seekFromClientX(event.clientX, event.currentTarget, false);
         }}
         onPointerMove={(event) => {
           if (!dragRef.current) return;
-          seekFromClientX(event.clientX, event.currentTarget);
+          seekFromClientX(event.clientX, event.currentTarget, false);
         }}
-        onPointerUp={() => {
+        onPointerUp={(event) => {
+          if (!dragRef.current) return;
+          seekFromClientX(event.clientX, event.currentTarget, true);
           dragRef.current = false;
         }}
         onPointerCancel={() => {

@@ -118,20 +118,34 @@ export function drawWaveBars(
   const progress = Math.min(1, Math.max(0, options.progress ?? 0));
   const progressX = progress * width;
 
+  const drawBar = (bx: number, bw: number, color: string, by: number, bh: number) => {
+    if (bw <= 0.5) return;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === "function") {
+      ctx.roundRect(bx, by, bw, bh, dpr);
+    } else {
+      ctx.rect(bx, by, bw, bh);
+    }
+    ctx.fill();
+  };
+
   let x = 0;
   bars.forEach((level) => {
     const barWidth = base + (extra > 0 ? 1 : 0);
     if (extra > 0) extra -= 1;
     const barHeight = Math.max(2 * dpr, level * height * 0.92);
     const y = (height - barHeight) / 2;
-    ctx.fillStyle = x + barWidth / 2 <= progressX ? options.progressColor : options.color;
-    ctx.beginPath();
-    if (typeof ctx.roundRect === "function") {
-      ctx.roundRect(x, y, barWidth, barHeight, dpr);
+    const barEnd = x + barWidth;
+    if (progressX <= x) {
+      drawBar(x, barWidth, options.color, y, barHeight);
+    } else if (progressX >= barEnd) {
+      drawBar(x, barWidth, options.progressColor, y, barHeight);
     } else {
-      ctx.rect(x, y, barWidth, barHeight);
+      const split = progressX - x;
+      drawBar(x, split, options.progressColor, y, barHeight);
+      drawBar(x + split, barWidth - split, options.color, y, barHeight);
     }
-    ctx.fill();
     x += barWidth + gap;
   });
 

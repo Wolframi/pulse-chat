@@ -253,6 +253,10 @@ export function getSmoothPlaybackTime() {
   const wall = nowMs();
 
   if (!live.playing) {
+    const seeking = Boolean(audioEl && !closing && audioEl.seeking);
+    if (seeking && clockWall) {
+      return { currentTime: clockMedia, duration, playing: false, rate };
+    }
     clockMedia = live.currentTime;
     clockWall = wall;
     clockRate = rate;

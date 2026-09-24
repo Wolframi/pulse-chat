@@ -133,6 +133,16 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
     if (durationRef.current > 0) lockPlaybackDuration(durationRef.current);
     let raf = 0;
     const tick = () => {
+      if (dragRef.current) {
+        const ratio = progressRef.current;
+        paint(ratio);
+        const total = progressLockRef.current || durationRef.current;
+        if (timeRef.current && total > 0) {
+          timeRef.current.textContent = formatPlaybackTime(ratio * total);
+        }
+        raf = window.requestAnimationFrame(tick);
+        return;
+      }
       const now = getSmoothPlaybackTime();
       const incoming = audioDuration(durationRef.current, now.duration);
       if (incoming && (!progressLockRef.current || incoming < progressLockRef.current - 0.05)) {
@@ -154,7 +164,7 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
   }, [isCurrent, paint]);
 
   const seekFromClientX = useCallback(
-    (clientX: number, target: HTMLElement) => {
+    (clientX: number, target: HTMLElement, commit: boolean) => {
       const rect = target.getBoundingClientRect();
       if (rect.width <= 0) return;
       const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
@@ -168,6 +178,10 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
       );
       progressRef.current = ratio;
       paint(ratio);
+      if (timeRef.current && d > 0) {
+        timeRef.current.textContent = formatPlaybackTime(ratio * d);
+      }
+      if (!commit) return;
       if (d <= 0) {
         void playAudioTrack(track);
         return;
@@ -227,15 +241,18 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
         <div
           className="voice-bubble__wave"
           onPointerDown={(event) => {
+            event.preventDefault();
             dragRef.current = true;
             event.currentTarget.setPointerCapture(event.pointerId);
-            seekFromClientX(event.clientX, event.currentTarget);
+            seekFromClientX(event.clientX, event.currentTarget, !isCurrent);
           }}
           onPointerMove={(event) => {
             if (!dragRef.current) return;
-            seekFromClientX(event.clientX, event.currentTarget);
+            seekFromClientX(event.clientX, event.currentTarget, false);
           }}
-          onPointerUp={() => {
+          onPointerUp={(event) => {
+            if (!dragRef.current) return;
+            seekFromClientX(event.clientX, event.currentTarget, true);
             dragRef.current = false;
           }}
           onPointerCancel={() => {
