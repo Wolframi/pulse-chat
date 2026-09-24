@@ -92,7 +92,7 @@ import {
   sweepOrphanUploads,
 } from "./src/server/uploads";
 import { handleRingtones } from "./src/server/ringtones";
-import { s3Enabled } from "./src/server/objectStorage";
+import { s3Enabled, s3Origin } from "./src/server/objectStorage";
 import { rateLimit } from "./src/server/rateLimit";
 import { buildIceServers } from "./src/lib/iceServers";
 import {
@@ -2013,7 +2013,7 @@ app.prepare().then(() => {
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' blob: data: https://*.giphy.com https://media.giphy.com https://i.giphy.com",
         "media-src 'self' blob: https://*.giphy.com https://media.giphy.com",
-        "connect-src 'self' blob: ws: wss: stun: turn: turns: https://*.giphy.com https://media.giphy.com https://i.giphy.com",
+        `connect-src 'self' blob: ws: wss: stun: turn: turns: https://*.giphy.com https://media.giphy.com https://i.giphy.com${s3Origin ? ` ${s3Origin}` : ""}`,
         "font-src 'self'",
         "frame-ancestors 'none'",
         "base-uri 'self'",

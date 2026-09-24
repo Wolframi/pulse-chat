@@ -456,7 +456,229 @@ export function uploadPartFileName(file: File) {
   return `upload${ext}`;
 }
 
-export function uploadFile(
+const DIRECT_PART_CONCURRENCY = 3;
+const DIRECT_PART_RETRIES = 2;
+const DIRECT_STALL_MS = 30_000;
+
+/** S3 unreachable from this browser (CORS, blocked host) — use the server path. */
+class DirectUploadUnavailable extends Error {
+  constructor(message: string, readonly retryable = true) {
+    super(message);
+  }
+}
+
+let directUploadDisabled = false;
+
+type DirectUploadStart = {
+  ok?: boolean;
+  direct?: boolean;
+  id?: string;
+  parts?: Array<{ partNumber: number; size: number; url: string }>;
+  error?: string;
+};
+
+function sanitizeDisplayName(file: File, fallback: string) {
+  const name = String(file.name || fallback || "file")
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .slice(0, 120);
+  return name || fallback;
+}
+
+async function postUploadJson<T>(
+  action: string,
+  token: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<{ status: number; result: T | null }> {
+  const response = await fetch(`/api/upload/direct/${action}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-pulse-token": token },
+    body: JSON.stringify(body),
+    signal,
+  });
+  let result: T | null = null;
+  try {
+    result = (await response.json()) as T;
+  } catch {
+    result = null;
+  }
+  return { status: response.status, result };
+}
+
+/** PUT one part to its pre-signed URL; resolves with the part ETag. */
+function putDirectPart(
+  url: string,
+  blob: Blob,
+  onProgress: (loaded: number) => void,
+  signal?: AbortSignal,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Загрузка отменена"));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    let stalled = false;
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    // A blackholed S3 host would otherwise hang until UPLOAD_TIMEOUT_MS.
+    const armStallTimer = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        stalled = true;
+        xhr.abort();
+      }, DIRECT_STALL_MS);
+    };
+    const onAbort = () => xhr.abort();
+    const done = (error?: Error, etag?: string) => {
+      clearTimeout(stallTimer);
+      signal?.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve(etag || "");
+    };
+    xhr.open("PUT", url);
+    xhr.timeout = UPLOAD_TIMEOUT_MS;
+    xhr.upload.onprogress = (event) => {
+      armStallTimer();
+      onProgress(event.loaded);
+    };
+    xhr.onload = () => {
+      const etag = xhr.getResponseHeader("ETag");
+      if (xhr.status >= 200 && xhr.status < 300 && etag) {
+        onProgress(blob.size);
+        done(undefined, etag);
+      } else {
+        done(new DirectUploadUnavailable(`S3 part upload failed (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => done(new DirectUploadUnavailable("S3 unreachable"));
+    xhr.ontimeout = () => done(new DirectUploadUnavailable("S3 timeout"));
+    xhr.onabort = () =>
+      done(stalled ? new DirectUploadUnavailable("S3 stalled", false) : new Error("Загрузка отменена"));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    armStallTimer();
+    xhr.send(blob);
+  });
+}
+
+async function uploadFileDirect(
+  file: File,
+  token: string,
+  options?: { onProgress?: (ratio: number) => void; signal?: AbortSignal },
+): Promise<UploadedFile> {
+  const signal = options?.signal;
+  const start = await postUploadJson<DirectUploadStart>(
+    "start",
+    token,
+    { name: file.name, size: file.size, type: file.type },
+    signal,
+  );
+  const ticket = start.result;
+  if (start.status === 404 && ticket?.direct === false) {
+    throw new DirectUploadUnavailable("Direct upload is disabled");
+  }
+  if (!ticket?.ok || !ticket.id || !ticket.parts?.length) {
+    throw new Error(
+      ticket?.error ||
+        (start.status === 413 ? "Файл слишком большой" : "Не удалось загрузить файл"),
+    );
+  }
+  const id = ticket.id;
+  const loaded = new Array<number>(ticket.parts.length).fill(0);
+  const report = () =>
+    options?.onProgress?.(
+      Math.min(0.99, loaded.reduce((sum, value) => sum + value, 0) / file.size),
+    );
+
+  let offset = 0;
+  const slices = ticket.parts.map((part) => {
+    const blob = file.slice(offset, offset + part.size);
+    offset += part.size;
+    return { ...part, blob };
+  });
+
+  // One failed part stops the others before the server fallback re-sends the file.
+  const partsAbort = new AbortController();
+  const forwardAbort = () => partsAbort.abort();
+  signal?.addEventListener("abort", forwardAbort, { once: true });
+
+  let etags: string[];
+  try {
+    etags = await runPool(slices, DIRECT_PART_CONCURRENCY, async (part, index) => {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await putDirectPart(
+            part.url,
+            part.blob,
+            (bytes) => {
+              loaded[index] = bytes;
+              report();
+            },
+            partsAbort.signal,
+          );
+        } catch (error) {
+          loaded[index] = 0;
+          if (
+            isAbortError(error) ||
+            (error instanceof DirectUploadUnavailable && !error.retryable) ||
+            attempt >= DIRECT_PART_RETRIES
+          ) {
+            throw error;
+          }
+          await delay(400 * (attempt + 1));
+        }
+      }
+    });
+  } catch (error) {
+    partsAbort.abort();
+    void postUploadJson("abort", token, { id }).catch(() => undefined);
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", forwardAbort);
+  }
+
+  const complete = await postUploadJson<{ ok?: boolean; file?: UploadedFile; error?: string }>(
+    "complete",
+    token,
+    { id, parts: etags.map((etag, index) => ({ partNumber: index + 1, etag })) },
+    signal,
+  );
+  if (!complete.result?.ok || !complete.result.file) {
+    throw new Error(complete.result?.error || "Не удалось загрузить файл");
+  }
+  options?.onProgress?.(1);
+  return {
+    ...complete.result.file,
+    name: sanitizeDisplayName(file, complete.result.file.name),
+  };
+}
+
+export async function uploadFile(
+  file: File,
+  token: string,
+  options?: {
+    kind?: "avatar" | "file";
+    onProgress?: (ratio: number) => void;
+    signal?: AbortSignal;
+  },
+): Promise<UploadedFile> {
+  if ((options?.kind || "file") === "file" && file.size > 0 && !directUploadDisabled) {
+    try {
+      return await uploadFileDirect(file, token, options);
+    } catch (error) {
+      if (!(error instanceof DirectUploadUnavailable)) {
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new Error("Загрузка отменена");
+        }
+        throw error;
+      }
+      directUploadDisabled = true;
+      options?.onProgress?.(0);
+    }
+  }
+  return uploadFileViaServer(file, token, options);
+}
+
+function uploadFileViaServer(
   file: File,
   token: string,
   options?: {

@@ -140,19 +140,27 @@ export function normalizeVideoUploadPath(
   filePath: string,
   mime?: string,
 ): { path: string; mime: string } {
-  const ext = path.extname(filePath).toLowerCase();
+  const target = normalizedVideoName(filePath, mime);
+  if (target.name !== filePath) {
+    if (!existsSync(filePath)) {
+      return { path: filePath, mime: String(mime || "").toLowerCase() || mime || "application/octet-stream" };
+    }
+    renameSync(filePath, target.name);
+  }
+  return { path: target.name, mime: target.mime };
+}
+
+/** Same naming as normalizeVideoUploadPath, for objects that are not on disk yet. */
+export function normalizedVideoName(fileName: string, mime?: string): { name: string; mime: string } {
+  const ext = path.extname(fileName).toLowerCase();
   const m = String(mime || "").toLowerCase();
   if (ext === ".mov" || ext === ".m4v" || (m === "video/quicktime" && ext !== ".mp4")) {
-    const next = filePath.replace(/\.[^.]+$/i, "") + ".mp4";
-    if (next !== filePath && existsSync(filePath)) {
-      renameSync(filePath, next);
-      return { path: next, mime: "video/mp4" };
-    }
+    return { name: fileName.replace(/\.[^.]+$/i, "") + ".mp4", mime: "video/mp4" };
   }
   if (m.startsWith("video/") && (ext === ".mp4" || ext === ".m4v")) {
-    return { path: filePath, mime: "video/mp4" };
+    return { name: fileName, mime: "video/mp4" };
   }
-  return { path: filePath, mime: m || mime || "application/octet-stream" };
+  return { name: fileName, mime: m || mime || "application/octet-stream" };
 }
 
 async function transcodeInPlace(filePath: string, mime?: string): Promise<boolean> {

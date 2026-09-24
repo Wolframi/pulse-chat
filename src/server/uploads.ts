@@ -10,10 +10,17 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import Busboy from "busboy";
 import { pipeline } from "node:stream/promises";
 import {
+  abortMultipartUpload,
+  completeMultipartUpload,
+  createMultipartUpload,
+  deleteObject,
+  downloadObjectToTemp,
   headObject,
   isObjectNotFound,
+  presignUploadPart,
   putObjectFile,
   readObject,
+  readObjectPrefix,
   s3Enabled,
   withObjectFile,
 } from "./objectStorage";
@@ -22,6 +29,7 @@ import { restoreSession } from "./auth";
 import { rateLimit } from "./rateLimit";
 import {
   isTranscodableVideoPath,
+  normalizedVideoName,
   normalizeVideoUploadPath,
   scheduleBrowserVideoTranscode,
 } from "./videoTranscode";
@@ -532,64 +540,53 @@ function isAllowedUploadOrigin(req: IncomingMessage) {
   return false;
 }
 
+const IMAGE_SNIFF_BYTES = 64;
+
 export function looksLikeImage(filePath: string) {
   try {
     const fd = openSync(filePath, "r");
-    const buf = Buffer.alloc(16);
-    const n = readSync(fd, buf, 0, 16, 0);
+    const buf = Buffer.alloc(IMAGE_SNIFF_BYTES);
+    const n = readSync(fd, buf, 0, IMAGE_SNIFF_BYTES, 0);
     closeSync(fd);
-    if (n < 3) return false;
-    // JPEG / JFIF
-    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
-    // PNG
-    if (
-      buf[0] === 0x89 &&
-      buf[1] === 0x50 &&
-      buf[2] === 0x4e &&
-      buf[3] === 0x47
-    ) {
-      return true;
-    }
-    // GIF
-    if (buf.slice(0, 4).toString("ascii") === "GIF8") return true;
-    // BMP
-    if (buf[0] === 0x42 && buf[1] === 0x4d) return true;
-    // WEBP (RIFF....WEBP)
-    if (
-      n >= 12 &&
-      buf.slice(0, 4).toString("ascii") === "RIFF" &&
-      buf.slice(8, 12).toString("ascii") === "WEBP"
-    ) {
-      return true;
-    }
-    // AVIF / HEIC / HEIF (ISO BMFF ftyp) — major or compatible brands
-    if (n >= 12 && buf.slice(4, 8).toString("ascii") === "ftyp") {
-      try {
-        const fd2 = openSync(filePath, "r");
-        const big = Buffer.alloc(64);
-        const m = readSync(fd2, big, 0, 64, 0);
-        closeSync(fd2);
-        const ascii = big.slice(0, m).toString("latin1").toLowerCase();
-        if (
-          /avif|avis|heic|heif|heix|heim|heis|hevc|hevx|mif1|msf1/.test(ascii)
-        ) {
-          return true;
-        }
-      } catch {
-        const brand = buf.slice(8, 12).toString("ascii").toLowerCase();
-        if (
-          /^(avif|avis|heic|heif|heix|heim|heis|hevc|hevx|mif1|msf1)/.test(
-            brand,
-          )
-        ) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return looksLikeImageBytes(buf.subarray(0, n));
   } catch {
     return false;
   }
+}
+
+/** `buf` is the first IMAGE_SNIFF_BYTES of the file (or the whole file if shorter). */
+export function looksLikeImageBytes(buf: Buffer) {
+  const n = buf.length;
+  if (n < 3) return false;
+  // JPEG / JFIF
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
+  // PNG
+  if (
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  ) {
+    return true;
+  }
+  // GIF
+  if (buf.subarray(0, 4).toString("ascii") === "GIF8") return true;
+  // BMP
+  if (buf[0] === 0x42 && buf[1] === 0x4d) return true;
+  // WEBP (RIFF....WEBP)
+  if (
+    n >= 12 &&
+    buf.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buf.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return true;
+  }
+  // AVIF / HEIC / HEIF (ISO BMFF ftyp) — major or compatible brands
+  if (n >= 12 && buf.subarray(4, 8).toString("ascii") === "ftyp") {
+    const ascii = buf.subarray(0, IMAGE_SNIFF_BYTES).toString("latin1").toLowerCase();
+    return /avif|avis|heic|heif|heix|heim|heis|hevc|hevx|mif1|msf1/.test(ascii);
+  }
+  return false;
 }
 
 /** Validate the actual image bytes, including after migration to S3. */
@@ -1036,14 +1033,27 @@ export function handleUpload(req: IncomingMessage, res: ServerResponse) {
     return;
   }
 
+  const directAction = parsed.pathname.startsWith(DIRECT_PREFIX)
+    ? parsed.pathname.slice(DIRECT_PREFIX.length)
+    : "";
   const clientKey =
     String(req.socket.remoteAddress || "unknown") +
     ":" +
     session.account.userId;
-  if (!rateLimit(`upload:${clientKey}`, 30, 60_000)) {
+  if (
+    (!directAction || directAction === "start") &&
+    !rateLimit(`upload:${clientKey}`, 30, 60_000)
+  ) {
     res.statusCode = 429;
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ ok: false, error: "Слишком много загрузок" }));
+    return;
+  }
+  if (directAction) {
+    void handleDirectUpload(req, res, directAction, session.account.userId).catch((error) => {
+      console.error("[upload] direct failed", (error as Error).name);
+      sendJson(res, 503, { ok: false, error: "Хранилище недоступно" });
+    });
     return;
   }
 
@@ -1289,4 +1299,285 @@ export function handleUpload(req: IncomingMessage, res: ServerResponse) {
   });
 
   req.pipe(busboy);
+}
+
+// Direct browser → S3 uploads: the server signs exact-size part URLs, the
+// browser PUTs parts to the bucket, then /complete verifies the object.
+const DIRECT_PREFIX = "/api/upload/direct/";
+const DIRECT_PART_SIZE = 16 * 1024 * 1024;
+const DIRECT_TTL_MS = 60 * 60 * 1000;
+const DIRECT_MAX_PENDING_PER_USER = 12;
+const DIRECT_FILE = path.join(DATA_DIR, "direct-uploads.json");
+
+type DirectUpload = {
+  userId: string;
+  stored: string;
+  uploadId: string;
+  size: number;
+  parts: number;
+  mime: string;
+  name: string;
+  image: boolean;
+  expiresAt: number;
+};
+
+const directUploads = new Map<string, DirectUpload>();
+
+function saveDirectUploads() {
+  try {
+    writeFileSync(DIRECT_FILE, JSON.stringify(Object.fromEntries(directUploads)), "utf8");
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadDirectUploads() {
+  try {
+    if (!existsSync(DIRECT_FILE)) return;
+    const raw = JSON.parse(readFileSync(DIRECT_FILE, "utf8")) as Record<string, DirectUpload>;
+    for (const [id, upload] of Object.entries(raw)) {
+      if (upload?.stored && upload.uploadId) directUploads.set(id, upload);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Forget the ticket first so a concurrent /complete cannot reuse it. */
+function takeDirectUpload(id: string) {
+  const upload = directUploads.get(id);
+  if (!upload) return null;
+  directUploads.delete(id);
+  saveDirectUploads();
+  return upload;
+}
+
+async function discardDirectUpload(upload: DirectUpload) {
+  const key = `uploads/${upload.stored}`;
+  await abortMultipartUpload(key, upload.uploadId).catch(() => undefined);
+  if (!uploadOwners.has(`/uploads/${upload.stored}`)) {
+    await deleteObject(key).catch(() => undefined);
+  }
+}
+
+function sweepDirectUploads(now = Date.now()) {
+  for (const [id, upload] of directUploads) {
+    if (upload.expiresAt > now) continue;
+    takeDirectUpload(id);
+    void discardDirectUpload(upload);
+  }
+}
+
+if (s3Enabled) {
+  loadDirectUploads();
+  setTimeout(() => sweepDirectUploads(), 30_000).unref();
+  setInterval(() => sweepDirectUploads(), 10 * 60_000).unref();
+}
+
+function sendJson(res: ServerResponse, status: number, body: Record<string, unknown>) {
+  if (res.headersSent || res.writableEnded) return;
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cache-Control", "no-store");
+  res.end(JSON.stringify(body));
+}
+
+function readJsonBody(req: IncomingMessage, limit = 64 * 1024): Promise<Record<string, unknown> | null> {
+  return new Promise((resolve) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limit) {
+        resolve(null);
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      try {
+        const value = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+        resolve(value && typeof value === "object" ? (value as Record<string, unknown>) : null);
+      } catch {
+        resolve(null);
+      }
+    });
+    req.on("error", () => resolve(null));
+  });
+}
+
+function scheduleStoredVideoTranscode(stored: string, mime: string) {
+  if (path.extname(stored).toLowerCase() === ".webm" && mime.startsWith("audio/")) return;
+  const key = `uploads/${stored}`;
+  void (async () => {
+    const source = await downloadObjectToTemp(key);
+    scheduleBrowserVideoTranscode(source, mime, async (convertedPath, changed) => {
+      if (changed) await putObjectFile(key, convertedPath, "video/mp4", { image: "false" });
+      cleanupPath(convertedPath);
+      if (convertedPath !== source) cleanupPath(source);
+    });
+  })().catch((error) => console.warn("[video] direct upload transcode skipped", (error as Error).name));
+}
+
+async function handleDirectUpload(
+  req: IncomingMessage,
+  res: ServerResponse,
+  action: string,
+  userId: string,
+) {
+  if (!s3Enabled) {
+    sendJson(res, 404, { ok: false, direct: false });
+    return;
+  }
+  const body = await readJsonBody(req);
+  if (!body) {
+    sendJson(res, 400, { ok: false, error: "Неверный запрос загрузки" });
+    return;
+  }
+
+  if (action === "start") {
+    const rawName = String(body.name || "file")
+      .replace(/[\u0000-\u001F\u007F]/g, "")
+      .slice(0, 120);
+    const rawMime = String(body.type || "").slice(0, 120) || "application/octet-stream";
+    const size = Number(body.size);
+    if (!Number.isSafeInteger(size) || size <= 0) {
+      sendJson(res, 400, { ok: false, error: "Неверный размер файла" });
+      return;
+    }
+    if (size > MAX_SIZE) {
+      sendJson(res, 413, { ok: false, error: "Файл больше 500 МБ" });
+      return;
+    }
+    const original = ensureMediaExtension(rawName || "file", rawMime);
+    if (isBlockedUpload(original, rawMime)) {
+      sendJson(res, 400, { ok: false, error: "Этот тип файла запрещён" });
+      return;
+    }
+    let pending = 0;
+    for (const upload of directUploads.values()) if (upload.userId === userId) pending += 1;
+    if (pending >= DIRECT_MAX_PENDING_PER_USER) {
+      sendJson(res, 429, { ok: false, error: "Слишком много загрузок" });
+      return;
+    }
+
+    const storedExt =
+      path.extname(original).toLowerCase() ||
+      path.extname(ensureMediaExtension("file", rawMime)).toLowerCase() ||
+      ".bin";
+    let stored = `${randomUUID()}${storedExt}`;
+    let mime = resolveUploadMime(original, rawMime.split(";")[0].trim().toLowerCase());
+    if (isTranscodableVideoPath(stored, mime)) {
+      const normalized = normalizedVideoName(stored, mime);
+      stored = normalized.name;
+      mime = normalized.mime;
+    }
+    const image = INLINE_IMAGE_EXT.has(path.extname(original).toLowerCase());
+    const key = `uploads/${stored}`;
+    const uploadId = await createMultipartUpload(key, mime, { image: String(image) });
+    const partCount = Math.ceil(size / DIRECT_PART_SIZE);
+    const expiresIn = Math.floor(DIRECT_TTL_MS / 1000);
+    const parts = await Promise.all(
+      Array.from({ length: partCount }, async (_, index) => {
+        const partSize = Math.min(DIRECT_PART_SIZE, size - index * DIRECT_PART_SIZE);
+        return {
+          partNumber: index + 1,
+          size: partSize,
+          url: await presignUploadPart(key, uploadId, index + 1, partSize, expiresIn),
+        };
+      }),
+    );
+    const id = randomUUID();
+    directUploads.set(id, {
+      userId,
+      stored,
+      uploadId,
+      size,
+      parts: partCount,
+      mime,
+      name: ensureMediaExtension(rawName || original, mime),
+      image,
+      expiresAt: Date.now() + DIRECT_TTL_MS,
+    });
+    saveDirectUploads();
+    sendJson(res, 200, { ok: true, direct: true, id, partSize: DIRECT_PART_SIZE, parts });
+    return;
+  }
+
+  const id = String(body.id || "");
+  const known = directUploads.get(id);
+  if (!known || known.userId !== userId) {
+    sendJson(res, 404, { ok: false, error: "Загрузка не найдена" });
+    return;
+  }
+  const upload = takeDirectUpload(id)!;
+
+  if (action === "abort") {
+    await discardDirectUpload(upload);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (action !== "complete") {
+    directUploads.set(id, upload);
+    saveDirectUploads();
+    sendJson(res, 404, { ok: false, error: "Неизвестное действие" });
+    return;
+  }
+
+  const parts = Array.isArray(body.parts) ? body.parts : [];
+  const valid =
+    parts.length === upload.parts &&
+    parts.every((part, index) => {
+      const item = part as { partNumber?: unknown; etag?: unknown };
+      return (
+        item?.partNumber === index + 1 &&
+        typeof item.etag === "string" &&
+        item.etag.length > 0 &&
+        item.etag.length <= 200
+      );
+    });
+  if (!valid) {
+    await discardDirectUpload(upload);
+    sendJson(res, 400, { ok: false, error: "Не удалось сохранить файл" });
+    return;
+  }
+
+  const key = `uploads/${upload.stored}`;
+  try {
+    await completeMultipartUpload(
+      key,
+      upload.uploadId,
+      (parts as Array<{ partNumber: number; etag: string }>).map((part) => ({
+        partNumber: part.partNumber,
+        etag: part.etag,
+      })),
+    );
+    const stored = await headObject(key);
+    if (!stored || stored.ContentLength !== upload.size) {
+      throw new Error("Size mismatch");
+    }
+    if (upload.image && !looksLikeImageBytes(await readObjectPrefix(key, IMAGE_SNIFF_BYTES))) {
+      await discardDirectUpload(upload);
+      sendJson(res, 400, { ok: false, error: "Файл не похож на изображение" });
+      return;
+    }
+  } catch (error) {
+    console.error("[upload] direct complete failed", (error as Error).name);
+    await discardDirectUpload(upload);
+    sendJson(res, 400, { ok: false, error: "Не удалось сохранить файл" });
+    return;
+  }
+
+  const url = `/uploads/${upload.stored}`;
+  rememberUploadOwner(url, userId);
+  if (isTranscodableVideoPath(upload.stored, upload.mime)) {
+    scheduleStoredVideoTranscode(upload.stored, upload.mime);
+  }
+  sendJson(res, 200, {
+    ok: true,
+    file: { url: signUploadUrl(url), name: upload.name, size: upload.size, mime: upload.mime },
+  });
 }

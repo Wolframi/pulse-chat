@@ -1,9 +1,15 @@
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, unlink } from "node:fs/promises";
@@ -47,6 +53,8 @@ function loadConfig(): StorageConfig | null {
 
 const config = loadConfig();
 export const s3Enabled = Boolean(config);
+/** Browsers upload parts straight to this origin (CSP connect-src, bucket CORS). */
+export const s3Origin = config ? new URL(config.endpoint).origin : "";
 export const s3Client = config ? new S3Client({
   endpoint: config.endpoint,
   region: config.region,
@@ -147,14 +155,71 @@ export async function readObjectBuffer(key: string): Promise<Buffer | null> {
   }
 }
 
-/** Processing gets its own temporary copy, removed on both success and failure. */
-export async function withObjectFile<T>(key: string, consume: (filename: string) => Promise<T> | T): Promise<T> {
+export async function readObjectPrefix(key: string, bytes: number): Promise<Buffer> {
+  const { body } = await readObject(key, { start: 0, end: Math.max(0, bytes - 1) });
+  const chunks: Buffer[] = [];
+  for await (const chunk of body) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).subarray(0, bytes);
+}
+
+export async function deleteObject(key: string) {
+  if (!s3Client) throw new Error("S3 storage is not configured");
+  await s3Client.send(new DeleteObjectCommand(objectLocation(key)));
+}
+
+export async function createMultipartUpload(key: string, contentType: string, metadata: Record<string, string>) {
+  if (!s3Client) throw new Error("S3 storage is not configured");
+  const result = await s3Client.send(new CreateMultipartUploadCommand({
+    ...objectLocation(key), ContentType: contentType, Metadata: metadata,
+  }));
+  if (!result.UploadId) throw new Error("S3 did not return an upload id");
+  return result.UploadId;
+}
+
+/** The signature pins Content-Length, so a part URL accepts exactly `size` bytes. */
+export async function presignUploadPart(key: string, uploadId: string, partNumber: number, size: number, expiresIn: number) {
+  if (!s3Client) throw new Error("S3 storage is not configured");
+  return getSignedUrl(s3Client, new UploadPartCommand({
+    ...objectLocation(key), UploadId: uploadId, PartNumber: partNumber, ContentLength: size,
+  }), { expiresIn, signableHeaders: new Set(["content-length"]) });
+}
+
+export async function completeMultipartUpload(key: string, uploadId: string, parts: Array<{ partNumber: number; etag: string }>) {
+  if (!s3Client) throw new Error("S3 storage is not configured");
+  await s3Client.send(new CompleteMultipartUploadCommand({
+    ...objectLocation(key), UploadId: uploadId,
+    MultipartUpload: { Parts: parts.map((part) => ({ PartNumber: part.partNumber, ETag: part.etag })) },
+  }));
+}
+
+export async function abortMultipartUpload(key: string, uploadId: string) {
+  if (!s3Client) throw new Error("S3 storage is not configured");
+  try {
+    await s3Client.send(new AbortMultipartUploadCommand({ ...objectLocation(key), UploadId: uploadId }));
+  } catch (error) {
+    if (!isObjectNotFound(error)) throw error;
+  }
+}
+
+/** Caller owns the returned temporary copy and must remove it. */
+export async function downloadObjectToTemp(key: string) {
   const dir = path.join(process.cwd(), "data", "media-tmp");
   await mkdir(dir, { recursive: true });
   const filename = path.join(dir, `${randomUUID()}${path.extname(key)}`);
   try {
     const { body } = await readObject(key);
     await pipeline(body, createWriteStream(filename, { flags: "wx" }));
+    return filename;
+  } catch (error) {
+    await unlink(filename).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** Processing gets its own temporary copy, removed on both success and failure. */
+export async function withObjectFile<T>(key: string, consume: (filename: string) => Promise<T> | T): Promise<T> {
+  const filename = await downloadObjectToTemp(key);
+  try {
     return await consume(filename);
   } finally {
     await unlink(filename).catch(() => undefined);

@@ -109,6 +109,90 @@ async function main() {
     }
     assert.equal((await fetch(`${origin}${file.url}`, { method: "POST" })).status, 405);
 
+    type DirectStart = { ok: boolean; id: string; parts: Array<{ partNumber: number; size: number; url: string }>; error?: string };
+    const s3Fetch = process.env.S3_LOCAL_ADDRESS
+      ? await (async () => {
+        const undici = await import("undici");
+        const dispatcher = new undici.Agent({ connect: { localAddress: process.env.S3_LOCAL_ADDRESS } });
+        return ((url: string, init?: Parameters<typeof undici.fetch>[1]) => undici.fetch(url, { ...init, dispatcher })) as unknown as typeof fetch;
+      })()
+      : fetch;
+    async function directCall(action: string, body: Record<string, unknown>) {
+      return fetch(`${origin}/api/upload/direct/${action}`, {
+        method: "POST", body: JSON.stringify(body),
+        headers: { origin, "content-type": "application/json", "x-pulse-token": account.ok ? account.account.token || "" : "" },
+      });
+    }
+    async function directUpload(name: string, body: Buffer, type: string) {
+      const start = await directCall("start", { name, size: body.length, type });
+      assert.equal(start.status, 200);
+      const ticket = await start.json() as DirectStart;
+      let offset = 0;
+      const parts = [];
+      for (const part of ticket.parts) {
+        const put = await s3Fetch(part.url, { method: "PUT", body: new Uint8Array(body.subarray(offset, offset + part.size)) });
+        assert.equal(put.status, 200);
+        parts.push({ partNumber: part.partNumber, etag: put.headers.get("etag") });
+        offset += part.size;
+      }
+      return directCall("complete", { id: ticket.id, parts });
+    }
+
+    const directPdf = await directUpload("отчёт.pdf", pdf, "application/pdf");
+    assert.equal(directPdf.status, 200);
+    const directDoc = await directPdf.json() as { file: { url: string; name: string; mime: string; size: number } };
+    assert.equal(directDoc.file.name, "отчёт.pdf");
+    assert.equal(directDoc.file.mime, "application/pdf");
+    assert.deepEqual(Buffer.from(await (await fetch(`${origin}${directDoc.file.url}&download=1`)).arrayBuffer()), pdf);
+    assert(!existsSync(path.join(dir, "uploads", uploads.uploadNameFromUrl(directDoc.file.url)!)));
+
+    const big = Buffer.from(randomUUID().repeat(Math.ceil((17 * 1024 * 1024) / 36)).slice(0, 17 * 1024 * 1024 + 123));
+    const bigStart = await directCall("start", { name: "archive.zip", size: big.length, type: "application/zip" });
+    const bigTicket = await bigStart.json() as DirectStart;
+    assert.equal(bigTicket.parts.length, 2);
+    const wrongSize = await s3Fetch(bigTicket.parts[0].url, { method: "PUT", body: new Uint8Array(big.subarray(0, 1024)) });
+    assert.equal(wrongSize.status, 403, "part URL must pin its exact size");
+    assert.equal((await directCall("abort", { id: bigTicket.id })).status, 200);
+    assert.equal((await directCall("complete", { id: bigTicket.id, parts: [] })).status, 404);
+    const bigResponse = await directUpload("archive.zip", big, "application/zip");
+    assert.equal(bigResponse.status, 200);
+    const bigFile = await bigResponse.json() as { file: { url: string } };
+    assert.equal((await uploads.getUploadInfo(bigFile.file.url))?.size, big.length);
+    const tail = await fetch(`${origin}${bigFile.file.url}&download=1`, { headers: { range: `bytes=${big.length - 64}-` } });
+    assert.equal(tail.status, 206);
+    assert.deepEqual(Buffer.from(await tail.arrayBuffer()), big.subarray(-64));
+
+    const fakeImage = await directUpload("fake.jpg", Buffer.from("definitely not a jpeg"), "image/jpeg");
+    assert.equal(fakeImage.status, 400);
+    const directPhoto = await directUpload("photo.jpg", jpeg, "image/jpeg");
+    assert.equal(directPhoto.status, 200);
+    const directPhotoFile = await directPhoto.json() as { file: { url: string } };
+    assert.equal((await uploads.getUploadInfo(directPhotoFile.file.url))?.image, true);
+    assert.equal((await fetch(`${origin}${uploads.bareUploadUrl(directPhotoFile.file.url)}`)).status, 200);
+    assert.equal((await directCall("start", { name: "bad.html", size: 10, type: "text/html" })).status, 400);
+    assert.equal((await directCall("start", { name: "huge.zip", size: 600 * 1024 * 1024, type: "application/zip" })).status, 413);
+
+    const directMovie = await directUpload("clip.mov", readFileSync(videoPath), "video/quicktime");
+    assert.equal(directMovie.status, 200);
+    const directMovieFile = await directMovie.json() as { file: { url: string; mime: string } };
+    assert.match(uploads.bareUploadUrl(directMovieFile.file.url), /\.mp4$/);
+    assert.equal(directMovieFile.file.mime, "video/mp4");
+    let codec = "";
+    for (let i = 0; i < 100 && codec !== "h264"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      codec = await uploads.withUploadFile(directMovieFile.file.url, (filename) =>
+        spawnSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", filename], { encoding: "utf8", windowsHide: true }).stdout.trim());
+    }
+    assert.equal(codec, "h264", "direct video upload must be converted in the background");
+
+    if (process.env.S3_CORS_ORIGIN) {
+      const preflight = await s3Fetch(bigTicket.parts[0].url, {
+        method: "OPTIONS",
+        headers: { origin: process.env.S3_CORS_ORIGIN, "access-control-request-method": "PUT" },
+      });
+      assert.equal(preflight.headers.get("access-control-allow-origin"), process.env.S3_CORS_ORIGIN);
+    }
+
     const audio = Buffer.from("test ringtone bytes");
     await storage.putObjectBuffer("ringtones/audio/check.mp3", audio, "audio/mpeg");
     assert.deepEqual(await storage.readObjectBuffer("ringtones/audio/check.mp3"), audio);
@@ -120,7 +204,9 @@ async function main() {
       assert.equal((await failed.json() as { ok: boolean }).ok, false);
     } finally { storage.s3Client!.middlewareStack.remove("testFailure"); }
     assert.equal(readdirSync(path.join(dir, "uploads")).filter((name) => name !== "thumbs").length, 0);
-    console.log("PASS: S3 upload/read, avatars, thumbnails, background video conversion, HEAD, ETag, ranges, private documents, invalid uploads/paths, temporary cleanup, ringtone buffers, S3 failure handling");
+    for (let i = 0; i < 50 && readdirSync(path.join(dir, "data", "media-tmp")).length; i++) await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(readdirSync(path.join(dir, "data", "media-tmp")).length, 0);
+    console.log("PASS: S3 upload/read, direct browser uploads (multipart, exact-size parts, abort, image check, video conversion), avatars, thumbnails, background video conversion, HEAD, ETag, ranges, private documents, invalid uploads/paths, temporary cleanup, ringtone buffers, S3 failure handling");
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
