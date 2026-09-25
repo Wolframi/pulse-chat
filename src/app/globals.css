@@ -1793,7 +1793,7 @@ button:active:not(:disabled) {
 
 .channel-menu {
   position: fixed;
-  z-index: 200;
+  z-index: 1000;
   min-width: 148px;
   padding: 6px;
   border-radius: 10px;

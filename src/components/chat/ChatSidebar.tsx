@@ -73,18 +73,22 @@ type ChatSidebarProps = {
   showCallMembers?: boolean;
 };
 
-function menuLeft(clientX: number) {
-  const view = window.visualViewport;
-  const left = view?.offsetLeft ?? 0;
-  const width = view?.width ?? window.innerWidth;
-  return Math.min(Math.max(clientX, left + 8), left + width - 168);
-}
-
-function menuTop(clientY: number) {
+function placeChannelMenu(anchor: HTMLElement) {
+  const rect = anchor.getBoundingClientRect();
   const view = window.visualViewport;
   const top = view?.offsetTop ?? 0;
+  const left = view?.offsetLeft ?? 0;
   const height = view?.height ?? window.innerHeight;
-  return Math.min(Math.max(clientY, top + 8), top + height - 56);
+  const width = view?.width ?? window.innerWidth;
+  const menuWidth = 168;
+  const menuHeight = 48;
+  let x = rect.left;
+  if (x + menuWidth > left + width - 8) x = left + width - 8 - menuWidth;
+  if (x < left + 8) x = left + 8;
+  let y = rect.bottom + 6;
+  if (y + menuHeight > top + height - 8) y = rect.top - menuHeight - 6;
+  if (y < top + 8) y = top + 8;
+  return { x, y };
 }
 
 function matchesQuery(value: string, query: string) {
@@ -512,8 +516,21 @@ export function ChatSidebar({
     if (!root) return;
     const blockNativeMenu = (event: Event) => {
       const target = event.target;
-      if (!(target instanceof Element) || !target.closest(".channel-item")) return;
+      if (!(target instanceof Element)) return;
+      const item = target.closest<HTMLElement>(".channel-item");
+      if (!item || !root.contains(item)) return;
       event.preventDefault();
+      if (item.dataset.canDelete !== "1") return;
+      const kind = item.dataset.channelKind === "voice" ? "voice" : "text";
+      const point = placeChannelMenu(item);
+      setChannelMenu({
+        x: point.x,
+        y: point.y,
+        kind,
+        groupId: item.dataset.groupId || "",
+        channelId: item.dataset.channelId || "",
+        title: item.dataset.channelTitle || "",
+      });
     };
     root.addEventListener("contextmenu", blockNativeMenu, true);
     return () => root.removeEventListener("contextmenu", blockNativeMenu, true);
@@ -521,11 +538,12 @@ export function ChatSidebar({
 
   useEffect(() => {
     if (!channelMenu) return;
-    const close = (event: Event) => {
+    const openedAt = Date.now();
+    const close = (event: PointerEvent) => {
+      if (event.button === 2) return;
+      if (Date.now() - openedAt < 450) return;
       const target = event.target;
-      if (target instanceof Node && target instanceof Element && target.closest(".channel-menu")) {
-        return;
-      }
+      if (target instanceof Element && target.closest(".channel-menu")) return;
       setChannelMenu(null);
     };
     const timer = window.setTimeout(() => {
@@ -746,19 +764,13 @@ export function ChatSidebar({
                     className={`channel-item ${
                       currentChatId === channel.id ? "is-active" : ""
                     }`}
+                    data-channel-kind="text"
+                    data-can-delete={canDelete ? "1" : "0"}
+                    data-group-id={activeGuild.id}
+                    data-channel-id={channel.id}
+                    data-channel-title={channel.title}
                     onClick={() => onOpenChat(channel.id)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      if (!canDelete) return;
-                      setChannelMenu({
-                        x: menuLeft(event.clientX),
-                        y: menuTop(event.clientY),
-                        kind: "text",
-                        groupId: activeGuild.id,
-                        channelId: channel.id,
-                        title: channel.title,
-                      });
-                    }}
+                    onContextMenu={(event) => event.preventDefault()}
                   >
                     <IconHash size={16} />
                     <span>{channel.title}</span>
@@ -869,6 +881,11 @@ export function ChatSidebar({
                           className={`channel-item channel-item--voice ${
                             joined ? "is-active" : ""
                           }`}
+                          data-channel-kind="voice"
+                          data-can-delete={canDeleteVoice ? "1" : "0"}
+                          data-group-id={activeGuild.id}
+                          data-channel-id={channel.id}
+                          data-channel-title={channel.title}
                           disabled={voiceJoining}
                           onClick={() =>
                             onJoinVoice?.(
@@ -877,18 +894,7 @@ export function ChatSidebar({
                               channel.title,
                             )
                           }
-                          onContextMenu={(event) => {
-                            event.preventDefault();
-                            if (!canDeleteVoice) return;
-                            setChannelMenu({
-                              x: menuLeft(event.clientX),
-                              y: menuTop(event.clientY),
-                              kind: "voice",
-                              groupId: activeGuild.id,
-                              channelId: channel.id,
-                              title: channel.title,
-                            });
-                          }}
+                          onContextMenu={(event) => event.preventDefault()}
                         >
                           <IconVolume size={16} />
                           <span>{channel.title}</span>
