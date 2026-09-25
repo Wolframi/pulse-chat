@@ -109,6 +109,8 @@ export function ChatApp() {
     respondGroupInvite,
     createVoiceChannel,
     deleteVoiceChannel,
+    createTextChannel,
+    deleteTextChannel,
     updateGroupAvatar,
     updateGroupProfile,
     updateGroupVisibility,
@@ -307,15 +309,24 @@ export function ChatApp() {
   const handleOpenChat = useCallback(
     (chatId: string) => {
       const chat = chats.find((item) => item.id === chatId);
-      setPendingTitle(
-        chat
-          ? chat.type === "channel"
-            ? `#${chat.title}`
-            : chat.title
-          : null,
+      const parent = chats.find((item) =>
+        item.textChannels?.some((channel) => channel.id === chatId),
       );
-      setUnreadAtOpen(chat?.unreadCount || 0);
-      if (chat?.type === "group") {
+      const textChannel = parent?.textChannels?.find((channel) => channel.id === chatId);
+      setPendingTitle(
+        textChannel
+          ? `#${textChannel.title}`
+          : chat
+            ? chat.type === "channel"
+              ? `#${chat.title}`
+              : chat.title
+            : null,
+      );
+      setUnreadAtOpen(textChannel?.unreadCount || chat?.unreadCount || 0);
+      if (parent?.type === "group") {
+        setSidebarPanel(parent.id);
+        saveLastRoom(chatId, parent.id);
+      } else if (chat?.type === "group") {
         setSidebarPanel(chatId);
         saveLastRoom(chatId, chatId);
       } else {
@@ -670,8 +681,13 @@ export function ChatApp() {
     [currentChat?.peerId, people],
   );
 
-  const chatLabel =
-    currentChat?.type === "channel"
+  const activeTextChannel =
+    currentChat?.textChannels?.find((channel) => channel.id === session?.room) ??
+    null;
+
+  const chatLabel = activeTextChannel
+    ? `#${activeTextChannel.title}`
+    : currentChat?.type === "channel"
       ? `#${currentChat.title}`
       : currentChat?.type === "group"
         ? "#general"
@@ -893,17 +909,18 @@ export function ChatApp() {
     voice.active &&
       !voice.minimized &&
       currentChat?.type === "group" &&
-      session?.room === voice.active.groupId,
+      currentChat.id === voice.active.groupId,
   );
 
   const groupTextChannels = useMemo(() => {
     if (currentChat?.type !== "group") return [];
     return [
-      {
-        id: currentChat.id,
-        title: "general",
-        hint: currentChat.topic || "Основной чат",
-      },
+      { id: currentChat.id, title: "general", hint: "" },
+      ...(currentChat.textChannels || []).map((channel) => ({
+        id: channel.id,
+        title: channel.title,
+        hint: "",
+      })),
     ];
   }, [currentChat]);
 
@@ -1006,7 +1023,8 @@ export function ChatApp() {
     account &&
       currentChat &&
       currentChat.type === "group" &&
-      sidebarPanel === currentChat.id,
+      sidebarPanel === currentChat.id &&
+      !groupCallOpen,
   );
 
   const handleOpenChatInfo = useCallback(() => {
@@ -1595,6 +1613,26 @@ export function ChatApp() {
                     toast.success("Голосовой канал удалён");
                   });
                 }}
+                onCreateTextChannel={(groupId, title) => {
+                  void createTextChannel(groupId, title).then((result) => {
+                    if (!result.ok) {
+                      toast.error(result.error || "Не удалось создать чат");
+                      return;
+                    }
+                    if (result.channelId) handleOpenChat(result.channelId);
+                    toast.success("Текстовый чат создан");
+                  });
+                }}
+                onDeleteTextChannel={(groupId, channelId) => {
+                  void deleteTextChannel(groupId, channelId).then((result) => {
+                    if (!result.ok) {
+                      toast.error(result.error || "Не удалось удалить чат");
+                      return;
+                    }
+                    toast.success("Текстовый чат удалён");
+                  });
+                }}
+                showCallMembers={groupCallOpen}
               />
               {voice.active && (
                 <VoiceDock
@@ -2244,10 +2282,15 @@ export function ChatApp() {
                       unreadAtOpen={unreadAtOpen}
                       peerReadAt={peerReadAt}
                       showOwnAvatar={
-                        wideCallLayout &&
-                        ((active && session?.room === active.chatId && !minimized) ||
-                          groupCallOpen) &&
-                        (sideChatWidth ?? SIDE_CHAT_MIN) >= SIDE_CHAT_WIDE
+                        !(
+                          (groupCallOpen && compactCallLayout) ||
+                          (wideCallLayout &&
+                            ((active &&
+                              session.room === active.chatId &&
+                              !minimized) ||
+                              groupCallOpen) &&
+                            (sideChatWidth ?? SIDE_CHAT_MIN) < SIDE_CHAT_WIDE)
+                        )
                       }
                       onOpenStickerPack={handleOpenStickerPack}
                       onReply={handleReply}
@@ -2390,7 +2433,7 @@ export function ChatApp() {
                             <IconHash size={18} />
                             <span>
                               <strong>{channel.title}</strong>
-                              <em>{channel.hint}</em>
+                              {channel.hint ? <em>{channel.hint}</em> : null}
                             </span>
                           </button>
                         ))}

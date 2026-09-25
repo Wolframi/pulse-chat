@@ -67,6 +67,9 @@ type ChatSidebarProps = {
   onJoinVoice?: (channelId: string, groupId: string, title: string) => void;
   onCreateVoiceChannel?: (groupId: string, title: string) => void;
   onDeleteVoiceChannel?: (groupId: string, channelId: string) => void;
+  onCreateTextChannel?: (groupId: string, title: string) => void;
+  onDeleteTextChannel?: (groupId: string, channelId: string) => void;
+  showCallMembers?: boolean;
 };
 
 function matchesQuery(value: string, query: string) {
@@ -268,6 +271,9 @@ export function ChatSidebar({
   onJoinVoice,
   onCreateVoiceChannel,
   onDeleteVoiceChannel,
+  onCreateTextChannel,
+  onDeleteTextChannel,
+  showCallMembers = false,
 }: ChatSidebarProps) {
   const localSearchRef = useRef<HTMLInputElement>(null);
   const inputRef = searchRef || localSearchRef;
@@ -285,6 +291,21 @@ export function ChatSidebar({
   const [voiceTitle, setVoiceTitle] = useState("");
   const [creatingVoice, setCreatingVoice] = useState(false);
   const [pendingVoiceDelete, setPendingVoiceDelete] = useState<{
+    groupId: string;
+    channelId: string;
+    title: string;
+  } | null>(null);
+  const [textTitle, setTextTitle] = useState("");
+  const [creatingText, setCreatingText] = useState(false);
+  const [pendingTextDelete, setPendingTextDelete] = useState<{
+    groupId: string;
+    channelId: string;
+    title: string;
+  } | null>(null);
+  const [channelMenu, setChannelMenu] = useState<{
+    x: number;
+    y: number;
+    kind: "text" | "voice";
     groupId: string;
     channelId: string;
     title: string;
@@ -456,6 +477,31 @@ export function ChatSidebar({
     return list.slice(0, 80);
   }, [activeGuild, people, inviteHits, currentUserId, inviteQuery]);
 
+  const guildMembers = useMemo(() => {
+    if (!activeGuild) return [];
+    const ids = new Set(activeGuild.memberIds || []);
+    return people
+      .filter((user) => ids.has(user.id))
+      .sort((a, b) => {
+        if (a.online !== b.online) return a.online ? -1 : 1;
+        return (a.displayName || a.username).localeCompare(
+          b.displayName || b.username,
+          "ru",
+        );
+      });
+  }, [activeGuild, people]);
+
+  useEffect(() => {
+    if (!channelMenu) return;
+    const close = () => setChannelMenu(null);
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [channelMenu]);
+
   const brandTitle =
     focus === "dms"
       ? "Люди"
@@ -581,7 +627,62 @@ export function ChatSidebar({
 
           {activeGuild && (
             <div className="sidebar__list sidebar__list--guild">
-              <p className="sidebar__section">Текстовые каналы</p>
+              <div className="sidebar__section-row">
+                <p className="sidebar__section">Текстовые каналы</p>
+                {onCreateTextChannel && (
+                  <button
+                    type="button"
+                    className={`sidebar__section-add ${creatingText ? "is-open" : ""}`}
+                    aria-label={creatingText ? "Отменить создание" : "Создать текстовый чат"}
+                    title={creatingText ? "Отменить" : "Создать текстовый чат"}
+                    onClick={() => {
+                      setCreatingVoice(false);
+                      setVoiceTitle("");
+                      setCreatingText((open) => !open);
+                      if (creatingText) setTextTitle("");
+                    }}
+                  >
+                    {creatingText ? <IconClose size={14} /> : <IconPlus size={14} />}
+                  </button>
+                )}
+              </div>
+              {creatingText && onCreateTextChannel && (
+                <form
+                  className="voice-create"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const name = textTitle.trim();
+                    if (!name) return;
+                    onCreateTextChannel(activeGuild.id, name);
+                    setTextTitle("");
+                    setCreatingText(false);
+                  }}
+                >
+                  <input
+                    value={textTitle}
+                    onChange={(event) => setTextTitle(event.target.value)}
+                    placeholder="Название чата"
+                    maxLength={40}
+                    aria-label="Название текстового чата"
+                    autoFocus
+                  />
+                  <div className="voice-create__actions">
+                    <button type="submit" className="voice-create__submit">
+                      Создать
+                    </button>
+                    <button
+                      type="button"
+                      className="voice-create__cancel"
+                      onClick={() => {
+                        setCreatingText(false);
+                        setTextTitle("");
+                      }}
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                </form>
+              )}
               <button
                 type="button"
                 className={`channel-item ${
@@ -599,11 +700,41 @@ export function ChatSidebar({
                   </em>
                 )}
               </button>
-              {activeGuild.topic ? (
-                <p className="sidebar__hint sidebar__hint--guild">
-                  {activeGuild.topic}
-                </p>
-              ) : null}
+              {(activeGuild.textChannels || []).map((channel) => {
+                const canDelete =
+                  Boolean(onDeleteTextChannel) &&
+                  activeGuild.createdBy === currentUserId;
+                return (
+                  <button
+                    key={channel.id}
+                    type="button"
+                    className={`channel-item ${
+                      currentChatId === channel.id ? "is-active" : ""
+                    }`}
+                    onClick={() => onOpenChat(channel.id)}
+                    onContextMenu={(event) => {
+                      if (!canDelete) return;
+                      event.preventDefault();
+                      setChannelMenu({
+                        x: event.clientX,
+                        y: event.clientY,
+                        kind: "text",
+                        groupId: activeGuild.id,
+                        channelId: channel.id,
+                        title: channel.title,
+                      });
+                    }}
+                  >
+                    <IconHash size={16} />
+                    <span>{channel.title}</span>
+                    {channel.unreadCount > 0 && (
+                      <em>
+                        {channel.unreadCount > 99 ? "99+" : channel.unreadCount}
+                      </em>
+                    )}
+                  </button>
+                );
+              })}
 
               <div className="sidebar__section-row">
                 <p className="sidebar__section">Голосовые каналы</p>
@@ -694,8 +825,7 @@ export function ChatSidebar({
                   const canDeleteVoice =
                     Boolean(onDeleteVoiceChannel) &&
                     activeGuild.createdBy === currentUserId &&
-                    !isGeneralVoice &&
-                    (activeGuild.voiceChannels || []).length > 1;
+                    !isGeneralVoice;
                   return (
                     <div key={channel.id} className="voice-channel">
                       <div className="voice-channel__row">
@@ -712,6 +842,18 @@ export function ChatSidebar({
                               channel.title,
                             )
                           }
+                          onContextMenu={(event) => {
+                            if (!canDeleteVoice) return;
+                            event.preventDefault();
+                            setChannelMenu({
+                              x: event.clientX,
+                              y: event.clientY,
+                              kind: "voice",
+                              groupId: activeGuild.id,
+                              channelId: channel.id,
+                              title: channel.title,
+                            });
+                          }}
                         >
                           <IconVolume size={16} />
                           <span>{channel.title}</span>
@@ -719,23 +861,6 @@ export function ChatSidebar({
                             <em>{channel.users.length}</em>
                           )}
                         </button>
-                        {canDeleteVoice && (
-                          <button
-                            type="button"
-                            className="voice-channel__delete"
-                            aria-label={`Удалить ${channel.title}`}
-                            title="Удалить канал"
-                            onClick={() =>
-                              setPendingVoiceDelete({
-                                groupId: activeGuild.id,
-                                channelId: channel.id,
-                                title: channel.title,
-                              })
-                            }
-                          >
-                            <IconTrash size={14} />
-                          </button>
-                        )}
                       </div>
                       {channel.users.length > 0 && (
                         <ul className="voice-channel__users">
@@ -793,11 +918,7 @@ export function ChatSidebar({
                       autoComplete="off"
                     />
                   </label>
-                  {inviteQuery.trim().length < 1 ? (
-                    <p className="sidebar__meta-line">
-                      Введите имя или логин — приглашение уйдёт в ЛС
-                    </p>
-                  ) : inviteCandidates.length === 0 ? (
+                  {inviteQuery.trim().length < 1 ? null : inviteCandidates.length === 0 ? (
                     <p className="sidebar__meta-line">Никого не нашли</p>
                   ) : (
                     <div className="sidebar__invite-list">
@@ -832,10 +953,48 @@ export function ChatSidebar({
                 </>
               ) : null}
 
-              <p className="sidebar__section">Участники</p>
-              <p className="sidebar__meta-line">
-                {activeGuild.members} · онлайн {activeGuild.online}
-              </p>
+              {showCallMembers ? (
+                <div className="sidebar__call-members">
+                  <p className="sidebar__section">Участники</p>
+                  <div className="sidebar__call-members-list">
+                    {guildMembers.map((user) => {
+                      const name = user.displayName || user.username;
+                      return (
+                        <button
+                          key={user.id}
+                          type="button"
+                          className={`person-item sidebar__member ${
+                            user.online ? "is-online" : "is-offline"
+                          }`}
+                          onClick={() => onOpenDm(user.id)}
+                        >
+                          <span className="person-item__avatar">
+                            <Avatar
+                              name={name}
+                              src={user.avatarUrl}
+                              size="sm"
+                              online={user.online}
+                            />
+                          </span>
+                          <span className="person-item__meta">
+                            <strong>
+                              {name}
+                              {user.id === currentUserId ? " (вы)" : ""}
+                            </strong>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="sidebar__section">Участники</p>
+                  <p className="sidebar__meta-line">
+                    {activeGuild.members} · онлайн {activeGuild.online}
+                  </p>
+                </>
+              )}
             </div>
           )}
 
@@ -1060,6 +1219,58 @@ export function ChatSidebar({
           )}
         </motion.div>
       </AnimatePresence>
+
+      {channelMenu && (
+        <div
+          className="channel-menu"
+          style={{ left: channelMenu.x, top: channelMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="channel-menu__delete"
+            onClick={() => {
+              if (channelMenu.kind === "voice") {
+                setPendingVoiceDelete({
+                  groupId: channelMenu.groupId,
+                  channelId: channelMenu.channelId,
+                  title: channelMenu.title,
+                });
+              } else {
+                setPendingTextDelete({
+                  groupId: channelMenu.groupId,
+                  channelId: channelMenu.channelId,
+                  title: channelMenu.title,
+                });
+              }
+              setChannelMenu(null);
+            }}
+          >
+            <IconTrash size={14} />
+            Удалить
+          </button>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(pendingTextDelete)}
+        title="Удалить текстовый чат?"
+        body={
+          pendingTextDelete
+            ? `Чат «${pendingTextDelete.title}» будет удалён для всех. Основной general не затрагивается.`
+            : undefined
+        }
+        confirmLabel="Удалить"
+        onCancel={() => setPendingTextDelete(null)}
+        onConfirm={() => {
+          if (!pendingTextDelete) return;
+          onDeleteTextChannel?.(
+            pendingTextDelete.groupId,
+            pendingTextDelete.channelId,
+          );
+          setPendingTextDelete(null);
+        }}
+      />
 
       <ConfirmDialog
         open={Boolean(pendingVoiceDelete)}

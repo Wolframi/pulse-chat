@@ -43,7 +43,10 @@ import {
   canAccessChat,
   createGroup,
   createVoiceChannel,
+  createTextChannel,
   deleteVoiceChannel,
+  deleteTextChannel,
+  messageRoomFor,
   addGroupMember,
   dmTitleForViewer,
   ensureVoiceChannels,
@@ -1488,6 +1491,14 @@ function chatInfo(chat: ChatMeta, viewerId: string) {
             users: voiceUsersForChannel(channel.id),
           }))
         : undefined,
+    textChannels:
+      group.type === "group"
+        ? (group.textChannels || []).map((channel) => ({
+            id: channel.id,
+            title: channel.title,
+            unreadCount: unreadCountFor(channel.id, viewerId),
+          }))
+        : undefined,
   };
 }
 
@@ -1636,7 +1647,9 @@ function emitToUser(io: Server, userId: string, event: string, payload: unknown)
 }
 
 function pushMessage(io: Server, chat: ChatMeta, message: ChatMessage) {
-  const list = messagesFor(chat.id);
+  const roomId = messageRoomFor(chat, message.room);
+  message.room = roomId;
+  const list = messagesFor(roomId);
   const attachments = messageAttachments(message).map((file) => ({
     ...file,
     url: bareUploadUrl(file.url),
@@ -1655,11 +1668,11 @@ function pushMessage(io: Server, chat: ChatMeta, message: ChatMessage) {
   // Only the author is auto-marked read; viewers emit chats:read themselves
   // so background tabs keep unread badges.
   if (message.authorId) {
-    markChatRead(message.authorId, chat.id);
+    markChatRead(message.authorId, roomId);
   }
 
   const outbound = publicMessage(message);
-  io.to(chat.id).emit("message", outbound);
+  io.to(roomId).emit("message", outbound);
   notifyChatMembers(io, chat);
 
   // Lightweight ping for members currently in another room (sound / desktop notify).
@@ -1686,7 +1699,7 @@ function pushMessage(io: Server, chat: ChatMeta, message: ChatMessage) {
       }
     } else {
       const ping = {
-        room: chat.id,
+        room: roomId,
         author: message.author,
         text: preview.slice(0, 180),
       };
@@ -1695,7 +1708,7 @@ function pushMessage(io: Server, chat: ChatMeta, message: ChatMessage) {
         let viewing = false;
         for (const socketId of socketsForUser(userId)) {
           const presence = usersBySocket.get(socketId);
-          if (presence?.room === chat.id) {
+          if (presence?.room === roomId) {
             viewing = true;
             continue;
           }
@@ -1706,9 +1719,9 @@ function pushMessage(io: Server, chat: ChatMeta, message: ChatMessage) {
           void sendPushToUser(userId, {
             title: String(message.author || "Майко"),
             body: String(preview || "Новое сообщение").slice(0, 180),
-            chatId: chat.id,
+            chatId: roomId,
             kind: "message",
-            tag: `pulse-${chat.id}`,
+            tag: `pulse-${roomId}`,
           });
         }
       }
@@ -1855,51 +1868,52 @@ function joinChat(
   if (!canAccessChat(chat, account.userId)) {
     return { ok: false as const, error: "Нет доступа к этому чату" };
   }
+  const roomId = messageRoomFor(chat, chatId);
 
   const previous = usersBySocket.get(socket.id);
-  if (previous?.room === chat.id) {
+  if (previous?.room === roomId) {
     // Re-send history so clients that cleared the list (same-chat reopen) recover.
-    const readAt = markChatRead(account.userId, chat.id);
-    socket.to(chat.id).emit("chat:read", {
-      chatId: chat.id,
+    const readAt = markChatRead(account.userId, roomId);
+    socket.to(roomId).emit("chat:read", {
+      chatId: roomId,
       userId: account.userId,
       readAt,
     });
-    emitHistory(socket, chat.id, account.userId);
+    emitHistory(socket, roomId, account.userId);
     return {
       ok: true as const,
-      session: { name: labelOf(account), room: chat.id },
+      session: { name: labelOf(account), room: roomId },
     };
   }
 
   leaveCurrentRoom(io, socket, chat.type === "dm");
 
-  socket.join(chat.id);
+  socket.join(roomId);
   usersBySocket.set(socket.id, {
     userId: account.userId,
     name: labelOf(account),
-    room: chat.id,
+    room: roomId,
   });
 
   // Presence updates below — don't spam the thread with join notices.
 
-  const readAt = markChatRead(account.userId, chat.id);
-  socket.to(chat.id).emit("chat:read", {
-    chatId: chat.id,
+  const readAt = markChatRead(account.userId, roomId);
+  socket.to(roomId).emit("chat:read", {
+    chatId: roomId,
     userId: account.userId,
     readAt,
   });
-  emitHistory(socket, chat.id, account.userId);
-  io.to(chat.id).emit("presence", {
-    chatId: chat.id,
-    names: presenceNames(chat.id),
+  emitHistory(socket, roomId, account.userId);
+  io.to(roomId).emit("presence", {
+    chatId: roomId,
+    names: presenceNames(roomId),
   });
   notifyChatMembers(io, chat);
   broadcastPeople(io);
 
   return {
     ok: true as const,
-    session: { name: labelOf(account), room: chat.id },
+    session: { name: labelOf(account), room: roomId },
   };
 }
 
@@ -4593,6 +4607,79 @@ app.prepare().then(() => {
         void deleteLiveKitRoom(channelId);
         clearVoiceChannelPresence(channelId);
         emitVoiceState(io, deleted.chat);
+        notifyChatMembers(io, deleted.chat);
+        ack?.({ ok: true });
+      },
+    );
+
+    socket.on(
+      "text:create",
+      (
+        payload: { groupId?: string; title?: string },
+        ack?: (result: {
+          ok: boolean;
+          channel?: { id: string; title: string };
+          error?: string;
+        }) => void,
+      ) => {
+        const account = requireAccount(socket);
+        if (!account) {
+          ack?.({ ok: false, error: "Сначала войдите в аккаунт" });
+          return;
+        }
+        if (!rateLimit(`text-create:${account.userId}`, 20, 60_000)) {
+          ack?.({ ok: false, error: "Слишком часто" });
+          return;
+        }
+        const created = createTextChannel(
+          String(payload?.groupId || ""),
+          account.userId,
+          String(payload?.title || ""),
+        );
+        if (!created.ok) {
+          ack?.({ ok: false, error: created.error });
+          return;
+        }
+        notifyChatMembers(io, created.chat);
+        ack?.({
+          ok: true,
+          channel: { id: created.channel.id, title: created.channel.title },
+        });
+      },
+    );
+
+    socket.on(
+      "text:delete",
+      (
+        payload: { groupId?: string; channelId?: string },
+        ack?: (result: { ok: boolean; error?: string }) => void,
+      ) => {
+        const account = requireAccount(socket);
+        if (!account) {
+          ack?.({ ok: false, error: "Сначала войдите в аккаунт" });
+          return;
+        }
+        const groupId = String(payload?.groupId || "");
+        const channelId = String(payload?.channelId || "");
+        if (!groupId || !channelId) {
+          ack?.({ ok: false, error: "Канал не найден" });
+          return;
+        }
+        const deleted = deleteTextChannel(groupId, channelId, account.userId);
+        if (!deleted.ok) {
+          ack?.({ ok: false, error: deleted.error });
+          return;
+        }
+        clearChatMessages(channelId);
+        for (const [socketId, presence] of usersBySocket.entries()) {
+          if (presence.room !== channelId || !presence.userId) continue;
+          const memberSocket = io.sockets.sockets.get(socketId);
+          const member = getSocketAccount(socketId);
+          if (memberSocket && member) {
+            memberSocket.emit("chat:moved", { room: groupId });
+            joinChat(io, memberSocket, member, groupId);
+          }
+        }
         notifyChatMembers(io, deleted.chat);
         ack?.({ ok: true });
       },

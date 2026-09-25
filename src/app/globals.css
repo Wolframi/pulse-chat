@@ -1731,6 +1731,13 @@ button:active:not(:disabled) {
   color: var(--ink);
 }
 
+.channel-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .channel-item em {
   margin-left: auto;
   min-width: 18px;
@@ -1747,6 +1754,71 @@ button:active:not(:disabled) {
 
 .sidebar__list--guild {
   gap: 4px;
+}
+
+.sidebar__list--guild:has(.sidebar__call-members) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar__call-members {
+  flex: 1 1 auto;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-top: 8px;
+}
+
+.sidebar__call-members-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 8px;
+}
+
+.sidebar__member {
+  width: 100%;
+  text-align: left;
+}
+
+.sidebar__member.is-offline {
+  opacity: 0.55;
+}
+
+.channel-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 148px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #1c1c20;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.channel-menu__delete {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #ed4245;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.channel-menu__delete:hover {
+  background: color-mix(in srgb, #ed4245 14%, transparent);
 }
 
 .sidebar__hint--guild {
@@ -3074,7 +3146,42 @@ button:active:not(:disabled) {
   .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
     > .room__stage
     .bubble-group--mine {
+    justify-content: flex-end;
     padding-left: 42px;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .bubble-group--mine
+    .bubble-group__body {
+    align-items: flex-end;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .bubble-group--mine
+    .bubble-group__rail,
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .bubble-row--mine
+    > .avatar {
+    display: none;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .bubble-row--plaque.bubble-row--mine
+    .bubble {
+    align-self: flex-end;
+    border-radius: 16px 16px 0 16px;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .bubble.bubble--mine.bubble--tail::after {
+    left: auto;
+    right: -6px;
+    transform: scaleX(-1);
   }
 
   .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
@@ -3102,6 +3209,20 @@ button:active:not(:disabled) {
     .bubble-group--mine {
     justify-content: flex-start;
     padding-left: 8px;
+  }
+
+  .room.room--in-call.is-side-wide:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .bubble-group--mine
+    .bubble-group__rail {
+    display: flex;
+  }
+
+  .room.room--in-call.is-side-wide:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .bubble-row--mine
+    > .avatar {
+    display: inline-grid;
   }
 
   .room.room--in-call.is-side-wide:has(> .room__call-dock:not(:empty):not(.is-mini))
@@ -4665,12 +4786,12 @@ button:active:not(:disabled) {
 }
 
 .bubble-group--mine {
-  justify-content: flex-end;
-  padding-left: 48px;
+  justify-content: flex-start;
+  padding-left: 0;
 }
 
 .bubble-group--mine .bubble-group__body {
-  align-items: flex-end;
+  align-items: flex-start;
 }
 
 .bubble-group .message-block,
@@ -4748,13 +4869,13 @@ button:active:not(:disabled) {
 .bubble-row--plaque.bubble-row--mine {
   align-self: stretch;
   flex-direction: row;
-  justify-content: flex-end;
-  padding-left: 48px;
+  justify-content: flex-start;
+  padding-left: 0;
 }
 
 .bubble-row--plaque.bubble-row--mine .bubble {
-  align-self: flex-end;
-  border-radius: 16px 16px 0 16px;
+  align-self: flex-start;
+  border-radius: 16px 16px 16px 0;
   direction: ltr;
   text-align: left;
 }
@@ -4777,15 +4898,15 @@ button:active:not(:disabled) {
 }
 
 .bubble-row--plaque .bubble.bubble--mine.bubble--attach-next:not(.bubble--attach-prev) {
-  border-radius: 16px 16px 6px 16px;
+  border-radius: 16px 16px 16px 6px;
 }
 
 .bubble-row--plaque .bubble.bubble--mine.bubble--attach-prev.bubble--attach-next {
-  border-radius: 16px 6px 6px 16px;
+  border-radius: 6px 16px 16px 6px;
 }
 
 .bubble-row--plaque .bubble.bubble--mine.bubble--attach-prev:not(.bubble--attach-next) {
-  border-radius: 16px 6px 0 16px;
+  border-radius: 6px 16px 16px 0;
 }
 
 .bubble-row--plaque .bubble.bubble--skip-tail:not(.bubble--attach-prev):not(.bubble--attach-next) {
@@ -4817,9 +4938,9 @@ button:active:not(:disabled) {
 
 .bubble-row--plaque .bubble.bubble--mine.bubble--tail::after {
   background: var(--bubble-me);
-  left: auto;
-  right: -6px;
-  transform: scaleX(-1);
+  left: -6px;
+  right: auto;
+  transform: none;
 }
 
 /* Captioned media in a cluster: top radii follow attach flags, tail stays on bubble plaque */
@@ -10831,6 +10952,25 @@ button:active:not(:disabled) {
     max-width: 100%;
     margin-left: auto;
     align-self: flex-end;
+    border-radius: 16px 16px 0 16px;
+  }
+
+  .bubble-row--plaque .bubble.bubble--mine.bubble--tail::after {
+    left: auto;
+    right: -6px;
+    transform: scaleX(-1);
+  }
+
+  .bubble-row--plaque .bubble.bubble--mine.bubble--attach-next:not(.bubble--attach-prev) {
+    border-radius: 16px 16px 6px 16px;
+  }
+
+  .bubble-row--plaque .bubble.bubble--mine.bubble--attach-prev.bubble--attach-next {
+    border-radius: 16px 6px 6px 16px;
+  }
+
+  .bubble-row--plaque .bubble.bubble--mine.bubble--attach-prev:not(.bubble--attach-next) {
+    border-radius: 16px 6px 0 16px;
   }
 
   .bubble-row--plaque .bubble__album,
@@ -12462,10 +12602,36 @@ button:active:not(:disabled) {
     max-width: min(88%, 320px);
   }
 
+  .room--group-call .call-layout__chat .bubble-group--mine {
+    justify-content: flex-end;
+    padding-left: 42px;
+  }
+
+  .room--group-call .call-layout__chat .bubble-group--mine .bubble-group__body {
+    align-items: flex-end;
+  }
+
+  .room--group-call .call-layout__chat .bubble-group--mine .bubble-group__rail,
+  .room--group-call .call-layout__chat .bubble-row--mine > .avatar {
+    display: none;
+  }
+
+  .room--group-call .call-layout__chat .bubble-row--plaque.bubble-row--mine {
+    justify-content: flex-end;
+  }
+
   .room--group-call .call-layout__chat .bubble-row--plaque.bubble-row--mine .bubble,
   .room--group-call .call-layout__chat .bubble-group--mine .bubble {
     direction: ltr;
     text-align: left;
+    align-self: flex-end;
+    border-radius: 16px 16px 0 16px;
+  }
+
+  .room--group-call .call-layout__chat .bubble.bubble--mine.bubble--tail::after {
+    left: auto;
+    right: -6px;
+    transform: scaleX(-1);
   }
 
   .room--group-call .call-layout__chat .composer {

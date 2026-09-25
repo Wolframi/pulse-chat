@@ -526,6 +526,13 @@ export function useChat() {
       },
     );
 
+    socket.on("chat:moved", (payload: { room?: string }) => {
+      const room = String(payload?.room || "");
+      if (!room) return;
+      expectedRoomRef.current = room;
+      setSession((prev) => (prev ? { ...prev, room } : prev));
+    });
+
     socket.on("message", (message: ChatMessage) => {
       const currentRoom = expectedRoomRef.current || sessionRef.current?.room;
       const inView = Boolean(currentRoom && message.room === currentRoom);
@@ -1243,6 +1250,54 @@ export function useChat() {
     [],
   );
 
+  const createTextChannel = useCallback(
+    (groupId: string, title: string) =>
+      new Promise<{ ok: boolean; error?: string; channelId?: string }>(
+        (resolve) => {
+          socketRef.current?.emit(
+            "text:create",
+            { groupId, title },
+            (result: {
+              ok?: boolean;
+              error?: string;
+              channel?: { id: string; title: string };
+            }) => {
+              if (!result?.ok) {
+                resolve({
+                  ok: false,
+                  error: result?.error || "Не удалось создать чат",
+                });
+                return;
+              }
+              resolve({ ok: true, channelId: result.channel?.id });
+            },
+          );
+        },
+      ),
+    [],
+  );
+
+  const deleteTextChannel = useCallback(
+    (groupId: string, channelId: string) =>
+      new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        socketRef.current?.emit(
+          "text:delete",
+          { groupId, channelId },
+          (result: { ok?: boolean; error?: string }) => {
+            if (!result?.ok) {
+              resolve({
+                ok: false,
+                error: result?.error || "Не удалось удалить чат",
+              });
+              return;
+            }
+            resolve({ ok: true });
+          },
+        );
+      }),
+    [],
+  );
+
   const updateGroupAvatar = useCallback(
     (chatId: string, avatarUrl: string | null) =>
       new Promise<boolean>((resolve) => {
@@ -1864,10 +1919,16 @@ export function useChat() {
     return typingUsers.filter((name) => !self.has(name.toLowerCase()));
   }, [account?.displayName, account?.username, session?.name, typingUsers]);
 
-  const currentChat = useMemo(
-    () => chats.find((chat) => chat.id === session?.room) ?? null,
-    [chats, session?.room],
-  );
+  const currentChat = useMemo(() => {
+    if (!session?.room) return null;
+    return (
+      chats.find((chat) => chat.id === session.room) ??
+      chats.find((chat) =>
+        chat.textChannels?.some((channel) => channel.id === session.room),
+      ) ??
+      null
+    );
+  }, [chats, session?.room]);
 
   const unreadTotal = useMemo(
     () => chats.reduce((sum, chat) => sum + (chat.unreadCount || 0), 0),
@@ -2458,6 +2519,8 @@ const removeStickerFromPack = useCallback((packId: string, stickerId: string) =>
     respondGroupInvite,
     createVoiceChannel,
     deleteVoiceChannel,
+    createTextChannel,
+    deleteTextChannel,
     updateGroupAvatar,
     updateGroupProfile,
     updateGroupVisibility,

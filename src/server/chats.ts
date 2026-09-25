@@ -23,6 +23,12 @@ export type VoiceChannelMeta = {
   createdAt: number;
 };
 
+export type TextChannelMeta = {
+  id: string;
+  title: string;
+  createdAt: number;
+};
+
 export type ChatMeta = {
   id: string;
   type: ChatType;
@@ -37,6 +43,8 @@ export type ChatMeta = {
   /** Groups only. Legacy chats without the field are private. */
   visibility?: GroupVisibility;
   voiceChannels?: VoiceChannelMeta[];
+  /** Extra text rooms. The group id itself is the permanent #general chat. */
+  textChannels?: TextChannelMeta[];
 };
 
 export function groupVisibility(chat: ChatMeta): GroupVisibility {
@@ -115,8 +123,25 @@ function loadChats() {
 
 loadChats();
 
+function ownerOfTextChannel(id: string): ChatMeta | null {
+  const mark = "::text_";
+  const index = id.indexOf(mark);
+  if (index <= 0) return null;
+  const group = chats.get(id.slice(0, index));
+  if (!group || group.type !== "group") return null;
+  if (!group.textChannels?.some((item) => item.id === id)) return null;
+  return group;
+}
+
 export function getChat(id: string) {
-  return chats.get(id) ?? null;
+  return chats.get(id) ?? ownerOfTextChannel(id);
+}
+
+/** Message bucket for a group or one of its extra text channels. */
+export function messageRoomFor(chat: ChatMeta, roomId: string) {
+  if (!roomId || roomId === chat.id) return chat.id;
+  if (chat.textChannels?.some((item) => item.id === roomId)) return roomId;
+  return chat.id;
 }
 
 export function canAccessChat(chat: ChatMeta, userId: string) {
@@ -384,6 +409,63 @@ export function deleteVoiceChannel(
     return { ok: false as const, error: "Нельзя удалить последний голосовой канал" };
   }
   chat.voiceChannels = list.filter((channel) => channel.id !== channelId);
+  chats.set(chat.id, chat);
+  saveChats();
+  return { ok: true as const, chat };
+}
+
+export function createTextChannel(
+  groupId: string,
+  userId: string,
+  titleRaw: string,
+) {
+  const chat = chats.get(groupId);
+  if (!chat || chat.type !== "group") {
+    return { ok: false as const, error: "Группа не найдена" };
+  }
+  if (!canAccessChat(chat, userId)) {
+    return { ok: false as const, error: "Нет доступа" };
+  }
+  const title = titleRaw.trim().slice(0, 40);
+  if (!title) return { ok: false as const, error: "Укажите название чата" };
+  const list = chat.textChannels || [];
+  if (list.length >= 20) {
+    return { ok: false as const, error: "Слишком много текстовых каналов" };
+  }
+  const channel: TextChannelMeta = {
+    id: `${chat.id}::text_${normalizeRoomId(title)}_${randomUUID().slice(0, 5)}`,
+    title,
+    createdAt: Date.now(),
+  };
+  chat.textChannels = [...list, channel];
+  chats.set(chat.id, chat);
+  saveChats();
+  return { ok: true as const, chat, channel };
+}
+
+export function deleteTextChannel(
+  groupId: string,
+  channelId: string,
+  userId: string,
+) {
+  const chat = chats.get(groupId);
+  if (!chat || chat.type !== "group") {
+    return { ok: false as const, error: "Группа не найдена" };
+  }
+  if (!chat.createdBy || chat.createdBy !== userId) {
+    return {
+      ok: false as const,
+      error: "Только создатель группы может удалять каналы",
+    };
+  }
+  if (channelId === chat.id || !channelId.includes("::text_")) {
+    return { ok: false as const, error: "Основной чат нельзя удалить" };
+  }
+  const list = chat.textChannels || [];
+  if (!list.some((channel) => channel.id === channelId)) {
+    return { ok: false as const, error: "Канал не найден" };
+  }
+  chat.textChannels = list.filter((channel) => channel.id !== channelId);
   chats.set(chat.id, chat);
   saveChats();
   return { ok: true as const, chat };

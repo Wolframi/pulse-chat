@@ -106,6 +106,12 @@ export type VoiceChannelInfo = {
   users: VoiceChannelUser[];
 };
 
+export type TextChannelInfo = {
+  id: string;
+  title: string;
+  unreadCount: number;
+};
+
 export type ChatLastMessage = {
   author: string;
   authorId?: string;
@@ -137,6 +143,8 @@ export type ChatInfo = {
   createdAt: number;
   /** Discord-style voice channels (groups only). */
   voiceChannels?: VoiceChannelInfo[];
+  /** Extra text chats. #general is the group id and is not listed here. */
+  textChannels?: TextChannelInfo[];
 };
 
 export type RoomMediaCategory = "media" | "file" | "audio";
