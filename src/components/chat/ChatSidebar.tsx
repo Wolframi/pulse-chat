@@ -5,10 +5,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type RefObject,
+  Fragment,
 } from "react";
-import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import type {
   ChatInfo,
@@ -73,22 +76,134 @@ type ChatSidebarProps = {
   showCallMembers?: boolean;
 };
 
-function placeChannelMenu(anchor: HTMLElement) {
-  const rect = anchor.getBoundingClientRect();
-  const view = window.visualViewport;
-  const top = view?.offsetTop ?? 0;
-  const left = view?.offsetLeft ?? 0;
-  const height = view?.height ?? window.innerHeight;
-  const width = view?.width ?? window.innerWidth;
-  const menuWidth = 168;
-  const menuHeight = 48;
-  let x = rect.left;
-  if (x + menuWidth > left + width - 8) x = left + width - 8 - menuWidth;
-  if (x < left + 8) x = left + 8;
-  let y = rect.bottom + 6;
-  if (y + menuHeight > top + height - 8) y = rect.top - menuHeight - 6;
-  if (y < top + 8) y = top + 8;
-  return { x, y };
+const CHANNEL_REVEAL = 38;
+
+function ChannelSwipe({
+  open,
+  onOpen,
+  onClose,
+  onDelete,
+  children,
+}: {
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+  onDelete: () => void;
+  children: ReactNode;
+}) {
+  const [shift, setShift] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const dragRef = useRef<{ startX: number; origin: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const limitRef = useRef(CHANNEL_REVEAL);
+
+  const revealLimit = () => {
+    const height = rootRef.current?.getBoundingClientRect().height ?? 0;
+    if (height > 0) limitRef.current = height;
+    return limitRef.current;
+  };
+
+  useEffect(() => {
+    if (dragging) return;
+    setShift(open ? -revealLimit() : 0);
+  }, [open, dragging]);
+
+  const finishDrag = (clientX: number) => {
+    const drag = dragRef.current;
+    dragRef.current = null;
+    setDragging(false);
+    if (!drag) return;
+    const dx = clientX - drag.startX;
+    if (Math.abs(dx) <= 6) {
+      if (open) onClose();
+      else onOpen();
+      return;
+    }
+    const limit = revealLimit();
+    const next = Math.min(0, Math.max(-limit, drag.origin + dx));
+    if (next <= -limit * 0.4) onOpen();
+    else onClose();
+  };
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    const limit = revealLimit();
+    dragRef.current = {
+      startX: event.clientX,
+      origin: open ? -limit : 0,
+    };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Указатель уже отпущен — сдвиг всё равно считается по move/up.
+    }
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = event.clientX - drag.startX;
+    if (Math.abs(dx) < 3) return;
+    if (!dragging) setDragging(true);
+    const next = Math.min(0, Math.max(-limitRef.current, drag.origin + dx));
+    setShift(next);
+  };
+
+  const reveal = -shift;
+  const faceStyle = {
+    clipPath: `inset(0 ${reveal}px 0 0)`,
+    "--channel-reveal": `${reveal}px`,
+  } as CSSProperties;
+
+  return (
+    <div
+      ref={rootRef}
+      className={`channel-swipe${open ? " is-open" : ""}${dragging ? " is-dragging" : ""}`}
+    >
+      <button
+        type="button"
+        className="channel-swipe__delete"
+        aria-label="Удалить"
+        title="Удалить"
+        aria-hidden={open ? undefined : true}
+        tabIndex={open ? 0 : -1}
+        onClick={(event) => {
+          event.stopPropagation();
+          onDelete();
+        }}
+      >
+        <IconTrash size={16} />
+      </button>
+      <div
+        className={`channel-swipe__face${dragging ? " is-dragging" : ""}`}
+        style={faceStyle}
+      >
+        {children}
+      </div>
+      <button
+        type="button"
+        className="channel-swipe__tab"
+        style={{ transform: `translateX(${shift}px)` }}
+        aria-label={open ? "Скрыть удаление" : "Показать удаление"}
+        title={open ? "Скрыть" : "Потянуть"}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={(event) => finishDrag(event.clientX)}
+        onPointerCancel={() => {
+          dragRef.current = null;
+          setDragging(false);
+          setShift(open ? -revealLimit() : 0);
+        }}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
+      >
+        <span />
+      </button>
+    </div>
+  );
 }
 
 function matchesQuery(value: string, query: string) {
@@ -295,7 +410,9 @@ export function ChatSidebar({
   showCallMembers = false,
 }: ChatSidebarProps) {
   const localSearchRef = useRef<HTMLInputElement>(null);
-  const panelRef = useRef<HTMLElement>(null);
+  const [revealedChannelId, setRevealedChannelId] = useState<string | null>(
+    null,
+  );
   const inputRef = searchRef || localSearchRef;
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("");
@@ -322,15 +439,6 @@ export function ChatSidebar({
     channelId: string;
     title: string;
   } | null>(null);
-  const [channelMenu, setChannelMenu] = useState<{
-    x: number;
-    y: number;
-    kind: "text" | "voice";
-    groupId: string;
-    channelId: string;
-    title: string;
-  } | null>(null);
-
   useEffect(() => {
     if (focus !== "dms" || !onSuggestPeople) {
       setSuggestedPeople([]);
@@ -512,48 +620,15 @@ export function ChatSidebar({
   }, [activeGuild, people]);
 
   useEffect(() => {
-    const root = panelRef.current;
-    if (!root) return;
-    const blockNativeMenu = (event: Event) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const item = target.closest<HTMLElement>(".channel-item");
-      if (!item || !root.contains(item)) return;
-      event.preventDefault();
-      if (item.dataset.canDelete !== "1") return;
-      const kind = item.dataset.channelKind === "voice" ? "voice" : "text";
-      const point = placeChannelMenu(item);
-      setChannelMenu({
-        x: point.x,
-        y: point.y,
-        kind,
-        groupId: item.dataset.groupId || "",
-        channelId: item.dataset.channelId || "",
-        title: item.dataset.channelTitle || "",
-      });
-    };
-    root.addEventListener("contextmenu", blockNativeMenu, true);
-    return () => root.removeEventListener("contextmenu", blockNativeMenu, true);
-  }, []);
-
-  useEffect(() => {
-    if (!channelMenu) return;
-    const openedAt = Date.now();
+    if (!revealedChannelId) return;
     const close = (event: PointerEvent) => {
-      if (event.button === 2) return;
-      if (Date.now() - openedAt < 450) return;
       const target = event.target;
-      if (target instanceof Element && target.closest(".channel-menu")) return;
-      setChannelMenu(null);
+      if (target instanceof Element && target.closest(".channel-swipe")) return;
+      setRevealedChannelId(null);
     };
-    const timer = window.setTimeout(() => {
-      window.addEventListener("pointerdown", close);
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener("pointerdown", close);
-    };
-  }, [channelMenu]);
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [revealedChannelId]);
 
   const brandTitle =
     focus === "dms"
@@ -590,7 +665,7 @@ export function ChatSidebar({
   }
 
   return (
-    <aside ref={panelRef} className="sidebar">
+    <aside className="sidebar">
       <div className="sidebar__head">
         <div className={`sidebar__head-main ${activeGuild ? "has-guild" : ""}`}>
           {activeGuild ? (
@@ -757,20 +832,13 @@ export function ChatSidebar({
                 const canDelete =
                   Boolean(onDeleteTextChannel) &&
                   activeGuild.createdBy === currentUserId;
-                return (
+                const item = (
                   <button
-                    key={channel.id}
                     type="button"
                     className={`channel-item ${
                       currentChatId === channel.id ? "is-active" : ""
                     }`}
-                    data-channel-kind="text"
-                    data-can-delete={canDelete ? "1" : "0"}
-                    data-group-id={activeGuild.id}
-                    data-channel-id={channel.id}
-                    data-channel-title={channel.title}
                     onClick={() => onOpenChat(channel.id)}
-                    onContextMenu={(event) => event.preventDefault()}
                   >
                     <IconHash size={16} />
                     <span>{channel.title}</span>
@@ -780,6 +848,25 @@ export function ChatSidebar({
                       </em>
                     )}
                   </button>
+                );
+                if (!canDelete) return <Fragment key={channel.id}>{item}</Fragment>;
+                return (
+                  <ChannelSwipe
+                    key={channel.id}
+                    open={revealedChannelId === channel.id}
+                    onOpen={() => setRevealedChannelId(channel.id)}
+                    onClose={() => setRevealedChannelId(null)}
+                    onDelete={() => {
+                      setRevealedChannelId(null);
+                      setPendingTextDelete({
+                        groupId: activeGuild.id,
+                        channelId: channel.id,
+                        title: channel.title,
+                      });
+                    }}
+                  >
+                    {item}
+                  </ChannelSwipe>
                 );
               })}
 
@@ -873,35 +960,50 @@ export function ChatSidebar({
                     Boolean(onDeleteVoiceChannel) &&
                     activeGuild.createdBy === currentUserId &&
                     !isGeneralVoice;
+                  const voiceItem = (
+                    <button
+                      type="button"
+                      className={`channel-item channel-item--voice ${
+                        joined ? "is-active" : ""
+                      }`}
+                      disabled={voiceJoining}
+                      onClick={() =>
+                        onJoinVoice?.(
+                          channel.id,
+                          activeGuild.id,
+                          channel.title,
+                        )
+                      }
+                    >
+                      <IconVolume size={16} />
+                      <span>{channel.title}</span>
+                      {channel.users.length > 0 && (
+                        <em>{channel.users.length}</em>
+                      )}
+                    </button>
+                  );
                   return (
                     <div key={channel.id} className="voice-channel">
                       <div className="voice-channel__row">
-                        <button
-                          type="button"
-                          className={`channel-item channel-item--voice ${
-                            joined ? "is-active" : ""
-                          }`}
-                          data-channel-kind="voice"
-                          data-can-delete={canDeleteVoice ? "1" : "0"}
-                          data-group-id={activeGuild.id}
-                          data-channel-id={channel.id}
-                          data-channel-title={channel.title}
-                          disabled={voiceJoining}
-                          onClick={() =>
-                            onJoinVoice?.(
-                              channel.id,
-                              activeGuild.id,
-                              channel.title,
-                            )
-                          }
-                          onContextMenu={(event) => event.preventDefault()}
-                        >
-                          <IconVolume size={16} />
-                          <span>{channel.title}</span>
-                          {channel.users.length > 0 && (
-                            <em>{channel.users.length}</em>
-                          )}
-                        </button>
+                        {canDeleteVoice ? (
+                          <ChannelSwipe
+                            open={revealedChannelId === channel.id}
+                            onOpen={() => setRevealedChannelId(channel.id)}
+                            onClose={() => setRevealedChannelId(null)}
+                            onDelete={() => {
+                              setRevealedChannelId(null);
+                              setPendingVoiceDelete({
+                                groupId: activeGuild.id,
+                                channelId: channel.id,
+                                title: channel.title,
+                              });
+                            }}
+                          >
+                            {voiceItem}
+                          </ChannelSwipe>
+                        ) : (
+                          voiceItem
+                        )}
                       </div>
                       {channel.users.length > 0 && (
                         <ul className="voice-channel__users">
@@ -1260,40 +1362,6 @@ export function ChatSidebar({
           )}
         </motion.div>
       </AnimatePresence>
-
-      {channelMenu &&
-        createPortal(
-        <div
-          className="channel-menu"
-          style={{ left: channelMenu.x, top: channelMenu.y }}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            className="channel-menu__delete"
-            onClick={() => {
-              if (channelMenu.kind === "voice") {
-                setPendingVoiceDelete({
-                  groupId: channelMenu.groupId,
-                  channelId: channelMenu.channelId,
-                  title: channelMenu.title,
-                });
-              } else {
-                setPendingTextDelete({
-                  groupId: channelMenu.groupId,
-                  channelId: channelMenu.channelId,
-                  title: channelMenu.title,
-                });
-              }
-              setChannelMenu(null);
-            }}
-          >
-            <IconTrash size={14} />
-            Удалить
-          </button>
-        </div>,
-        document.body,
-        )}
 
       <ConfirmDialog
         open={Boolean(pendingTextDelete)}

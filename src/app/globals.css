@@ -1791,35 +1791,76 @@ button:active:not(:disabled) {
   opacity: 0.55;
 }
 
-.channel-menu {
-  position: fixed;
-  z-index: 1000;
-  min-width: 148px;
-  padding: 6px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: #1c1c20;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+.channel-swipe {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  width: 100%;
 }
 
-.channel-menu__delete {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.channel-swipe__delete {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  aspect-ratio: 1;
+  width: auto;
+  display: grid;
+  place-items: center;
   border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #ed4245;
-  font: inherit;
-  font-size: 0.86rem;
-  font-weight: 600;
-  padding: 8px 10px;
+  border-radius: 0 8px 8px 0;
+  background: #ed4245;
+  color: #fff;
   cursor: pointer;
 }
 
-.channel-menu__delete:hover {
-  background: color-mix(in srgb, #ed4245 14%, transparent);
+.channel-swipe__delete:hover {
+  background: #d83c3e;
+}
+
+.channel-swipe__face {
+  position: relative;
+  z-index: 1;
+  background: color-mix(in srgb, #fff 3%, var(--bg));
+  transition: clip-path 160ms var(--ease-out);
+}
+
+.channel-swipe.is-dragging .channel-swipe__face,
+.channel-swipe.is-dragging .channel-swipe__tab {
+  transition: none;
+}
+
+.channel-swipe__face .channel-item {
+  padding-right: calc(9px + var(--channel-reveal, 0px));
+}
+
+.channel-swipe__tab {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ew-resize;
+  touch-action: none;
+  transition: transform 160ms var(--ease-out);
+}
+
+.channel-swipe__tab span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #fff;
+  clip-path: polygon(0 18%, 100% 0, 100% 100%, 0 82%);
+}
+
+.voice-channel__row > .channel-swipe {
+  flex: 1;
+  min-width: 0;
 }
 
 .sidebar__hint--guild {
@@ -1969,26 +2010,6 @@ button:active:not(:disabled) {
 .voice-channel__row .channel-item {
   flex: 1;
   min-width: 0;
-}
-
-.voice-channel__delete {
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  opacity: 0.55;
-}
-
-.voice-channel__delete:hover {
-  opacity: 1;
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .voice-channel__users {
