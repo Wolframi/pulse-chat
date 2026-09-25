@@ -90,6 +90,9 @@ type ComposerProps = {
   ) => Promise<{ ok: boolean; error?: string }>;
   onRemoveSticker: (packId: string, stickerId: string) => Promise<boolean>;
   onStickerPick?: (packId: string, stickerId: string) => void;
+  /** During a compact group call, render the picker in this column instead of over the composer. */
+  pickerPortalRoot?: HTMLElement | null;
+  onPickerOpenChange?: (open: boolean) => void;
   /* ─────────────────────────────────────────────────────── */
 };
 
@@ -118,6 +121,8 @@ export function Composer({
   onAddSticker,
   onRemoveSticker,
   onStickerPick,
+  pickerPortalRoot = null,
+  onPickerOpenChange,
 }: ComposerProps) {
   const [text, setText] = useState("");
   const [pending, setPending] = useState<PendingFile[]>([]);
@@ -127,11 +132,16 @@ export function Composer({
   const [mentionIndex, setMentionIndex] = useState(0);
   const [mentionStart, setMentionStart] = useState<number | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [errorTick, setErrorTick] = useState(0);
   const [sentPulse, setSentPulse] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceMode, setVoiceMode] = useState<"hold" | "click">("hold");
   const [voiceSlideX, setVoiceSlideX] = useState(0);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  useEffect(() => {
+    onPickerOpenChange?.(pickerOpen);
+  }, [onPickerOpenChange, pickerOpen]);
   const [composerEl, setComposerEl] = useState<HTMLFormElement | null>(null);
 
   const typingRef = useRef(false);
@@ -227,6 +237,20 @@ export function Composer({
   );
   const shownError = localError || error;
 
+  const flashError = useCallback((msg: string) => {
+    setLocalError(msg);
+    setErrorTick((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!shownError) return;
+    const timer = window.setTimeout(() => {
+      setLocalError(null);
+      onClearError?.();
+    }, 3200);
+    return () => window.clearTimeout(timer);
+  }, [shownError, errorTick, onClearError]);
+
   function addFiles(list: FileList | File[]) {
     const incoming = [...list];
     if (!incoming.length) return;
@@ -236,7 +260,7 @@ export function Composer({
     setPending((prev) => {
       const room = Math.max(0, MAX_PENDING_FILES - prev.length);
       if (room === 0) {
-        setLocalError(
+        flashError(
           `Можно прикрепить не больше ${MAX_PENDING_FILES} файлов`,
         );
         return prev;
@@ -269,7 +293,7 @@ export function Composer({
         });
       }
 
-      if (errorMsg) setLocalError(errorMsg);
+      if (errorMsg) flashError(errorMsg);
       return [...prev, ...nextItems].slice(0, MAX_PENDING_FILES);
     });
   }
@@ -851,7 +875,12 @@ export function Composer({
       )}
 
       {shownError && (
-        <p className="composer__error" role="alert" aria-live="assertive">
+        <p
+          key={`${shownError}-${errorTick}`}
+          className="composer__hint"
+          role="status"
+          aria-live="polite"
+        >
           {shownError}
         </p>
       )}
@@ -945,7 +974,7 @@ export function Composer({
           {/* Единый пикер: эмодзи, GIF, стикеры */}
           <UnifiedPicker
             open={pickerOpen}
-            portalRoot={composerEl}
+            portalRoot={pickerPortalRoot ?? composerEl}
             onRevealKeyboard={() => {
               areaRef.current?.focus();
             }}

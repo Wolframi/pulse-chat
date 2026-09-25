@@ -3,17 +3,12 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-import {
-  IconChevronLeft,
-  IconChevronRight,
-  IconExpand,
-  IconVolume,
-  IconVolumeOff,
-} from "@/lib/icons";
+import { IconVolume, IconVolumeOff } from "@/lib/icons";
 import { MediaVideo } from "@/components/chat/MediaVideo";
 import {
   getScreenAudioVolume,
@@ -25,16 +20,73 @@ export type ScreenSource = {
   id: string;
   label: string;
   stream: MediaStream;
+  kind?: "screen" | "camera";
+  ownerId?: string;
   /** Своя демонстрация — её звук локально не играет, ручка не нужна. */
   local?: boolean;
 };
 
+function ScreenInlineVolume({
+  owner,
+  label,
+}: {
+  owner: string;
+  label: string;
+}) {
+  const volume = useSyncExternalStore(
+    subscribeScreenAudioVolume,
+    () => getScreenAudioVolume(owner),
+    () => 1,
+  );
+  const lastVolumeRef = useRef(volume || 1);
+  const percent = Math.round(volume * 100);
+  const muted = volume <= 0;
+
+  const apply = (value: number) => {
+    const next = Math.min(1, Math.max(0, Number(value.toFixed(2))));
+    if (next > 0) lastVolumeRef.current = next;
+    setScreenAudioVolume(next, owner);
+  };
+
+  return (
+    <div
+      className="screen-vol-inline"
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        aria-label={muted ? `Включить звук ${label}` : `Выключить звук ${label}`}
+        title={muted ? "Включить звук" : "Выключить звук"}
+        onClick={() => apply(muted ? lastVolumeRef.current : 0)}
+      >
+        {muted ? <IconVolumeOff size={15} /> : <IconVolume size={15} />}
+      </button>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={percent}
+        aria-label={`Громкость ${label}`}
+        onChange={(event) => apply(Number(event.currentTarget.value) / 100)}
+      />
+      <output>{percent}</output>
+    </div>
+  );
+}
+
 function ScreenPane({
   source,
-  hideBadge = false,
+  selected = false,
+  selectable = false,
+  onSelect,
 }: {
   source: ScreenSource;
-  hideBadge?: boolean;
+  selected?: boolean;
+  selectable?: boolean;
+  onSelect?: () => void;
 }) {
   const paneRef = useRef<HTMLDivElement>(null);
 
@@ -49,23 +101,51 @@ function ScreenPane({
   return (
     <div
       ref={paneRef}
-      className="call__screen-pane"
+      className={`call__screen-pane ${selected ? "is-selected" : ""} ${
+        selectable ? "is-selectable" : ""
+      }`}
+      role={selectable ? "button" : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      aria-label={selectable ? `Выбрать ${source.label}` : undefined}
+      aria-pressed={selectable ? selected : undefined}
+      onClick={selectable ? onSelect : undefined}
+      onKeyDown={
+        selectable
+          ? (event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              onSelect?.();
+            }
+          : undefined
+      }
       onDoubleClick={toggleFullscreen}
       title="Двойное нажатие — на весь экран"
     >
-      <MediaVideo stream={source.stream} className="call__main is-screen" />
-      {hideBadge ? null : (
-        <em className="call__stage-badge">{source.label}</em>
-      )}
-      <button
-        type="button"
-        className="call__screen-fs"
-        aria-label={`${source.label} на весь экран`}
-        title="Во весь экран"
-        onClick={toggleFullscreen}
-      >
-        <IconExpand size={16} />
-      </button>
+      <div className="call__screen-media">
+        <MediaVideo
+          stream={source.stream}
+          className={`call__main ${
+            source.kind === "camera" ? "is-camera" : "is-screen"
+          }`}
+        />
+        {selectable && selected ? (
+          <em className="call__stage-badge"><span>Основной</span></em>
+        ) : null}
+      </div>
+      {source.kind !== "camera" && !source.local ? (
+        <footer
+          className="call__screen-controls"
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          <strong title={source.label}>{source.label}</strong>
+          <ScreenInlineVolume
+            owner={source.ownerId ?? source.id}
+            label={source.label}
+          />
+        </footer>
+      ) : null}
     </div>
   );
 }
@@ -202,16 +282,30 @@ export function ScreenShareStage({
   onCurrentChange?: (id: string | null) => void;
 }) {
   const liveSources = sources.filter(sourceHasLiveVideo);
-  const [index, setIndex] = useState(0);
   const count = liveSources.length;
-  const safeIndex = count === 0 ? 0 : Math.min(index, count - 1);
-  const current = liveSources[safeIndex];
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const current =
+    liveSources.find((source) => source.id === selectedId) ?? liveSources[0];
+  const currentId = current?.id ?? null;
+
+  const orderedSources = useMemo(() => {
+    if (!current || liveSources[0]?.id === current.id) return liveSources;
+    return [
+      current,
+      ...liveSources.filter((source) => source.id !== current.id),
+    ];
+  }, [current, liveSources]);
 
   useEffect(() => {
-    if (index > 0 && index >= count) setIndex(Math.max(0, count - 1));
-  }, [count, index]);
+    if (!count) {
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !liveSources.some((source) => source.id === selectedId)) {
+      setSelectedId(liveSources[0].id);
+    }
+  }, [count, liveSources, selectedId]);
 
-  const currentId = current?.id ?? null;
   useEffect(() => {
     onCurrentChange?.(currentId);
   }, [currentId, onCurrentChange]);
@@ -220,40 +314,27 @@ export function ScreenShareStage({
   if (!current) return null;
 
   const multi = count > 1;
+  const layoutCount = Math.min(count, 5);
 
   return (
-    <div className="call__screens">
-      {multi ? (
-        <div
-          className="call__screens-switcher"
-          role="navigation"
-          aria-label="Демонстрации экрана"
-        >
-          <button
-            type="button"
-            className="call__screens-arrow"
-            aria-label="Предыдущая демонстрация"
-            onClick={() => setIndex((value) => (value - 1 + count) % count)}
-          >
-            <IconChevronLeft size={18} />
-          </button>
-          <span className="call__screens-label">
-            {current.label}
-            <em>
-              {safeIndex + 1}/{count}
-            </em>
-          </span>
-          <button
-            type="button"
-            className="call__screens-arrow"
-            aria-label="Следующая демонстрация"
-            onClick={() => setIndex((value) => (value + 1) % count)}
-          >
-            <IconChevronRight size={18} />
-          </button>
-        </div>
-      ) : null}
-      <ScreenPane key={current.id} source={current} hideBadge={multi} />
+    <div
+      className={`call__screens call__screens--count-${layoutCount} ${
+        multi ? "is-multi" : ""
+      }`}
+      data-screen-count={count}
+      aria-label={
+        count === 1 ? "Основное видео звонка" : `${count} видео на основной сцене`
+      }
+    >
+      {orderedSources.map((source) => (
+        <ScreenPane
+          key={source.id}
+          source={source}
+          selected={source.id === current.id}
+          selectable={multi}
+          onSelect={() => setSelectedId(source.id)}
+        />
+      ))}
     </div>
   );
 }

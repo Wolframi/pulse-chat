@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import { defaultTransition, easeOutSoft, softSpring } from "@/lib/motion";
 import { useChat } from "@/hooks/useChat";
@@ -25,6 +33,10 @@ import {
   setRoomAudioTracks,
   stopAudioPlayback,
 } from "@/lib/audioPlayback";
+
+const SIDE_CHAT_MIN = 390;
+const SIDE_CHAT_WIDE = 500;
+const SIDE_CHAT_MAX = 560;
 
 const MediaLightbox = dynamic(
   () => import("@/components/chat/ImageLightbox").then((mod) => mod.MediaLightbox),
@@ -210,6 +222,15 @@ export function ChatApp() {
   const searchRef = useRef<HTMLInputElement>(null);
   const wasOfflineRef = useRef(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [compactCallLayout, setCompactCallLayout] = useState(false);
+  const [wideCallLayout, setWideCallLayout] = useState(false);
+  const [sideChatWidth, setSideChatWidth] = useState<number | null>(null);
+  const [callPickerOpen, setCallPickerOpen] = useState(false);
+  const [callPanelHeight, setCallPanelHeight] = useState<number | null>(null);
+  const [callResizing, setCallResizing] = useState(false);
+  const [callUtilityPortal, setCallUtilityPortal] = useState<HTMLDivElement | null>(null);
+  const callRoomRef = useRef<HTMLElement>(null);
+  const callResizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const query = window.matchMedia("(max-width: 920px)");
@@ -868,6 +889,119 @@ export function ChatApp() {
       (currentChat.type === "group" || currentChat.type === "channel"),
   );
 
+  const groupCallOpen = Boolean(
+    voice.active &&
+      !voice.minimized &&
+      currentChat?.type === "group" &&
+      session?.room === voice.active.groupId,
+  );
+
+  const groupTextChannels = useMemo(() => {
+    if (currentChat?.type !== "group") return [];
+    return [
+      {
+        id: currentChat.id,
+        title: "general",
+        hint: currentChat.topic || "Основной чат",
+      },
+    ];
+  }, [currentChat]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 641px) and (max-width: 1099px)");
+    const sync = () => setCompactCallLayout(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 1100px)");
+    const sync = () => setWideCallLayout(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    if (!groupCallOpen || !compactCallLayout) setCallPickerOpen(false);
+  }, [compactCallLayout, groupCallOpen]);
+
+  const clampCallHeight = useCallback((height: number) => {
+    const room = callRoomRef.current;
+    if (!room) return Math.max(220, height);
+    const header = room.querySelector<HTMLElement>(":scope > .room__header");
+    const available = room.getBoundingClientRect().height - (header?.offsetHeight ?? 0) - 10;
+    const maximum = Math.max(220, available - 220);
+    return Math.min(maximum, Math.max(220, Math.round(height)));
+  }, []);
+
+  const handleCallResizeStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!compactCallLayout || !groupCallOpen) return;
+      const dock = event.currentTarget.previousElementSibling;
+      if (!(dock instanceof HTMLElement)) return;
+      event.preventDefault();
+      callResizeRef.current = {
+        startY: event.clientY,
+        startHeight: dock.getBoundingClientRect().height,
+      };
+      setCallResizing(true);
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [compactCallLayout, groupCallOpen],
+  );
+
+  const handleCallResizeMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const resize = callResizeRef.current;
+      if (!resize) return;
+      setCallPanelHeight(clampCallHeight(resize.startHeight + event.clientY - resize.startY));
+    },
+    [clampCallHeight],
+  );
+
+  const handleCallResizeEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    callResizeRef.current = null;
+    setCallResizing(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const clampSideChatWidth = useCallback((width: number) => {
+    const room = callRoomRef.current;
+    const roomWidth = room?.clientWidth ?? 1200;
+    const maxByRoom = Math.max(SIDE_CHAT_MIN, roomWidth - 220 - 10);
+    const max = Math.min(SIDE_CHAT_MAX, maxByRoom);
+    return Math.min(max, Math.max(SIDE_CHAT_MIN, Math.round(width)));
+  }, []);
+
+  const handleSideResizeStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!wideCallLayout) return;
+      const stage = event.currentTarget.nextElementSibling;
+      if (!(stage instanceof HTMLElement)) return;
+      event.preventDefault();
+      callResizeRef.current = {
+        startY: event.clientX,
+        startHeight: stage.getBoundingClientRect().width,
+      };
+      setCallResizing(true);
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [wideCallLayout],
+  );
+
+  const handleSideResizeMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const resize = callResizeRef.current;
+      if (!resize || !wideCallLayout) return;
+      setSideChatWidth(clampSideChatWidth(resize.startHeight + resize.startY - event.clientX));
+    },
+    [clampSideChatWidth, wideCallLayout],
+  );
+
   const showMemberRail = Boolean(
     account &&
       currentChat &&
@@ -1487,16 +1621,38 @@ export function ChatApp() {
               />
             )}
 
-            <section className={`room ${session ? "" : "room--idle"} ${
+            <section
+              ref={callRoomRef}
+              className={`room ${session ? "" : "room--idle"} ${
               (active &&
                 session?.room === active.chatId &&
                 !minimized) ||
-              (voice.active &&
-                session?.room === voice.active.groupId &&
-                !voice.minimized)
+              groupCallOpen
                 ? "room--in-call"
                 : ""
-            }`}>
+            } ${groupCallOpen ? "room--group-call" : ""} ${
+              callResizing ? "is-resizing" : ""
+            } ${
+              wideCallLayout &&
+              ((active && session?.room === active.chatId && !minimized) || groupCallOpen) &&
+              (sideChatWidth ?? SIDE_CHAT_MIN) >= SIDE_CHAT_WIDE
+                ? "is-side-wide"
+                : ""
+            }`}
+              style={
+                {
+                  ...(groupCallOpen && callPanelHeight !== null
+                    ? { "--call-dock-height": `${callPanelHeight}px` }
+                    : {}),
+                  ...(wideCallLayout &&
+                  ((active && session?.room === active.chatId && !minimized) || groupCallOpen)
+                    ? {
+                        "--call-side-chat-width": `${sideChatWidth ?? SIDE_CHAT_MIN}px`,
+                      }
+                    : {}),
+                } as CSSProperties
+              }
+            >
               <header className="room__header">
                 <div className="room__heading">
                   <button
@@ -1851,7 +2007,85 @@ export function ChatApp() {
           }`}
         />
 
+              {groupCallOpen ? (
+                <div
+                  className="call-layout__resize"
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label="Изменить высоту звонка и чата"
+                  aria-valuemin={220}
+                  aria-valuenow={callPanelHeight ?? undefined}
+                  tabIndex={0}
+                  onPointerDown={handleCallResizeStart}
+                  onPointerMove={handleCallResizeMove}
+                  onPointerUp={handleCallResizeEnd}
+                  onPointerCancel={handleCallResizeEnd}
+                  onDoubleClick={() => setCallPanelHeight(null)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                    event.preventDefault();
+                    const dock = event.currentTarget.previousElementSibling;
+                    const current =
+                      callPanelHeight ??
+                      (dock instanceof HTMLElement
+                        ? dock.getBoundingClientRect().height
+                        : 420);
+                    setCallPanelHeight(
+                      clampCallHeight(current + (event.key === "ArrowDown" ? 24 : -24)),
+                    );
+                  }}
+                >
+                  <span aria-hidden />
+                </div>
+              ) : null}
+
+              {wideCallLayout &&
+              ((active && session?.room === active.chatId && !minimized) || groupCallOpen) ? (
+                <div
+                  className="call-layout__resize-v"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="Изменить ширину звонка и чата"
+                  aria-valuemin={SIDE_CHAT_MIN}
+                  aria-valuemax={SIDE_CHAT_MAX}
+                  aria-valuenow={sideChatWidth ?? SIDE_CHAT_MIN}
+                  tabIndex={0}
+                  onPointerDown={handleSideResizeStart}
+                  onPointerMove={handleSideResizeMove}
+                  onPointerUp={handleCallResizeEnd}
+                  onPointerCancel={handleCallResizeEnd}
+                  onDoubleClick={() => setSideChatWidth(null)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+                    event.preventDefault();
+                    const current = sideChatWidth ?? SIDE_CHAT_MIN;
+                    setSideChatWidth(
+                      clampSideChatWidth(current + (event.key === "ArrowLeft" ? 24 : -24)),
+                    );
+                  }}
+                >
+                  <span aria-hidden />
+                </div>
+              ) : null}
+
               <div className="room__stage">
+              <div className={groupCallOpen ? "call-layout__chat" : "room__stage-fill"}>
+              {groupCallOpen ? (
+                <header className="call-layout__chat-head">
+                  <IconHash size={16} />
+                  <span>
+                    <strong>
+                      {groupTextChannels.find((channel) => channel.id === session?.room)?.title ||
+                        "general"}
+                    </strong>
+                    <em>
+                      {groupTextChannels.find((channel) => channel.id === session?.room)?.hint ||
+                        currentChat?.topic ||
+                        "Основной чат"}
+                    </em>
+                  </span>
+                </header>
+              ) : null}
               <AudioPlaybackBar
                 currentRoomId={session?.room}
                 chats={chats}
@@ -2009,6 +2243,12 @@ export function ChatApp() {
                       loading={historyLoading}
                       unreadAtOpen={unreadAtOpen}
                       peerReadAt={peerReadAt}
+                      showOwnAvatar={
+                        wideCallLayout &&
+                        ((active && session?.room === active.chatId && !minimized) ||
+                          groupCallOpen) &&
+                        (sideChatWidth ?? SIDE_CHAT_MIN) >= SIDE_CHAT_WIDE
+                      }
                       onOpenStickerPack={handleOpenStickerPack}
                       onReply={handleReply}
                       onOpenImage={handleOpenImage}
@@ -2069,6 +2309,10 @@ export function ChatApp() {
                     onAddSticker={uploadStickerFile}
                     onRemoveSticker={removeStickerFromPack}
                     onStickerPick={handleSendSticker}
+                    pickerPortalRoot={
+                      groupCallOpen && compactCallLayout ? callUtilityPortal : null
+                    }
+                    onPickerOpenChange={setCallPickerOpen}
                     mentionMembers={chatMembers}
                     editingText={editingMessage?.text || null}
                     onCancelEdit={() => setEditingMessage(null)}
@@ -2115,6 +2359,46 @@ export function ChatApp() {
                   )}
                 </>
               )}
+              </div>
+              {groupCallOpen ? (
+                <aside
+                  className={`call-layout__utility ${callPickerOpen ? "is-picker" : ""}`}
+                  aria-label={
+                    callPickerOpen ? "Эмодзи, стикеры и GIF" : "Текстовые каналы"
+                  }
+                >
+                  <header className="call-layout__utility-head">
+                    <strong>
+                      {callPickerOpen ? "Эмодзи, стикеры и GIF" : "Текстовые каналы"}
+                    </strong>
+                    <span>
+                      {callPickerOpen
+                        ? "Выберите содержимое для сообщения"
+                        : currentChat?.title || "Группа"}
+                    </span>
+                  </header>
+                  <div ref={setCallUtilityPortal} className="call-layout__utility-body">
+                    {callPickerOpen ? null : (
+                      <nav className="call-layout__channels" aria-label="Текстовые каналы группы">
+                        {groupTextChannels.map((channel) => (
+                          <button
+                            key={channel.id}
+                            type="button"
+                            className={session?.room === channel.id ? "is-active" : ""}
+                            onClick={() => handleOpenChat(channel.id)}
+                          >
+                            <IconHash size={18} />
+                            <span>
+                              <strong>{channel.title}</strong>
+                              <em>{channel.hint}</em>
+                            </span>
+                          </button>
+                        ))}
+                      </nav>
+                    )}
+                  </div>
+                </aside>
+              ) : null}
               </div>
             </section>
 

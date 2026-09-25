@@ -37,6 +37,8 @@ type MessageListProps = {
   onMarkRead?: () => void;
   peerReadAt?: number | null;
   canModerate?: boolean;
+  /** Wide side chat: own messages sit on the left and keep an avatar. */
+  showOwnAvatar?: boolean;
 };
 
 function sameDay(a: number, b: number) {
@@ -163,6 +165,7 @@ export function MessageList({
   onMarkRead,
   peerReadAt = null,
   canModerate = false,
+  showOwnAvatar = false,
 }: MessageListProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const nearBottomRef = useRef(true);
@@ -519,7 +522,7 @@ export function MessageList({
           peopleById={peopleById}
           showMeta={showMeta}
           showAvatar={showAvatar}
-          hideAvatarColumn={opts?.hideAvatarColumn}
+          hideAvatarColumn={(mine && !showOwnAvatar) || opts?.hideAvatarColumn}
           attachPrev={attachPrev}
           attachNext={attachNext}
           animate={animate}
@@ -601,17 +604,23 @@ export function MessageList({
               if (segment.type === "single") {
                 return renderItem(segment.item, { skipDay: true });
               }
+              const mine = segment.items[0]?.mine ?? false;
               return (
-                <div key={segment.key} className="bubble-group">
-                  <div className="bubble-group__rail">
-                    <div className="bubble-group__avatar">
-                      <Avatar
-                        name={segment.author.name}
-                        src={segment.author.avatarUrl}
-                        size="md"
-                      />
+                <div
+                  key={segment.key}
+                  className={`bubble-group ${mine ? "bubble-group--mine" : ""}`}
+                >
+                  {!mine || showOwnAvatar ? (
+                    <div className="bubble-group__rail">
+                      <div className="bubble-group__avatar">
+                        <Avatar
+                          name={segment.author.name}
+                          src={segment.author.avatarUrl}
+                          size="md"
+                        />
+                      </div>
                     </div>
-                  </div>
+                  ) : null}
                   <div className="bubble-group__body">
                     {segment.items.map((item) =>
                       renderItem(item, {
