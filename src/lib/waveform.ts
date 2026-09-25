@@ -5,22 +5,37 @@ export function peaksFromChannelData(
 ): number[] {
   const count = Math.max(8, Math.min(barCount, 192));
   const block = Math.max(1, Math.floor(data.length / count));
-  const peaks: number[] = [];
-  let max = 0.0001;
+  const levels: number[] = [];
 
   for (let i = 0; i < count; i += 1) {
     const start = i * block;
     const end = Math.min(data.length, start + block);
     let peak = 0;
+    let sumSq = 0;
+    const n = Math.max(1, end - start);
     for (let j = start; j < end; j += 1) {
       const v = Math.abs(data[j] || 0);
       if (v > peak) peak = v;
+      sumSq += v * v;
     }
-    peaks.push(peak);
-    if (peak > max) max = peak;
+    // Brickwalled pop is all peaks ~1; RMS still follows the mix.
+    levels.push(peak * 0.35 + Math.sqrt(sumSq / n) * 0.65);
   }
 
-  return peaks.map((peak) => Math.min(1, Math.max(0.08, peak / max)));
+  let max = 0.0001;
+  let min = Number.POSITIVE_INFINITY;
+  for (const level of levels) {
+    if (level > max) max = level;
+    if (level < min) min = level;
+  }
+  const span = max - min;
+  // Loud masters sit in a tiny RMS band; stretch that band so verses/choruses show.
+  const tight = span < max * 0.28;
+  return levels.map((level) => {
+    const n = tight ? (level - min) / (span || 1) : level / max;
+    const shaped = tight ? n : Math.pow(Math.min(1, Math.max(0, n)), 0.55);
+    return Math.min(1, Math.max(0.1, shaped));
+  });
 }
 
 function resamplePeaks(peaks: number[], count: number): number[] {
@@ -51,7 +66,7 @@ export async function peaksFromAudioUrl(
   barCount: number,
   signal?: AbortSignal,
 ): Promise<{ peaks: number[]; duration: number } | null> {
-  const key = `${url}#${barCount}`;
+  const key = `${url}#${barCount}#v2`;
   const cached = waveformCache.get(key);
   if (cached) return cached;
   try {

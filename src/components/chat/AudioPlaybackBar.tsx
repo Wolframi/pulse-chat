@@ -52,6 +52,7 @@ export function AudioPlaybackBar({
   const volDragRef = useRef(false);
   const progressRef = useRef<HTMLElement>(null);
   const elapsedRef = useRef<HTMLSpanElement>(null);
+  const holdRatioRef = useRef<number | null>(null);
   const [volHover, setVolHover] = useState(false);
   const [volDrag, setVolDrag] = useState(false);
   const volLeaveRef = useRef<number>(0);
@@ -69,6 +70,7 @@ export function AudioPlaybackBar({
     const rect = target.getBoundingClientRect();
     if (rect.width <= 0 || total <= 0) return;
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    holdRatioRef.current = ratio;
     if (progressRef.current) progressRef.current.style.width = `${ratio * 100}%`;
     if (elapsedRef.current) elapsedRef.current.textContent = formatPlaybackTime(ratio * total);
     if (commit) seekAudioPlayback(ratio * total);
@@ -81,10 +83,12 @@ export function AudioPlaybackBar({
       if (!dragRef.current) {
         const live = getSmoothPlaybackTime();
         const total = live.duration;
-        const progress = total > 0 ? Math.min(live.currentTime / total, 1) : 0;
+        let progress = total > 0 ? Math.min(live.currentTime / total, 1) : 0;
+        if (!live.playing && holdRatioRef.current != null) progress = holdRatioRef.current;
+        if (live.playing) holdRatioRef.current = null;
         if (progressRef.current) progressRef.current.style.width = `${progress * 100}%`;
         if (elapsedRef.current) {
-          const show = live.playing || live.currentTime > 0 ? live.currentTime : 0;
+          const show = live.playing || progress > 0 ? progress * total : 0;
           elapsedRef.current.textContent = formatPlaybackTime(show);
         }
       }

@@ -149,7 +149,10 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
         progressLockRef.current = incoming;
       }
       const total = progressLockRef.current || now.duration;
-      const t = now.currentTime;
+      let t = now.currentTime;
+      if (!now.playing && total > 0) {
+        t = progressRef.current * total;
+      }
       const progress = total > 0 ? Math.min(Math.max(t / total, 0), 1) : 0;
       progressRef.current = progress;
       paint(progress);

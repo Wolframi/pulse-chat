@@ -56,11 +56,18 @@ const MAX_PREFETCH = 1;
 
 let audioEl: HTMLAudioElement | null = null;
 let playbackCtx: AudioContext | null = null;
-let mediaSource: MediaElementAudioSourceNode | null = null;
 let voiceGain: GainNode | null = null;
-let musicGain: GainNode | null = null;
 let pendingSeek: number | null = null;
+/** Keep showing this time after a scrub until the element actually lands there. */
+let seekHoldUntil = 0;
 let lastTimeEmit = 0;
+let usingBuffer = false;
+let voiceBuffer: AudioBuffer | null = null;
+let bufferSource: AudioBufferSourceNode | null = null;
+let bufferGen = 0;
+let bufferOffset = 0;
+let bufferStartedAt = 0;
+const bufferCache = new Map<string, AudioBuffer>();
 let bound = false;
 let closing = false;
 let lastAudibleVolume = 1;
@@ -84,6 +91,9 @@ let watchdog = 0;
 let lastProgressAt = 0;
 let lastProgressTime = -1;
 let blobSrc: string | null = null;
+let bufferingTimer = 0;
+/** Don't flash the play-button spinner on instant seeks / cached hits. */
+const SHOW_BUFFERING_MS = 280;
 
 function readStoredRate(): number {
   if (typeof window === "undefined") return 1;
@@ -124,7 +134,14 @@ function emit() {
   listeners.forEach((listener) => listener());
 }
 
+function clearBufferingTimer() {
+  if (!bufferingTimer) return;
+  window.clearTimeout(bufferingTimer);
+  bufferingTimer = 0;
+}
+
 function patch(partial: Partial<AudioPlaybackState>) {
+  if (partial.buffering === false) clearBufferingTimer();
   state = { ...state, ...partial };
   emit();
 }
@@ -224,11 +241,161 @@ export function resetPlaybackClock(time?: number) {
   clockRate = audioEl?.playbackRate || state.playbackRate || 1;
 }
 
+function mediaNear(audio: HTMLAudioElement, time: number) {
+  return Math.abs(audio.currentTime - time) <= 0.35;
+}
+
+function holdSeek(time: number) {
+  pendingSeek = Math.max(time, 0);
+  seekHoldUntil = nowMs() + 400;
+  resetPlaybackClock(pendingSeek);
+}
+
+function killBufferSource() {
+  if (!bufferSource) return;
+  const node = bufferSource;
+  bufferSource = null;
+  try {
+    node.onended = null;
+  } catch {
+    /* ignore */
+  }
+  try {
+    node.stop();
+  } catch {
+    /* ignore */
+  }
+  try {
+    node.disconnect();
+  } catch {
+    /* ignore */
+  }
+}
+
+function readBufferTime() {
+  if (!usingBuffer) return pendingSeek ?? 0;
+  if (!wantPlay || !bufferSource || !playbackCtx) return bufferOffset;
+  const t = bufferOffset + (playbackCtx.currentTime - bufferStartedAt) * (clockRate || 1);
+  const dur = voiceBuffer?.duration || 0;
+  return dur > 0 ? Math.min(Math.max(t, 0), dur) : Math.max(t, 0);
+}
+
+function applyPreservesPitch(audio: HTMLAudioElement) {
+  audio.preservesPitch = true;
+  const ext = audio as HTMLAudioElement & {
+    webkitPreservesPitch?: boolean;
+    mozPreservesPitch?: boolean;
+  };
+  ext.webkitPreservesPitch = true;
+  ext.mozPreservesPitch = true;
+}
+
+function applyVoiceMix() {
+  if (!voiceGain) return;
+  if (usingBuffer && state.current?.kind === "voice") {
+    voiceGain.gain.value = state.volume;
+    return;
+  }
+  voiceGain.gain.value = 0;
+}
+
+function startBufferAt(offset: number) {
+  if (!playbackCtx || !voiceBuffer) return false;
+  killBufferSource();
+  const gen = (bufferGen += 1);
+  const dur = voiceBuffer.duration;
+  const t = dur > 0 ? Math.min(Math.max(offset, 0), Math.max(dur - 0.02, 0)) : Math.max(offset, 0);
+  if (dur > 0 && t >= dur - 0.03) {
+    bufferOffset = 0;
+    pendingSeek = 0;
+    wantPlay = false;
+    resetPlaybackClock(0);
+    const next = peekAdjacentTrack(1);
+    if (next) {
+      void playAudioTrack(next, { auto: true });
+      return true;
+    }
+    patch({ playing: false, buffering: false, currentTime: 0 });
+    return true;
+  }
+  const srcNode = playbackCtx.createBufferSource();
+  srcNode.buffer = voiceBuffer;
+  srcNode.playbackRate.value = 1;
+  applyVoiceMix();
+  srcNode.connect(voiceGain || playbackCtx.destination);
+  srcNode.onended = () => {
+    if (gen !== bufferGen) return;
+    if (!wantPlay) return;
+    bufferSource = null;
+    wantPlay = false;
+    bufferOffset = 0;
+    pendingSeek = 0;
+    resetPlaybackClock(0);
+    const next = peekAdjacentTrack(1);
+    if (next) {
+      void playAudioTrack(next, { auto: true });
+      return;
+    }
+    patch({ playing: false, buffering: false, currentTime: 0 });
+  };
+  srcNode.start(0, t);
+  bufferSource = srcNode;
+  bufferOffset = t;
+  bufferStartedAt = playbackCtx.currentTime;
+  pendingSeek = t;
+  resetPlaybackClock(t);
+  adoptDuration(dur, "decoded");
+  patch({ playing: true, buffering: false, currentTime: t, duration: dur || state.duration });
+  return true;
+}
+
+async function decodeVoiceBuffer(src: string) {
+  const hit = bufferCache.get(src);
+  if (hit) return hit;
+  try {
+    const response = await fetch(src);
+    if (!response.ok) return null;
+    const copy = await response.arrayBuffer();
+    ensurePlaybackContext();
+    if (!playbackCtx) return null;
+    const decoded = await playbackCtx.decodeAudioData(copy.slice(0));
+    if (bufferCache.size > 24) {
+      const oldest = bufferCache.keys().next().value;
+      if (oldest) bufferCache.delete(oldest);
+    }
+    bufferCache.set(src, decoded);
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+function trustedMediaTime(audio: HTMLAudioElement) {
+  if (usingBuffer) return readBufferTime();
+  if (pendingSeek == null) return audio.currentTime;
+  // Cue-less WebM often reports the new time once, then snaps back. While
+  // paused the scrub position is the only source of truth.
+  if (audio.paused || !wantPlay) return pendingSeek;
+  if (mediaNear(audio, pendingSeek) && nowMs() >= seekHoldUntil) {
+    pendingSeek = null;
+    return audio.currentTime;
+  }
+  return pendingSeek;
+}
+
 export function getLivePlaybackTime() {
+  if (usingBuffer && state.current && !closing) {
+    return {
+      currentTime: readBufferTime(),
+      duration: state.duration,
+      playing: Boolean(wantPlay && bufferSource),
+      rate: state.playbackRate || 1,
+    };
+  }
   const audio = audioEl;
   if (audio && state.current && !closing && audio.src) {
     return {
-      currentTime: pendingSeek ?? audio.currentTime,
+      currentTime: trustedMediaTime(audio),
       duration: state.duration,
       playing:
         !audio.paused &&
@@ -239,7 +406,7 @@ export function getLivePlaybackTime() {
     };
   }
   return {
-    currentTime: state.currentTime,
+    currentTime: pendingSeek ?? state.currentTime,
     duration: state.duration,
     playing: state.playing,
     rate: state.playbackRate || 1,
@@ -252,7 +419,18 @@ export function getSmoothPlaybackTime() {
   const rate = live.rate || 1;
   const wall = nowMs();
 
+  if (usingBuffer) {
+    const t = readBufferTime();
+    return { currentTime: t, duration, playing: Boolean(wantPlay && bufferSource), rate };
+  }
+
   if (!live.playing) {
+    if (pendingSeek != null) {
+      clockMedia = pendingSeek;
+      clockWall = wall;
+      clockRate = rate;
+      return { currentTime: pendingSeek, duration, playing: false, rate };
+    }
     const seeking = Boolean(audioEl && !closing && audioEl.seeking);
     if (seeking && clockWall) {
       return { currentTime: clockMedia, duration, playing: false, rate };
@@ -365,7 +543,6 @@ function applyPendingSeek(audio: HTMLAudioElement) {
     /* not seekable yet */
     return;
   }
-  pendingSeek = null;
   adoptDuration(readMediaDuration(audio));
   patch({ currentTime: time });
   resetPlaybackClock(time);
@@ -376,50 +553,39 @@ function audioContextCtor() {
     (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
 }
 
-function ensurePlaybackGraph(audio: HTMLAudioElement) {
-  if (mediaSource || typeof window === "undefined") return;
+function ensurePlaybackContext() {
+  if (playbackCtx || typeof window === "undefined") return;
   const Ctor = audioContextCtor();
   if (!Ctor) return;
   try {
     const ctx = new Ctor();
-    const source = ctx.createMediaElementSource(audio);
-    const splitter = ctx.createChannelSplitter(2);
-    const merger = ctx.createChannelMerger(2);
     const voice = ctx.createGain();
-    const music = ctx.createGain();
     voice.gain.value = 0;
-    music.gain.value = 1;
-    source.connect(music);
-    music.connect(ctx.destination);
-    source.connect(splitter);
-    splitter.connect(merger, 0, 0);
-    splitter.connect(merger, 0, 1);
-    splitter.connect(merger, 1, 0);
-    splitter.connect(merger, 1, 1);
-    merger.connect(voice);
     voice.connect(ctx.destination);
     playbackCtx = ctx;
-    mediaSource = source;
     voiceGain = voice;
-    musicGain = music;
   } catch {
     playbackCtx = null;
-    mediaSource = null;
     voiceGain = null;
-    musicGain = null;
-  }
-}
-
-function setVoiceBothEars(on: boolean) {
-  if (voiceGain) voiceGain.gain.value = on ? 1 : 0;
-  if (musicGain) musicGain.gain.value = on ? 0 : 1;
-  if (on && playbackCtx?.state === "suspended") {
-    void playbackCtx.resume().catch(() => undefined);
   }
 }
 
 function setBuffering(on: boolean) {
-  if (state.buffering !== on) patch({ buffering: on });
+  if (!on) {
+    clearBufferingTimer();
+    if (state.buffering) patch({ buffering: false });
+    return;
+  }
+  if (state.buffering || bufferingTimer) return;
+  if (typeof window === "undefined") {
+    patch({ buffering: true });
+    return;
+  }
+  bufferingTimer = window.setTimeout(() => {
+    bufferingTimer = 0;
+    if (!wantPlay || closing) return;
+    if (!state.buffering) patch({ buffering: true });
+  }, SHOW_BUFFERING_MS);
 }
 
 function releaseBlobSrc() {
@@ -469,6 +635,7 @@ function handlePlayError(error: unknown) {
 }
 
 function checkStall() {
+  if (usingBuffer) return;
   const audio = audioEl;
   if (!audio || closing || !wantPlay || !state.current) {
     stopWatchdog();
@@ -547,8 +714,10 @@ async function recoverPlayback() {
         src = objectUrl;
       }
     }
-    pendingSeek = time > 0 ? time : null;
+    if (time > 0) holdSeek(time);
+    else pendingSeek = null;
     audio.src = src;
+    applyPreservesPitch(audio);
     audio.defaultPlaybackRate = state.playbackRate;
     audio.playbackRate = state.playbackRate;
     audio.volume = state.volume;
@@ -563,7 +732,7 @@ function bindAudio(audio: HTMLAudioElement) {
   if (bound) return;
   bound = true;
   audio.preload = "auto";
-  audio.preservesPitch = true;
+  applyPreservesPitch(audio);
   audio.addEventListener("loadedmetadata", () => {
     if (closing) return;
     applyPendingSeek(audio);
@@ -584,7 +753,23 @@ function bindAudio(audio: HTMLAudioElement) {
   });
   audio.addEventListener("seeked", () => {
     if (closing) return;
-    resetPlaybackClock();
+    if (pendingSeek != null && !mediaNear(audio, pendingSeek)) {
+      try {
+        audio.currentTime = pendingSeek;
+      } catch {
+        /* ignore */
+      }
+      resetPlaybackClock(pendingSeek);
+      touchProgress();
+      if (!mediaNear(audio, pendingSeek) && wantPlay && !usingBuffer) {
+        recoveries = Math.max(recoveries, BLOB_FALLBACK_ATTEMPT - 1);
+        void recoverPlayback();
+      }
+      return;
+    }
+    pendingSeek = null;
+    seekHoldUntil = 0;
+    resetPlaybackClock(audio.currentTime);
     touchProgress();
     if (wantPlay && audio.paused && !audio.ended) {
       void audio.play().catch(handlePlayError);
@@ -599,7 +784,8 @@ function bindAudio(audio: HTMLAudioElement) {
   });
   audio.addEventListener("playing", () => {
     if (closing) return;
-    resetPlaybackClock();
+    applyPendingSeek(audio);
+    resetPlaybackClock(pendingSeek ?? audio.currentTime);
     touchProgress();
     setBuffering(false);
   });
@@ -610,14 +796,15 @@ function bindAudio(audio: HTMLAudioElement) {
   audio.addEventListener("timeupdate", () => {
     if (closing) return;
     markProgress(audio);
-    if (pendingSeek != null) return;
+    const trusted = trustedMediaTime(audio);
+    if (pendingSeek != null && !mediaNear(audio, pendingSeek)) return;
     const now = typeof performance !== "undefined" ? performance.now() : Date.now();
     const minGap = audio.playbackRate > 1.2 ? 220 : 160;
     if (now - lastTimeEmit < minGap && !audio.paused) return;
     lastTimeEmit = now;
     adoptDuration(readMediaDuration(audio));
     patch({
-      currentTime: audio.currentTime,
+      currentTime: trusted,
       duration: state.duration || readMediaDuration(audio),
     });
   });
@@ -628,18 +815,25 @@ function bindAudio(audio: HTMLAudioElement) {
     }
     wantPlay = true;
     startWatchdog();
-    resetPlaybackClock();
+    applyPendingSeek(audio);
+    resetPlaybackClock(pendingSeek ?? audio.currentTime);
     patch({ playing: true, visible: true });
   });
   audio.addEventListener("pause", () => {
     if (closing || audio.ended) return;
     if (recovering) return;
-    wantPlay = false;
+    // Only an explicit toggle/stop clears wantPlay. Seek and buffer gaps fire
+    // pause on their own — keep the intent so jumping back still resumes.
+    if (wantPlay) {
+      setBuffering(true);
+      startWatchdog();
+      return;
+    }
     stopWatchdog();
     patch({
       playing: false,
       buffering: false,
-      currentTime: pendingSeek ?? audio.currentTime,
+      currentTime: trustedMediaTime(audio),
     });
   });
   audio.addEventListener("ended", () => {
@@ -673,8 +867,9 @@ function getAudio() {
   if (!audioEl) {
     audioEl = new Audio();
     bindAudio(audioEl);
-    ensurePlaybackGraph(audioEl);
-    audioEl.playbackRate = state.playbackRate;
+    applyPreservesPitch(audioEl);
+    ensurePlaybackContext();
+    audioEl.playbackRate = 1;
     audioEl.volume = state.volume;
   }
   return audioEl;
@@ -689,7 +884,8 @@ function hydratePrefs() {
   }
   const audio = getAudio();
   if (audio) {
-    audio.playbackRate = playbackRate;
+    applyPreservesPitch(audio);
+    audio.playbackRate = 1;
     audio.volume = volume;
   }
 }
@@ -758,8 +954,8 @@ export async function playAudioTrack(
   closing = false;
   const audio = getAudio();
   if (!audio) return;
-  ensurePlaybackGraph(audio);
-  setVoiceBothEars(track.kind === "voice");
+  if (track.kind === "voice") ensurePlaybackContext();
+  applyPreservesPitch(audio);
   if (playbackCtx?.state === "suspended") {
     void playbackCtx.resume().catch(() => undefined);
   }
@@ -772,12 +968,64 @@ export async function playAudioTrack(
     audio.src &&
     !audio.error;
 
-  if (opts?.time != null) pendingSeek = opts.time;
+  if (opts?.time != null) holdSeek(opts.time);
   wantPlay = true;
   startWatchdog();
 
+  if (track.kind === "voice" && (state.playbackRate || 1) === 1) {
+    if (!same) {
+      patch({
+        current: track,
+        visible: true,
+        playing: false,
+        currentTime: opts?.time ?? 0,
+      });
+    }
+    setBuffering(true);
+    audio.pause();
+    const decoded = await decodeVoiceBuffer(track.src);
+    if (closing) return;
+    if (decoded) {
+      usingBuffer = true;
+      voiceBuffer = decoded;
+      const fresh = playlistFor(track).find((item) => sameTrack(item, track)) || track;
+      if (!same) {
+        autoAdvanced = Boolean(opts?.auto);
+        recoveries = 0;
+        durationSource = "decoded";
+        patch({
+          current: fresh,
+          visible: true,
+          playing: false,
+          currentTime: opts?.time ?? 0,
+          duration: decoded.duration,
+        });
+        setBuffering(true);
+      } else {
+        patch({ current: fresh, visible: true, duration: decoded.duration });
+      }
+      adoptDuration(decoded.duration, "decoded");
+      usingBuffer = true;
+      startBufferAt(opts?.time ?? pendingSeek ?? 0);
+      stopWatchdog();
+      const upcoming = peekAdjacentTrack(1, fresh);
+      if (upcoming) prefetchAudioSrc(upcoming.src);
+      return;
+    }
+    usingBuffer = false;
+    voiceBuffer = null;
+  } else if (usingBuffer) {
+    killBufferSource();
+    usingBuffer = false;
+    voiceBuffer = null;
+    applyVoiceMix();
+  }
+
   if (same) {
     if (!opts?.auto) recoveries = 0;
+    applyPreservesPitch(audio);
+    audio.defaultPlaybackRate = state.playbackRate;
+    audio.playbackRate = state.playbackRate;
     applyPendingSeek(audio);
     if (audio.paused) await audio.play().catch(handlePlayError);
     return;
@@ -794,14 +1042,14 @@ export async function playAudioTrack(
     current: fresh,
     visible: true,
     playing: false,
-    buffering: true,
     currentTime: opts?.time ?? 0,
     duration: 0,
   });
+  setBuffering(true);
 
   audio.pause();
   audio.preload = "auto";
-  audio.preservesPitch = true;
+  applyPreservesPitch(audio);
   releaseWarmer(fresh.src);
   audio.src = fresh.src;
   releaseBlobSrc();
@@ -817,6 +1065,21 @@ export async function playAudioTrack(
 }
 
 export function toggleAudioPlayback() {
+  if (usingBuffer) {
+    if (wantPlay && bufferSource) {
+      bufferOffset = readBufferTime();
+      pendingSeek = bufferOffset;
+      wantPlay = false;
+      stopWatchdog();
+      killBufferSource();
+      resetPlaybackClock(bufferOffset);
+      patch({ playing: false, currentTime: bufferOffset, buffering: false });
+      return;
+    }
+    wantPlay = true;
+    startBufferAt(pendingSeek ?? bufferOffset);
+    return;
+  }
   const audio = getAudio();
   if (!audio || !state.current) return;
   if (audio.paused) {
@@ -828,6 +1091,7 @@ export function toggleAudioPlayback() {
       void recoverPlayback();
       return;
     }
+    applyPendingSeek(audio);
     void audio.play().catch(handlePlayError);
     return;
   }
@@ -837,31 +1101,70 @@ export function toggleAudioPlayback() {
 }
 
 export function seekAudioPlayback(time: number) {
+  const keepPlaying = wantPlay || state.playing;
+  holdSeek(time);
+  patch({ currentTime: pendingSeek ?? time });
+  if (usingBuffer) {
+    bufferOffset = pendingSeek ?? time;
+    if (keepPlaying) {
+      wantPlay = true;
+      startBufferAt(bufferOffset);
+    } else resetPlaybackClock(bufferOffset);
+    return;
+  }
   const audio = getAudio();
-  pendingSeek = Math.max(time, 0);
-  resetPlaybackClock(pendingSeek);
-  patch({ currentTime: pendingSeek });
   if (!audio?.src) return;
   if (audio.error) {
     recoveries = 0;
     void recoverPlayback();
     return;
   }
-  // Seeking into an unloaded range can hang; give the watchdog a fresh window.
-  if (wantPlay) startWatchdog();
+  if (keepPlaying) {
+    wantPlay = true;
+    startWatchdog();
+  }
   applyPendingSeek(audio);
+  if (keepPlaying && audio.paused) void audio.play().catch(handlePlayError);
 }
 
 export function setAudioPlaybackRate(rate: number) {
   const next = PLAYBACK_RATES.includes(rate as PlaybackRate) ? rate : 1;
-  const audio = getAudio();
-  if (audio) {
-    audio.preservesPitch = true;
-    audio.playbackRate = next;
-  }
-  resetPlaybackClock();
+  const t = usingBuffer
+    ? readBufferTime()
+    : audioEl && !closing
+      ? trustedMediaTime(audioEl)
+      : state.currentTime;
   patch({ playbackRate: next });
   persistPrefs();
+  clockRate = next;
+
+  if (usingBuffer && state.current) {
+    const track = state.current;
+    killBufferSource();
+    usingBuffer = false;
+    applyVoiceMix();
+    const audio = getAudio();
+    if (audio) {
+      applyPreservesPitch(audio);
+      if (audio.src !== track.src) audio.src = track.src;
+      audio.volume = state.volume;
+      audio.defaultPlaybackRate = next;
+      audio.playbackRate = next;
+      holdSeek(t);
+      applyPendingSeek(audio);
+      resetPlaybackClock(t);
+      if (wantPlay) void audio.play().catch(handlePlayError);
+    }
+    return;
+  }
+
+  const audio = getAudio();
+  if (audio) {
+    applyPreservesPitch(audio);
+    audio.defaultPlaybackRate = next;
+    audio.playbackRate = next;
+  }
+  resetPlaybackClock(t);
 }
 
 export function cycleAudioPlaybackRate() {
@@ -876,6 +1179,7 @@ export function setAudioVolume(volume: number) {
   const audio = getAudio();
   if (audio) audio.volume = next;
   patch({ volume: next });
+  applyVoiceMix();
   persistPrefs();
 }
 
@@ -901,6 +1205,9 @@ export function stopAudioPlayback() {
   recoveries = 0;
   stopWatchdog();
   pendingSeek = null;
+  killBufferSource();
+  usingBuffer = false;
+  voiceBuffer = null;
   durationSource = "none";
   resetPlaybackClock(0);
   const audio = getAudio();
