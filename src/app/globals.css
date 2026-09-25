@@ -1802,9 +1802,10 @@ button:active:not(:disabled) {
   position: absolute;
   top: 0;
   right: 0;
-  height: 100%;
-  aspect-ratio: 1;
+  bottom: 0;
+  height: auto;
   width: auto;
+  aspect-ratio: 1;
   display: grid;
   place-items: center;
   border: 0;
@@ -1812,6 +1813,12 @@ button:active:not(:disabled) {
   background: #ed4245;
   color: #fff;
   cursor: pointer;
+  visibility: hidden;
+}
+
+.channel-swipe.is-open .channel-swipe__delete,
+.channel-swipe.is-dragging .channel-swipe__delete {
+  visibility: visible;
 }
 
 .channel-swipe__delete:hover {
@@ -3280,6 +3287,50 @@ button:active:not(:disabled) {
     left: -6px;
     right: auto;
     transform: none;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .composer {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .composer.composer--picker {
+    padding-bottom: 0;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .composer__box {
+    flex-shrink: 0;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .unified-picker {
+    position: relative;
+    bottom: auto;
+    left: auto;
+    right: auto;
+    top: auto;
+    width: calc(100% + 36px);
+    max-width: none;
+    margin-left: -18px;
+    margin-right: -18px;
+    height: var(--picker-height, min(340px, 42dvh));
+    max-height: min(340px, 46dvh);
+    min-height: 220px;
+    flex-shrink: 0;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    box-shadow: none;
+    z-index: 4;
   }
 }
 
@@ -10009,13 +10060,14 @@ button:active:not(:disabled) {
 @media (min-width: 1100px) {
   @container call-stage (min-width: 721px) {
     .room.room--in-call .call__stage-body {
-      grid-template-columns: minmax(0, 1fr) 156px;
+      grid-template-columns: minmax(0, 1fr) minmax(72px, 156px);
     }
 
     .room.room--in-call .call__participants-rail {
       grid-auto-rows: 96px;
-      width: 156px;
-      min-width: 156px;
+      width: auto;
+      min-width: 0;
+      max-width: 156px;
     }
 
     .room.room--in-call .call__participants-rail .call__tile {

@@ -1014,13 +1014,38 @@ export function ChatApp() {
     [wideCallLayout],
   );
 
+  const sideWidthLiveRef = useRef<number | null>(null);
+
+  const applySideChatWidth = useCallback((width: number) => {
+    const room = callRoomRef.current;
+    if (!room) return;
+    room.style.setProperty("--call-side-chat-width", `${width}px`);
+    room.classList.toggle("is-side-wide", width >= SIDE_CHAT_WIDE);
+  }, []);
+
   const handleSideResizeMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const resize = callResizeRef.current;
       if (!resize || !wideCallLayout) return;
-      setSideChatWidth(clampSideChatWidth(resize.startHeight + resize.startY - event.clientX));
+      const width = clampSideChatWidth(resize.startHeight + resize.startY - event.clientX);
+      sideWidthLiveRef.current = width;
+      applySideChatWidth(width);
     },
-    [clampSideChatWidth, wideCallLayout],
+    [applySideChatWidth, clampSideChatWidth, wideCallLayout],
+  );
+
+  const handleSideResizeEnd = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const width = sideWidthLiveRef.current;
+      sideWidthLiveRef.current = null;
+      callResizeRef.current = null;
+      setCallResizing(false);
+      if (width != null) setSideChatWidth(width);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    [],
   );
 
   const showMemberRail = Boolean(
@@ -1030,6 +1055,18 @@ export function ChatApp() {
       sidebarPanel === currentChat.id &&
       !groupCallOpen,
   );
+
+  const railMembers = useMemo(() => {
+    if (currentChat?.type !== "group") return chatMembers;
+    const ids = currentChat.memberIds ?? [];
+    if (!ids.length || chatMembers.length >= ids.length) return chatMembers;
+    const byId = new Map(people.map((user) => [user.id, user]));
+    for (const user of chatMembers) byId.set(user.id, user);
+    return ids.flatMap((id) => {
+      const user = byId.get(id);
+      return user ? [user] : [];
+    });
+  }, [chatMembers, currentChat, people]);
 
   const handleOpenChatInfo = useCallback(() => {
     if (!showChatInfo) return;
@@ -1677,7 +1714,9 @@ export function ChatApp() {
             } ${
               wideCallLayout &&
               ((active && session?.room === active.chatId && !minimized) || groupCallOpen) &&
-              (sideChatWidth ?? SIDE_CHAT_MIN) >= SIDE_CHAT_WIDE
+              ((callResizing && sideWidthLiveRef.current != null
+                ? sideWidthLiveRef.current
+                : sideChatWidth) ?? SIDE_CHAT_MIN) >= SIDE_CHAT_WIDE
                 ? "is-side-wide"
                 : ""
             }`}
@@ -1689,7 +1728,11 @@ export function ChatApp() {
                   ...(wideCallLayout &&
                   ((active && session?.room === active.chatId && !minimized) || groupCallOpen)
                     ? {
-                        "--call-side-chat-width": `${sideChatWidth ?? SIDE_CHAT_MIN}px`,
+                        "--call-side-chat-width": `${
+                          (callResizing && sideWidthLiveRef.current != null
+                            ? sideWidthLiveRef.current
+                            : sideChatWidth) ?? SIDE_CHAT_MIN
+                        }px`,
                       }
                     : {}),
                 } as CSSProperties
@@ -1899,8 +1942,8 @@ export function ChatApp() {
                               >
                                 <IconUsers size={16} />
                                 Участники
-                                {chatMembers.length > 0
-                                  ? ` · ${chatMembers.length}`
+                                {railMembers.length > 0
+                                  ? ` · ${railMembers.length}`
                                   : ""}
                               </button>
                             )}
@@ -2094,8 +2137,8 @@ export function ChatApp() {
                   tabIndex={0}
                   onPointerDown={handleSideResizeStart}
                   onPointerMove={handleSideResizeMove}
-                  onPointerUp={handleCallResizeEnd}
-                  onPointerCancel={handleCallResizeEnd}
+                  onPointerUp={handleSideResizeEnd}
+                  onPointerCancel={handleSideResizeEnd}
                   onDoubleClick={() => setSideChatWidth(null)}
                   onKeyDown={(event) => {
                     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -2360,7 +2403,7 @@ export function ChatApp() {
                       groupCallOpen && compactCallLayout ? callUtilityPortal : null
                     }
                     onPickerOpenChange={setCallPickerOpen}
-                    mentionMembers={chatMembers}
+                    mentionMembers={railMembers}
                     editingText={editingMessage?.text || null}
                     onCancelEdit={() => setEditingMessage(null)}
                     onAttachmentsCleared={() =>
@@ -2451,7 +2494,7 @@ export function ChatApp() {
 
             {showMemberRail && account && (
               <GuildMemberList
-                members={chatMembers}
+                members={railMembers}
                 ownerId={currentChat?.createdBy}
                 currentUserId={account.userId}
                 onSelectMember={(userId) => {
@@ -2477,8 +2520,8 @@ export function ChatApp() {
                   <header className="member-sheet__head">
                     <h3>
                       Участники
-                      {chatMembers.length > 0 ? (
-                        <span> · {chatMembers.length}</span>
+                      {railMembers.length > 0 ? (
+                        <span> · {railMembers.length}</span>
                       ) : null}
                     </h3>
                     <button
@@ -2491,7 +2534,7 @@ export function ChatApp() {
                     </button>
                   </header>
                   <GuildMemberList
-                    members={chatMembers}
+                    members={railMembers}
                     ownerId={currentChat?.createdBy}
                     currentUserId={account.userId}
                     onSelectMember={(userId) => {

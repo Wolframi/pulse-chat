@@ -598,7 +598,7 @@ export function listMemberProfiles(
   viewerId: string,
   onlineIds: Set<string> = new Set(),
 ) {
-  const chat = chats.get(chatId);
+  const chat = getChat(chatId);
   if (!chat || !canAccessChat(chat, viewerId)) return [];
 
   let ids: string[] = [];

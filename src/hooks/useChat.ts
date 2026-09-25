@@ -910,7 +910,7 @@ export function useChat() {
     setPeerReadAt(
       roomHint ? (peerReadCacheRef.current.get(roomHint) ?? null) : null,
     );
-    setChatMembers([]);
+    if (roomHint !== current?.room) setChatMembers([]);
 
     const cached = roomHint ? historyCacheRef.current.get(roomHint) : undefined;
     if (cached?.length) {
@@ -2103,8 +2103,9 @@ export function useChat() {
       setChatMembers([]);
       return;
     }
-    refreshChatMembers(session.room);
-  }, [session?.room, currentChat?.members, refreshChatMembers]);
+    const room = currentChat?.type === "group" ? currentChat.id : session.room;
+    refreshChatMembers(room);
+  }, [session?.room, currentChat?.id, currentChat?.type, currentChat?.members, refreshChatMembers]);
 
   // Keep guild roster in sync with people (avatars used to stay stale until reload).
   useEffect(() => {
