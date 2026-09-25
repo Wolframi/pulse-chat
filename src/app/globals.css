@@ -1731,6 +1731,45 @@ button:active:not(:disabled) {
   color: var(--ink);
 }
 
+.channel-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.channel-row .channel-item,
+.voice-channel__row .channel-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.channel-item__delete {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.channel-row:hover .channel-item__delete,
+.channel-row:focus-within .channel-item__delete,
+.voice-channel__row:hover .channel-item__delete,
+.voice-channel__row:focus-within .channel-item__delete {
+  opacity: 1;
+}
+
+.channel-item__delete:hover {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
 .channel-item span {
   min-width: 0;
   overflow: hidden;
@@ -1792,7 +1831,7 @@ button:active:not(:disabled) {
 
 .channel-menu {
   position: fixed;
-  z-index: 80;
+  z-index: 200;
   min-width: 148px;
   padding: 6px;
   border-radius: 10px;

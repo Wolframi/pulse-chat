@@ -8,6 +8,7 @@ import {
   type FormEvent,
   type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import type {
   ChatInfo,
@@ -493,12 +494,19 @@ export function ChatSidebar({
 
   useEffect(() => {
     if (!channelMenu) return;
-    const close = () => setChannelMenu(null);
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("scroll", close, true);
+    const close = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && target instanceof Element && target.closest(".channel-menu")) {
+        return;
+      }
+      setChannelMenu(null);
+    };
+    const timer = window.setTimeout(() => {
+      window.addEventListener("pointerdown", close);
+    }, 0);
     return () => {
+      window.clearTimeout(timer);
       window.removeEventListener("pointerdown", close);
-      window.removeEventListener("scroll", close, true);
     };
   }, [channelMenu]);
 
@@ -705,34 +713,52 @@ export function ChatSidebar({
                   Boolean(onDeleteTextChannel) &&
                   activeGuild.createdBy === currentUserId;
                 return (
-                  <button
-                    key={channel.id}
-                    type="button"
-                    className={`channel-item ${
-                      currentChatId === channel.id ? "is-active" : ""
-                    }`}
-                    onClick={() => onOpenChat(channel.id)}
-                    onContextMenu={(event) => {
-                      if (!canDelete) return;
-                      event.preventDefault();
-                      setChannelMenu({
-                        x: event.clientX,
-                        y: event.clientY,
-                        kind: "text",
-                        groupId: activeGuild.id,
-                        channelId: channel.id,
-                        title: channel.title,
-                      });
-                    }}
-                  >
-                    <IconHash size={16} />
-                    <span>{channel.title}</span>
-                    {channel.unreadCount > 0 && (
-                      <em>
-                        {channel.unreadCount > 99 ? "99+" : channel.unreadCount}
-                      </em>
+                  <div key={channel.id} className="channel-row">
+                    <button
+                      type="button"
+                      className={`channel-item ${
+                        currentChatId === channel.id ? "is-active" : ""
+                      }`}
+                      onClick={() => onOpenChat(channel.id)}
+                      onContextMenu={(event) => {
+                        if (!canDelete) return;
+                        event.preventDefault();
+                        setChannelMenu({
+                          x: Math.min(event.clientX, window.innerWidth - 160),
+                          y: Math.min(event.clientY, window.innerHeight - 48),
+                          kind: "text",
+                          groupId: activeGuild.id,
+                          channelId: channel.id,
+                          title: channel.title,
+                        });
+                      }}
+                    >
+                      <IconHash size={16} />
+                      <span>{channel.title}</span>
+                      {channel.unreadCount > 0 && (
+                        <em>
+                          {channel.unreadCount > 99 ? "99+" : channel.unreadCount}
+                        </em>
+                      )}
+                    </button>
+                    {canDelete && (
+                      <button
+                        type="button"
+                        className="channel-item__delete"
+                        aria-label={`Удалить ${channel.title}`}
+                        title="Удалить чат"
+                        onClick={() =>
+                          setPendingTextDelete({
+                            groupId: activeGuild.id,
+                            channelId: channel.id,
+                            title: channel.title,
+                          })
+                        }
+                      >
+                        <IconTrash size={14} />
+                      </button>
                     )}
-                  </button>
+                  </div>
                 );
               })}
 
@@ -846,8 +872,8 @@ export function ChatSidebar({
                             if (!canDeleteVoice) return;
                             event.preventDefault();
                             setChannelMenu({
-                              x: event.clientX,
-                              y: event.clientY,
+                              x: Math.min(event.clientX, window.innerWidth - 160),
+                              y: Math.min(event.clientY, window.innerHeight - 48),
                               kind: "voice",
                               groupId: activeGuild.id,
                               channelId: channel.id,
@@ -861,6 +887,23 @@ export function ChatSidebar({
                             <em>{channel.users.length}</em>
                           )}
                         </button>
+                        {canDeleteVoice && (
+                          <button
+                            type="button"
+                            className="channel-item__delete"
+                            aria-label={`Удалить ${channel.title}`}
+                            title="Удалить канал"
+                            onClick={() =>
+                              setPendingVoiceDelete({
+                                groupId: activeGuild.id,
+                                channelId: channel.id,
+                                title: channel.title,
+                              })
+                            }
+                          >
+                            <IconTrash size={14} />
+                          </button>
+                        )}
                       </div>
                       {channel.users.length > 0 && (
                         <ul className="voice-channel__users">
@@ -1220,7 +1263,8 @@ export function ChatSidebar({
         </motion.div>
       </AnimatePresence>
 
-      {channelMenu && (
+      {channelMenu &&
+        createPortal(
         <div
           className="channel-menu"
           style={{ left: channelMenu.x, top: channelMenu.y }}
@@ -1249,8 +1293,9 @@ export function ChatSidebar({
             <IconTrash size={14} />
             Удалить
           </button>
-        </div>
-      )}
+        </div>,
+        document.body,
+        )}
 
       <ConfirmDialog
         open={Boolean(pendingTextDelete)}
