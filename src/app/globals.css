@@ -1702,6 +1702,7 @@ button:active:not(:disabled) {
 }
 
 .channel-item {
+  -webkit-touch-callout: none;
   width: 100%;
   display: flex;
   align-items: center;
@@ -1729,45 +1730,6 @@ button:active:not(:disabled) {
 .channel-item.is-active {
   background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
-}
-
-.channel-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-}
-
-.channel-row .channel-item,
-.voice-channel__row .channel-item {
-  flex: 1;
-  min-width: 0;
-}
-
-.channel-item__delete {
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  opacity: 0.72;
-}
-
-.channel-row:hover .channel-item__delete,
-.channel-row:focus-within .channel-item__delete,
-.voice-channel__row:hover .channel-item__delete,
-.voice-channel__row:focus-within .channel-item__delete {
-  opacity: 1;
-}
-
-.channel-item__delete:hover {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .channel-item span {
@@ -10465,9 +10427,10 @@ button:active:not(:disabled) {
 
   .workspace__sidebar {
     position: fixed;
-    top: 10px;
+    top: var(--vv-top, 0px);
     left: 10px;
-    bottom: 10px;
+    bottom: auto;
+    height: var(--app-height, 100dvh);
     width: min(392px, calc(100vw - 20px));
     z-index: 40;
     border: 1px solid var(--line);
@@ -10576,9 +10539,10 @@ button:active:not(:disabled) {
   }
 
   .workspace__sidebar {
-    top: 0;
+    top: var(--vv-top, 0px);
     left: 0;
-    bottom: 0;
+    bottom: auto;
+    height: var(--app-height, 100dvh);
     width: calc(100vw - 28px);
     max-width: 100%;
     border: 0;

@@ -545,6 +545,10 @@ export function ChatApp() {
         "--app-height",
         `${Math.round(height)}px`,
       );
+      document.documentElement.style.setProperty(
+        "--vv-top",
+        `${Math.round(vv?.offsetTop ?? 0)}px`,
+      );
       if (vv) {
         const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
         if (covered > 120) {
