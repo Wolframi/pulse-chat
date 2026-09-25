@@ -46,35 +46,56 @@ export function AudioPlaybackBar({
   const playing = useAudioPlaybackSelector((state) => state.playing);
   const buffering = useAudioPlaybackSelector((state) => state.buffering);
   const duration = useAudioPlaybackSelector((state) => state.duration);
+  const currentTime = useAudioPlaybackSelector((state) => state.currentTime);
   const volume = useAudioPlaybackSelector((state) => state.volume);
   const playbackRate = useAudioPlaybackSelector((state) => state.playbackRate);
   const dragRef = useRef(false);
+  const dragTimeRef = useRef<number | null>(null);
   const volDragRef = useRef(false);
+  const volumeRef = useRef<HTMLDivElement>(null);
+  const touchVolumeButtonRef = useRef(false);
   const progressRef = useRef<HTMLElement>(null);
   const elapsedRef = useRef<HTMLSpanElement>(null);
   const holdRatioRef = useRef<number | null>(null);
   const [volHover, setVolHover] = useState(false);
   const [volDrag, setVolDrag] = useState(false);
+  const [volTouchOpen, setVolTouchOpen] = useState(false);
   const volLeaveRef = useRef<number>(0);
 
-  const seekVolumeFromClientY = useCallback((clientY: number, target: HTMLElement) => {
+  const seekVolumeFromClientX = useCallback((clientX: number, target: HTMLElement) => {
     const rect = target.getBoundingClientRect();
-    if (rect.height <= 0) return;
-    const ratio = 1 - (clientY - rect.top) / rect.height;
+    if (rect.width <= 0) return;
+    const ratio = (clientX - rect.left) / rect.width;
     setAudioVolume(Math.min(1, Math.max(0, ratio)));
   }, []);
 
   const seekFromClientX = useCallback((clientX: number, target: HTMLElement, commit: boolean) => {
     const live = getSmoothPlaybackTime();
-    const total = live.duration;
+    const total = live.duration || duration;
     const rect = target.getBoundingClientRect();
     if (rect.width <= 0 || total <= 0) return;
     const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    dragTimeRef.current = ratio * total;
     holdRatioRef.current = ratio;
     if (progressRef.current) progressRef.current.style.width = `${ratio * 100}%`;
     if (elapsedRef.current) elapsedRef.current.textContent = formatPlaybackTime(ratio * total);
     if (commit) seekAudioPlayback(ratio * total);
+  }, [duration]);
+
+  const commitDraggedSeek = useCallback(() => {
+    if (dragTimeRef.current == null) return;
+    seekAudioPlayback(dragTimeRef.current);
+    dragTimeRef.current = null;
   }, []);
+
+  useEffect(() => {
+    if (!volTouchOpen) return;
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (!volumeRef.current?.contains(event.target as Node)) setVolTouchOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOnOutsidePress, true);
+    return () => window.removeEventListener("pointerdown", closeOnOutsidePress, true);
+  }, [volTouchOpen]);
 
   useEffect(() => {
     if (!visible || !track) return;
@@ -156,7 +177,8 @@ export function AudioPlaybackBar({
         </button>
 
         <div
-          className={`audio-bar__volume ${volHover || volDrag ? "is-open" : ""}`}
+          ref={volumeRef}
+          className={`audio-bar__volume ${volHover || volDrag || volTouchOpen ? "is-open" : ""}`}
           onMouseEnter={() => {
             window.clearTimeout(volLeaveRef.current);
             setVolHover(true);
@@ -179,7 +201,20 @@ export function AudioPlaybackBar({
             className="audio-bar__icon"
             aria-label={volume <= 0 ? "Включить звук" : "Выключить звук"}
             title={volume <= 0 ? "Включить звук" : "Выключить звук"}
-            onClick={() => toggleAudioMute()}
+            aria-expanded={volTouchOpen}
+            onPointerDown={(event) => {
+              if (event.pointerType === "mouse") return;
+              touchVolumeButtonRef.current = true;
+              window.clearTimeout(volLeaveRef.current);
+              setVolTouchOpen((open) => !open);
+            }}
+            onClick={() => {
+              if (touchVolumeButtonRef.current) {
+                touchVolumeButtonRef.current = false;
+                return;
+              }
+              toggleAudioMute();
+            }}
           >
             {volume <= 0 ? <IconVolumeOff size={16} /> : <IconVolume size={16} />}
           </button>
@@ -192,16 +227,29 @@ export function AudioPlaybackBar({
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={volumePercent}
-              aria-orientation="vertical"
+              aria-orientation="horizontal"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                const step = event.shiftKey ? 0.1 : 0.05;
+                let next = volume;
+                if (event.key === "ArrowRight" || event.key === "ArrowUp") next += step;
+                else if (event.key === "ArrowLeft" || event.key === "ArrowDown") next -= step;
+                else if (event.key === "Home") next = 0;
+                else if (event.key === "End") next = 1;
+                else return;
+                event.preventDefault();
+                setAudioVolume(next);
+              }}
               onPointerDown={(event) => {
+                event.preventDefault();
                 volDragRef.current = true;
                 setVolDrag(true);
                 event.currentTarget.setPointerCapture(event.pointerId);
-                seekVolumeFromClientY(event.clientY, event.currentTarget);
+                seekVolumeFromClientX(event.clientX, event.currentTarget);
               }}
               onPointerMove={(event) => {
                 if (!volDragRef.current) return;
-                seekVolumeFromClientY(event.clientY, event.currentTarget);
+                seekVolumeFromClientX(event.clientX, event.currentTarget);
               }}
               onPointerUp={() => {
                 volDragRef.current = false;
@@ -243,10 +291,25 @@ export function AudioPlaybackBar({
         aria-label="Прогресс"
         aria-valuemin={0}
         aria-valuemax={Math.round(duration)}
-        aria-valuenow={0}
+        aria-valuenow={Math.round(Math.min(currentTime, duration || currentTime))}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          const total = getSmoothPlaybackTime().duration || duration;
+          if (total <= 0) return;
+          const liveTime = getSmoothPlaybackTime().currentTime;
+          let next = liveTime;
+          if (event.key === "ArrowRight" || event.key === "ArrowUp") next += 5;
+          else if (event.key === "ArrowLeft" || event.key === "ArrowDown") next -= 5;
+          else if (event.key === "Home") next = 0;
+          else if (event.key === "End") next = total;
+          else return;
+          event.preventDefault();
+          seekAudioPlayback(Math.min(total, Math.max(0, next)));
+        }}
         onPointerDown={(event) => {
           event.preventDefault();
           dragRef.current = true;
+          dragTimeRef.current = null;
           event.currentTarget.setPointerCapture(event.pointerId);
           seekFromClientX(event.clientX, event.currentTarget, false);
         }}
@@ -256,10 +319,17 @@ export function AudioPlaybackBar({
         }}
         onPointerUp={(event) => {
           if (!dragRef.current) return;
-          seekFromClientX(event.clientX, event.currentTarget, true);
+          seekFromClientX(event.clientX, event.currentTarget, false);
+          commitDraggedSeek();
           dragRef.current = false;
         }}
         onPointerCancel={() => {
+          commitDraggedSeek();
+          dragRef.current = false;
+        }}
+        onLostPointerCapture={() => {
+          if (!dragRef.current) return;
+          commitDraggedSeek();
           dragRef.current = false;
         }}
       >

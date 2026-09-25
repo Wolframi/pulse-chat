@@ -36,6 +36,8 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
   const durationRef = useRef(0);
   const progressLockRef = useRef(0);
   const dragRef = useRef(false);
+  const dragClientXRef = useRef(0);
+  const dragTargetRef = useRef<HTMLElement | null>(null);
   const progressRef = useRef(0);
 
   const [loadWave, setLoadWave] = useState(true);
@@ -243,23 +245,65 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
       <div className="voice-bubble__body">
         <div
           className="voice-bubble__wave"
+          role="slider"
+          aria-label="Перемотка голосового сообщения"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(total)}
+          aria-valuenow={isCurrent ? Math.round(getLivePlaybackTime().currentTime) : 0}
+          tabIndex={0}
+          onKeyDown={(event) => {
+            const live = isCurrent ? getSmoothPlaybackTime() : getLivePlaybackTime();
+            const totalTime = audioDuration(
+              progressLockRef.current,
+              durationRef.current,
+              live.duration,
+              storeDuration,
+              duration,
+            );
+            if (totalTime <= 0) return;
+            let next = isCurrent ? live.currentTime : 0;
+            if (event.key === "ArrowRight" || event.key === "ArrowUp") next += 5;
+            else if (event.key === "ArrowLeft" || event.key === "ArrowDown") next -= 5;
+            else if (event.key === "Home") next = 0;
+            else if (event.key === "End") next = totalTime;
+            else return;
+            event.preventDefault();
+            const clamped = Math.min(totalTime, Math.max(0, next));
+            if (isCurrent) seekAudioPlayback(clamped);
+            else void playAudioTrack(track, { time: clamped });
+          }}
           onPointerDown={(event) => {
             event.preventDefault();
             dragRef.current = true;
+            dragClientXRef.current = event.clientX;
+            dragTargetRef.current = event.currentTarget;
             event.currentTarget.setPointerCapture(event.pointerId);
-            seekFromClientX(event.clientX, event.currentTarget, !isCurrent);
+            seekFromClientX(event.clientX, event.currentTarget, false);
           }}
           onPointerMove={(event) => {
             if (!dragRef.current) return;
+            dragClientXRef.current = event.clientX;
             seekFromClientX(event.clientX, event.currentTarget, false);
           }}
           onPointerUp={(event) => {
             if (!dragRef.current) return;
+            dragClientXRef.current = event.clientX;
             seekFromClientX(event.clientX, event.currentTarget, true);
             dragRef.current = false;
+            dragTargetRef.current = null;
           }}
           onPointerCancel={() => {
+            if (dragRef.current && dragTargetRef.current) {
+              seekFromClientX(dragClientXRef.current, dragTargetRef.current, true);
+            }
             dragRef.current = false;
+            dragTargetRef.current = null;
+          }}
+          onLostPointerCapture={() => {
+            if (!dragRef.current || !dragTargetRef.current) return;
+            seekFromClientX(dragClientXRef.current, dragTargetRef.current, true);
+            dragRef.current = false;
+            dragTargetRef.current = null;
           }}
         >
           {failed || !ready ? (
