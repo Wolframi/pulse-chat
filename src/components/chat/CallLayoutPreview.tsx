@@ -98,6 +98,7 @@ const previewTextChannels = [
 ] as const;
 
 type PreviewTextChannelId = (typeof previewTextChannels)[number]["id"];
+type PreviewCallScenario = "screens" | "solo" | "duo" | "direct";
 
 function paintScreen(
   title: string,
@@ -225,6 +226,8 @@ export function CallLayoutPreview() {
     useState<PreviewTextChannelId>("general");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [draftText, setDraftText] = useState("");
+  const [callScenario, setCallScenario] =
+    useState<PreviewCallScenario>("screens");
   const [compactLayout, setCompactLayout] = useState(false);
   const [utilityPortal, setUtilityPortal] = useState<HTMLDivElement | null>(null);
   const [composerPortal, setComposerPortal] = useState<HTMLDivElement | null>(null);
@@ -233,6 +236,15 @@ export function CallLayoutPreview() {
   const roomRef = useRef<HTMLElement>(null);
   const resizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
   const ready = Object.keys(remoteStreams).length === 3 && Boolean(localStream);
+
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("scenario");
+    setCallScenario(
+      requested === "solo" || requested === "duo" || requested === "direct"
+        ? requested
+        : "screens",
+    );
+  }, []);
 
   useEffect(() => {
     const query = window.matchMedia("(min-width: 641px) and (max-width: 1099px)");
@@ -327,6 +339,48 @@ export function CallLayoutPreview() {
     previewTextChannels.find((channel) => channel.id === activeTextChannel) ??
     previewTextChannels[0];
 
+  const previewPeers = useMemo<VoiceChannelUser[]>(() => {
+    if (callScenario === "solo") return [];
+    if (callScenario === "duo" || callScenario === "direct") {
+      return [
+        {
+          ...peers[0],
+          muted: false,
+          speaking: false,
+          cameraOff: true,
+          sharingScreen: false,
+        },
+      ];
+    }
+    return peers;
+  }, [callScenario]);
+
+  const previewRemoteStreams = useMemo<Record<string, MediaStream>>(() => {
+    if (callScenario === "screens") return remoteStreams;
+    if (callScenario === "solo") return {};
+    const alice = remoteStreams.alice;
+    if (!alice) return {};
+    const tracks = alice.getVideoTracks();
+    const cameraTrack =
+      tracks.find((track) => track.contentHint === "motion") ?? tracks[0];
+    return cameraTrack ? { alice: new MediaStream([cameraTrack]) } : {};
+  }, [callScenario, remoteStreams]);
+
+  const participantCount = previewPeers.length + 1;
+  const sharedScreenCount =
+    (callScenario === "screens"
+      ? previewPeers.filter((peer) => peer.sharingScreen).length
+      : 0) + (sharingScreen ? 1 : 0);
+  const callSummary = `${participantCount} ${
+    participantCount === 1 ? "участник" : "участника"
+  }${
+    sharedScreenCount
+      ? ` · ${sharedScreenCount} ${
+          sharedScreenCount === 1 ? "демонстрация" : "демонстрации"
+        }`
+      : ""
+  }`;
+
   function clampCallHeight(height: number) {
     const room = roomRef.current;
     if (!room) return Math.max(220, height);
@@ -403,7 +457,11 @@ export function CallLayoutPreview() {
 
         <section
           ref={roomRef}
-          className={`room room--in-call ${resizing ? "is-resizing" : ""}`}
+          className={`room room--in-call ${callScenario === "direct" ? "room--direct-call" : ""} ${
+            resizing ? "is-resizing" : ""
+          } ${
+            pickerOpen ? "is-call-picker-open" : ""
+          }`}
           style={
             callPanelHeight === null
               ? undefined
@@ -416,8 +474,10 @@ export function CallLayoutPreview() {
             <div className="room__heading">
               <Avatar name="Рабочая команда" size="md" />
               <div className="room__heading-text">
-                <p className="room__brand">Общий звонок</p>
-                <p className="room__title">4 участника · 3 демонстрации</p>
+                <p className="room__brand">
+                  {callScenario === "direct" ? "Личный звонок" : "Общий звонок"}
+                </p>
+                <p className="room__title">{callSummary}</p>
               </div>
             </div>
             <div className="room__meta">
@@ -429,6 +489,7 @@ export function CallLayoutPreview() {
 
           <div id="pulse-call-dock" className="room__call-dock is-screen" />
 
+          {callScenario !== "direct" ? (
           <div
             className="call-preview__resize"
             role="separator"
@@ -456,9 +517,11 @@ export function CallLayoutPreview() {
           >
             <span aria-hidden />
           </div>
+          ) : null}
 
           <div className="room__stage">
-            <div className="call-preview__chat-column">
+            <div className="call-preview__chat-column call-layout__chat">
+              {callScenario !== "direct" ? (
               <header className="call-preview__chat-head">
                 <IconHash size={16} />
                 <span>
@@ -466,6 +529,7 @@ export function CallLayoutPreview() {
                   <em>{activeChannel.hint}</em>
                 </span>
               </header>
+              ) : null}
               <MessageList
                 chatId={`preview-${activeTextChannel}`}
                 messages={messages}
@@ -510,7 +574,7 @@ export function CallLayoutPreview() {
             </div>
 
             <aside
-              className={`call-preview__utility ${pickerOpen ? "is-picker" : ""}`}
+              className={`call-preview__utility call-layout__utility ${pickerOpen ? "is-picker" : ""}`}
               aria-label={pickerOpen ? "Эмодзи, стикеры и GIF" : "Текстовые каналы"}
             >
               <header className="call-preview__utility-head">
@@ -518,7 +582,7 @@ export function CallLayoutPreview() {
                 <span>{pickerOpen ? "Выберите содержимое для сообщения" : "Рабочая команда"}</span>
               </header>
               <div ref={setUtilityPortal} className="call-preview__utility-body">
-                {!pickerOpen ? (
+                {!pickerOpen && callScenario !== "direct" ? (
                   <nav className="call-preview__channels" aria-label="Текстовые каналы группы">
                     {previewTextChannels.map((channel) => (
                       <button
@@ -544,11 +608,11 @@ export function CallLayoutPreview() {
 
       <VoiceOverlay
         active={{ channelId: "preview-voice", groupId: "preview-group", title: "Общий звонок" }}
-        peers={peers}
+        peers={previewPeers}
         selfId="self"
         selfName="Артём"
         localStream={localStream}
-        remoteStreams={remoteStreams}
+        remoteStreams={previewRemoteStreams}
         muted={muted}
         deafened={deafened}
         cameraOff={cameraOff}

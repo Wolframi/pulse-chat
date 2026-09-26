@@ -916,6 +916,12 @@ export function ChatApp() {
       currentChat.id === voice.active.groupId,
   );
 
+  const directCallOpen = Boolean(
+    active && session?.room === active.chatId && !minimized,
+  );
+
+  const fullCallOpen = groupCallOpen || directCallOpen;
+
   const groupTextChannels = useMemo(() => {
     if (currentChat?.type !== "group") return [];
     return [
@@ -945,8 +951,8 @@ export function ChatApp() {
   }, []);
 
   useEffect(() => {
-    if (!groupCallOpen || !compactCallLayout) setCallPickerOpen(false);
-  }, [compactCallLayout, groupCallOpen]);
+    if (!fullCallOpen || !compactCallLayout) setCallPickerOpen(false);
+  }, [compactCallLayout, fullCallOpen]);
 
   const clampCallHeight = useCallback((height: number) => {
     const room = callRoomRef.current;
@@ -1703,17 +1709,18 @@ export function ChatApp() {
             <section
               ref={callRoomRef}
               className={`room ${session ? "" : "room--idle"} ${
-              (active &&
-                session?.room === active.chatId &&
-                !minimized) ||
-              groupCallOpen
+              fullCallOpen
                 ? "room--in-call"
                 : ""
             } ${groupCallOpen ? "room--group-call" : ""} ${
+              directCallOpen ? "room--direct-call" : ""
+            } ${
+              fullCallOpen && callPickerOpen ? "is-call-picker-open" : ""
+            } ${
               callResizing ? "is-resizing" : ""
             } ${
               wideCallLayout &&
-              ((active && session?.room === active.chatId && !minimized) || groupCallOpen) &&
+              fullCallOpen &&
               ((callResizing && sideWidthLiveRef.current != null
                 ? sideWidthLiveRef.current
                 : sideChatWidth) ?? SIDE_CHAT_MIN) >= SIDE_CHAT_WIDE
@@ -1726,7 +1733,7 @@ export function ChatApp() {
                     ? { "--call-dock-height": `${callPanelHeight}px` }
                     : {}),
                   ...(wideCallLayout &&
-                  ((active && session?.room === active.chatId && !minimized) || groupCallOpen)
+                  fullCallOpen
                     ? {
                         "--call-side-chat-width": `${
                           (callResizing && sideWidthLiveRef.current != null
@@ -2125,7 +2132,7 @@ export function ChatApp() {
               ) : null}
 
               {wideCallLayout &&
-              ((active && session?.room === active.chatId && !minimized) || groupCallOpen) ? (
+              fullCallOpen ? (
                 <div
                   className="call-layout__resize-v"
                   role="separator"
@@ -2154,7 +2161,7 @@ export function ChatApp() {
               ) : null}
 
               <div className="room__stage">
-              <div className={groupCallOpen ? "call-layout__chat" : "room__stage-fill"}>
+              <div className={fullCallOpen ? "call-layout__chat" : "room__stage-fill"}>
               {groupCallOpen ? (
                 <header className="call-layout__chat-head">
                   <IconHash size={16} />
@@ -2330,7 +2337,7 @@ export function ChatApp() {
                       peerReadAt={peerReadAt}
                       showOwnAvatar={
                         !(
-                          (groupCallOpen && compactCallLayout) ||
+                          (fullCallOpen && compactCallLayout) ||
                           (wideCallLayout &&
                             ((active &&
                               session.room === active.chatId &&
@@ -2400,7 +2407,7 @@ export function ChatApp() {
                     onRemoveSticker={removeStickerFromPack}
                     onStickerPick={handleSendSticker}
                     pickerPortalRoot={
-                      groupCallOpen && compactCallLayout ? callUtilityPortal : null
+                      fullCallOpen && compactCallLayout ? callUtilityPortal : null
                     }
                     onPickerOpenChange={setCallPickerOpen}
                     mentionMembers={railMembers}
@@ -2450,7 +2457,7 @@ export function ChatApp() {
                 </>
               )}
               </div>
-              {groupCallOpen ? (
+              {fullCallOpen ? (
                 <aside
                   className={`call-layout__utility ${callPickerOpen ? "is-picker" : ""}`}
                   aria-label={
@@ -2468,7 +2475,7 @@ export function ChatApp() {
                     </span>
                   </header>
                   <div ref={setCallUtilityPortal} className="call-layout__utility-body">
-                    {callPickerOpen ? null : (
+                    {!callPickerOpen && groupCallOpen ? (
                       <nav className="call-layout__channels" aria-label="Текстовые каналы группы">
                         {groupTextChannels.map((channel) => (
                           <button
@@ -2485,7 +2492,7 @@ export function ChatApp() {
                           </button>
                         ))}
                       </nav>
-                    )}
+                    ) : null}
                   </div>
                 </aside>
               ) : null}

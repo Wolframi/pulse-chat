@@ -165,6 +165,7 @@ function participantGridClass(count: number) {
 
 type TileProps = {
   name: string;
+  subtitle?: string;
   avatarUrl?: string;
   stream: MediaStream | null;
   showVideo: boolean;
@@ -177,6 +178,7 @@ type TileProps = {
 
 function VoiceTile({
   name,
+  subtitle,
   avatarUrl,
   stream,
   showVideo,
@@ -188,7 +190,7 @@ function VoiceTile({
 }: TileProps) {
   return (
     <div
-      className={`call__tile ${showVideo && speaking ? "is-speaking" : ""} ${
+      className={`call__tile ${speaking ? "is-speaking" : ""} ${
         showVideo ? "has-video" : ""
       } ${self ? "call__tile--self" : ""} ${
         onActivate ? "is-interactive" : ""
@@ -221,7 +223,14 @@ function VoiceTile({
         </div>
       )}
       <em className="call__tile-name">
-        <span>{name}</span>
+        {subtitle ? (
+          <span className="call__tile-label">
+            <strong>{name}</strong>
+            <small>{subtitle}</small>
+          </span>
+        ) : (
+          <span>{name}</span>
+        )}
         {tileMuted ? <IconMicOff size={14} className="call__tile-icon" /> : null}
       </em>
       {onActivate ? <span className="call__tile-swap" aria-hidden>↔</span> : null}
@@ -232,11 +241,15 @@ function VoiceTile({
 function PeerCameraTile({
   peer,
   stream,
+  subtitle,
+  hideMuted = false,
   onActivate,
   actionLabel,
 }: {
   peer: VoiceChannelUser;
   stream: MediaStream | null | undefined;
+  subtitle?: string;
+  hideMuted?: boolean;
   onActivate?: () => void;
   actionLabel?: string;
 }) {
@@ -245,11 +258,12 @@ function PeerCameraTile({
   return (
     <VoiceTile
       name={peer.name}
+      subtitle={subtitle}
       avatarUrl={peer.avatarUrl}
       stream={cameraStream}
       showVideo={showVideo}
       speaking={peer.speaking}
-      muted={peer.muted}
+      muted={hideMuted ? false : peer.muted}
       onActivate={onActivate}
       actionLabel={actionLabel}
     />
@@ -379,8 +393,8 @@ function VoiceStagePanel({
       : "call__card--voice";
   const cardSize =
     screenMode && stageSources.length > 1 ? "call__card--dual-screen" : "";
-  const sittingAlone = cardMode === "call__card--voice" && peers.length === 0;
-  const duoAvatars = cardMode === "call__card--voice" && peers.length === 1;
+  const sittingAlone = !screenMode && peers.length === 0;
+  const duoParticipants = !screenMode && peers.length === 1;
   const participantCount = peers.length + 1;
 
   return (
@@ -506,7 +520,7 @@ function VoiceStagePanel({
             className={`call__tiles ${
               sittingAlone
                 ? "call__tiles--solo"
-                : duoAvatars
+                : duoParticipants
                   ? "call__tiles--duo"
                   : `call__tiles--grid ${participantGridClass(
                       participantCount,
@@ -519,10 +533,31 @@ function VoiceStagePanel({
                 key={peer.userId}
                 peer={peer}
                 stream={remoteStreams[peer.userId]}
+                subtitle={
+                  cardMode === "call__card--voice" && !duoParticipants
+                    ? peer.muted
+                      ? "Микрофон выключен"
+                      : peer.speaking
+                        ? "Говорит"
+                        : "В голосовом канале"
+                    : undefined
+                }
+                hideMuted={duoParticipants}
               />
             ))}
             <VoiceTile
-              name={selfName}
+              name={duoParticipants ? "Вы" : selfName}
+              subtitle={
+                cardMode === "call__card--voice" && !duoParticipants
+                  ? muted
+                    ? "Микрофон выключен"
+                    : selfSpeaking
+                      ? "Вы говорите"
+                      : sittingAlone
+                        ? "Вы один в голосовом канале"
+                        : "Это вы"
+                  : undefined
+              }
               avatarUrl={selfAvatarUrl ?? undefined}
               stream={localCameraStream}
               showVideo={localCamera}

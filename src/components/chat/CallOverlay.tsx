@@ -283,7 +283,7 @@ export function CallPanel({
             <aside className="call__participants-rail" aria-label="Участники звонка">
               <div
                 className={`call__tile ${
-                  remoteCamera && remoteSpeaking ? "is-speaking" : ""
+                  remoteSpeaking ? "is-speaking" : ""
                 } ${remoteCamera ? "has-video" : ""}`}
               >
                 <MediaVideo
@@ -310,7 +310,7 @@ export function CallPanel({
               </div>
               <div
                 className={`call__tile call__tile--self ${
-                  localCamera && localSpeaking ? "is-speaking" : ""
+                  localSpeaking ? "is-speaking" : ""
                 } ${localCamera ? "has-video" : ""}`}
               >
                 <MediaVideo
@@ -342,7 +342,7 @@ export function CallPanel({
           <div className="call__tiles call__tiles--duo">
             <div
               className={`call__tile ${
-                remoteCamera && remoteSpeaking ? "is-speaking" : ""
+                remoteSpeaking ? "is-speaking" : ""
               } ${remoteCamera ? "has-video" : ""}`}
             >
               <MediaVideo
@@ -374,7 +374,7 @@ export function CallPanel({
             </div>
             <div
               className={`call__tile call__tile--self ${
-                localCamera && localSpeaking ? "is-speaking" : ""
+                localSpeaking ? "is-speaking" : ""
               } ${localCamera ? "has-video" : ""}`}
             >
               <MediaVideo
