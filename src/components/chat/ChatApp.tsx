@@ -1015,8 +1015,11 @@ export function ChatApp() {
   }, []);
 
   const sideWidthLiveRef = useRef<number | null>(null);
+  const sideAppliedWidthRef = useRef<number | null>(null);
   const sideResizeFrameRef = useRef(0);
   const sideScrollLockRef = useRef<SideScrollLock | null>(null);
+  const sideFrozenScrollRef = useRef<number | null>(null);
+  const sideHoldScrollRef = useRef(false);
 
   const captureSideScrollLock = useCallback(() => {
     const scroller = callRoomRef.current?.querySelector<HTMLElement>(
@@ -1065,11 +1068,15 @@ export function ChatApp() {
       event.preventDefault();
       const width = stage.getBoundingClientRect().width;
       sideWidthLiveRef.current = width;
+      sideAppliedWidthRef.current = width;
+      sideHoldScrollRef.current = true;
       callResizeRef.current = {
         startY: event.clientX,
         startHeight: width,
       };
       captureSideScrollLock();
+      const scroller = sideScrollLockRef.current?.scroller;
+      if (scroller) sideFrozenScrollRef.current = scroller.scrollTop;
       setCallResizing(true);
       setSideChatResizing(true);
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -1107,10 +1114,30 @@ export function ChatApp() {
   }, [restoreSideScrollLock]);
 
   useLayoutEffect(() => {
+    if (sideChatResizing) {
+      restoreSideScrollLock();
+      const scroller = sideScrollLockRef.current?.scroller;
+      if (scroller) sideFrozenScrollRef.current = scroller.scrollTop;
+      return;
+    }
+    sideHoldScrollRef.current = false;
     restoreSideScrollLock();
-    if (sideChatResizing) return;
     releaseSideScrollLock();
   }, [releaseSideScrollLock, restoreSideScrollLock, sideChatResizing, sideChatWidth]);
+
+  useEffect(() => {
+    if (!sideChatResizing) return;
+    const scroller = sideScrollLockRef.current?.scroller;
+    if (!scroller) return;
+    const hold = () => {
+      if (!sideHoldScrollRef.current) return;
+      const frozen = sideFrozenScrollRef.current;
+      if (frozen == null || scroller.scrollTop === frozen) return;
+      scroller.scrollTop = frozen;
+    };
+    scroller.addEventListener("scroll", hold);
+    return () => scroller.removeEventListener("scroll", hold);
+  }, [sideChatResizing]);
 
   const applySideChatWidth = useCallback((width: number) => {
     const room = callRoomRef.current;
@@ -1123,19 +1150,29 @@ export function ChatApp() {
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const resize = callResizeRef.current;
       if (!resize || !wideCallLayout) return;
-      sideWidthLiveRef.current = clampSideChatWidth(
+      if (event.cancelable) event.preventDefault();
+      const width = clampSideChatWidth(
         resize.startHeight + resize.startY - event.clientX,
       );
+      if (width === sideAppliedWidthRef.current) {
+        const scroller = sideScrollLockRef.current?.scroller;
+        const frozen = sideFrozenScrollRef.current;
+        if (scroller && frozen != null && scroller.scrollTop !== frozen) {
+          scroller.scrollTop = frozen;
+        }
+        return;
+      }
+      sideWidthLiveRef.current = width;
       if (sideResizeFrameRef.current) return;
       sideResizeFrameRef.current = requestAnimationFrame(() => {
         sideResizeFrameRef.current = 0;
-        const width = sideWidthLiveRef.current;
-        if (width == null) return;
-        applySideChatWidth(width);
-        restoreSideScrollLock();
+        const next = sideWidthLiveRef.current;
+        if (next == null || next === sideAppliedWidthRef.current) return;
+        sideAppliedWidthRef.current = next;
+        applySideChatWidth(next);
       });
     },
-    [applySideChatWidth, clampSideChatWidth, restoreSideScrollLock, wideCallLayout],
+    [applySideChatWidth, clampSideChatWidth, wideCallLayout],
   );
 
   const handleSideResizeEnd = useCallback(
@@ -1146,6 +1183,9 @@ export function ChatApp() {
       }
       const width = sideWidthLiveRef.current;
       sideWidthLiveRef.current = null;
+      sideAppliedWidthRef.current = null;
+      sideHoldScrollRef.current = false;
+      sideFrozenScrollRef.current = null;
       callResizeRef.current = null;
       setCallResizing(false);
       setSideChatResizing(false);

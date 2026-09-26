@@ -3131,6 +3131,8 @@ button:active:not(:disabled) {
      Scroll position is restored in JS to the message that was on screen. */
   .room.room--in-call.is-side-resizing > .room__stage .room__messages {
     overflow-anchor: none;
+    overflow-y: hidden;
+    overscroll-behavior: none;
   }
 
   .room.room--in-call.is-side-resizing > .room__stage .room__messages .bubble-group,

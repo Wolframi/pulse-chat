@@ -551,11 +551,9 @@ function VoiceStagePanel({
                 cardMode === "call__card--voice" && !duoParticipants
                   ? muted
                     ? "Микрофон выключен"
-                    : selfSpeaking
-                      ? "Вы говорите"
-                      : sittingAlone
-                        ? undefined
-                        : "Это вы"
+                    : sittingAlone
+                      ? undefined
+                      : "Это вы"
                   : undefined
               }
               avatarUrl={selfAvatarUrl ?? undefined}
