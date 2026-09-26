@@ -3053,7 +3053,9 @@ button:active:not(:disabled) {
     grid-template-rows: auto minmax(0, 1fr);
   }
 
-  .room.room--in-call:has(> .call-layout__resize-v) {
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini)):has(
+      > .call-layout__resize-v
+    ) {
     grid-template-columns: minmax(200px, 1fr) 10px var(--call-side-chat-width, 390px);
   }
 
@@ -3133,6 +3135,14 @@ button:active:not(:disabled) {
     min-height: 0;
     border-left: 0;
     background: var(--surface);
+    overflow: hidden;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini)):has(
+      > .call-layout__resize-v
+    )
+    > .room__stage {
+    grid-column: 3;
   }
 
   .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
@@ -3144,17 +3154,47 @@ button:active:not(:disabled) {
      desktop timeline. */
   .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
     > .room__stage
+    .call-layout__chat {
+    position: relative;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .audio-bar {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-width: 100%;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .audio-bar__vol-pop {
+    right: 0;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
     .room__messages {
-    gap: 7px;
-    padding: 14px 6px 10px;
+    gap: 8px;
+    padding: 24px 20px 8px;
+  }
+
+  .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
+    > .room__stage
+    .call-layout__chat:has(.audio-bar)
+    .room__messages {
+    padding-top: 78px;
   }
 
   .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
     > .room__stage
     .bubble-group {
-    gap: 6px;
-    margin-top: 12px;
-    padding-inline: 6px;
+    gap: 7px;
+    margin-top: 14px;
+    padding-inline: 8px;
   }
 
   .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
