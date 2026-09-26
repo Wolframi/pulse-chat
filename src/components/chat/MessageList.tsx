@@ -341,7 +341,10 @@ export function MessageList({
     // Media grows the list after it decodes; stay pinned if we were at the bottom.
     function onMediaLoad() {
       const el = scrollerRef.current;
-      if (el && nearBottomRef.current) el.scrollTop = el.scrollHeight;
+      // Side-chat width drag reflows every bubble. Pinning here fights the
+      // scroll lock and forces a layout of the whole thread on each move.
+      if (!el || el.dataset.lockScroll || el.closest(".is-side-resizing")) return;
+      if (nearBottomRef.current) el.scrollTop = el.scrollHeight;
     }
 
     function cancelJump() {

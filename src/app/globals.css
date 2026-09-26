@@ -3127,6 +3127,19 @@ button:active:not(:disabled) {
     pointer-events: none;
   }
 
+  /* Off-screen bubbles skip text layout while the column width is dragged.
+     Scroll position is restored in JS to the message that was on screen. */
+  .room.room--in-call.is-side-resizing > .room__stage .room__messages {
+    overflow-anchor: none;
+  }
+
+  .room.room--in-call.is-side-resizing > .room__stage .room__messages .bubble-group,
+  .room.room--in-call.is-side-resizing > .room__stage .room__messages .message-block,
+  .room.room--in-call.is-side-resizing > .room__stage .room__messages .day-chip {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 72px;
+  }
+
   .room.room--in-call:has(> .room__call-dock:not(:empty):not(.is-mini))
     > .room__stage {
     grid-column: 2;

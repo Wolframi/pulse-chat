@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -37,6 +38,14 @@ import {
 const SIDE_CHAT_MIN = 390;
 const SIDE_CHAT_WIDE = 500;
 const SIDE_CHAT_MAX = 560;
+
+type SideScrollLock = {
+  scroller: HTMLElement;
+  anchor: HTMLElement;
+  anchorId: string;
+  offset: number;
+  pinBottom: boolean;
+};
 
 const MediaLightbox = dynamic(
   () => import("@/components/chat/ImageLightbox").then((mod) => mod.MediaLightbox),
@@ -227,6 +236,7 @@ export function ChatApp() {
   const [compactCallLayout, setCompactCallLayout] = useState(false);
   const [wideCallLayout, setWideCallLayout] = useState(false);
   const [sideChatWidth, setSideChatWidth] = useState<number | null>(null);
+  const [sideChatResizing, setSideChatResizing] = useState(false);
   const [callPickerOpen, setCallPickerOpen] = useState(false);
   const [callPanelHeight, setCallPanelHeight] = useState<number | null>(null);
   const [callResizing, setCallResizing] = useState(false);
@@ -1004,23 +1014,103 @@ export function ChatApp() {
     return Math.min(max, Math.max(SIDE_CHAT_MIN, Math.round(width)));
   }, []);
 
+  const sideWidthLiveRef = useRef<number | null>(null);
+  const sideResizeFrameRef = useRef(0);
+  const sideScrollLockRef = useRef<SideScrollLock | null>(null);
+
+  const captureSideScrollLock = useCallback(() => {
+    const scroller = callRoomRef.current?.querySelector<HTMLElement>(
+      ".room__stage .room__messages",
+    );
+    if (!scroller) {
+      sideScrollLockRef.current = null;
+      return;
+    }
+    const messages = scroller.querySelectorAll<HTMLElement>("[id^='msg-']");
+    if (!messages.length) {
+      sideScrollLockRef.current = null;
+      return;
+    }
+    const box = scroller.getBoundingClientRect();
+    const targetY = box.top + Math.min(96, box.height * 0.28);
+    let lo = 0;
+    let hi = messages.length - 1;
+    let index = messages.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const rect = messages[mid].getBoundingClientRect();
+      if (rect.bottom < targetY) lo = mid + 1;
+      else {
+        index = mid;
+        hi = mid - 1;
+      }
+    }
+    const anchor = messages[index];
+    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    sideScrollLockRef.current = {
+      scroller,
+      anchor,
+      anchorId: anchor.id,
+      offset: anchor.getBoundingClientRect().top - box.top,
+      pinBottom: distance < 2,
+    };
+    scroller.dataset.lockScroll = "1";
+  }, []);
+
   const handleSideResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (!wideCallLayout) return;
       const stage = event.currentTarget.nextElementSibling;
       if (!(stage instanceof HTMLElement)) return;
       event.preventDefault();
+      const width = stage.getBoundingClientRect().width;
+      sideWidthLiveRef.current = width;
       callResizeRef.current = {
         startY: event.clientX,
-        startHeight: stage.getBoundingClientRect().width,
+        startHeight: width,
       };
+      captureSideScrollLock();
       setCallResizing(true);
+      setSideChatResizing(true);
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [wideCallLayout],
+    [captureSideScrollLock, wideCallLayout],
   );
 
-  const sideWidthLiveRef = useRef<number | null>(null);
+  const restoreSideScrollLock = useCallback(() => {
+    const lock = sideScrollLockRef.current;
+    if (!lock?.scroller.isConnected) return;
+    const anchor = lock.anchor.isConnected
+      ? lock.anchor
+      : lock.scroller.querySelector<HTMLElement>(`#${CSS.escape(lock.anchorId)}`);
+    if (!anchor) return;
+    if (lock.pinBottom) {
+      lock.scroller.scrollTop = lock.scroller.scrollHeight;
+      return;
+    }
+    const delta =
+      anchor.getBoundingClientRect().top -
+      lock.scroller.getBoundingClientRect().top -
+      lock.offset;
+    if (Math.abs(delta) > 0.5) lock.scroller.scrollTop += delta;
+  }, []);
+
+  const releaseSideScrollLock = useCallback(() => {
+    const lock = sideScrollLockRef.current;
+    if (!lock) return;
+    requestAnimationFrame(() => {
+      if (sideScrollLockRef.current !== lock) return;
+      restoreSideScrollLock();
+      sideScrollLockRef.current = null;
+      if (lock.scroller.isConnected) delete lock.scroller.dataset.lockScroll;
+    });
+  }, [restoreSideScrollLock]);
+
+  useLayoutEffect(() => {
+    restoreSideScrollLock();
+    if (sideChatResizing) return;
+    releaseSideScrollLock();
+  }, [releaseSideScrollLock, restoreSideScrollLock, sideChatResizing, sideChatWidth]);
 
   const applySideChatWidth = useCallback((width: number) => {
     const room = callRoomRef.current;
@@ -1033,19 +1123,32 @@ export function ChatApp() {
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const resize = callResizeRef.current;
       if (!resize || !wideCallLayout) return;
-      const width = clampSideChatWidth(resize.startHeight + resize.startY - event.clientX);
-      sideWidthLiveRef.current = width;
-      applySideChatWidth(width);
+      sideWidthLiveRef.current = clampSideChatWidth(
+        resize.startHeight + resize.startY - event.clientX,
+      );
+      if (sideResizeFrameRef.current) return;
+      sideResizeFrameRef.current = requestAnimationFrame(() => {
+        sideResizeFrameRef.current = 0;
+        const width = sideWidthLiveRef.current;
+        if (width == null) return;
+        applySideChatWidth(width);
+        restoreSideScrollLock();
+      });
     },
-    [applySideChatWidth, clampSideChatWidth, wideCallLayout],
+    [applySideChatWidth, clampSideChatWidth, restoreSideScrollLock, wideCallLayout],
   );
 
   const handleSideResizeEnd = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (sideResizeFrameRef.current) {
+        cancelAnimationFrame(sideResizeFrameRef.current);
+        sideResizeFrameRef.current = 0;
+      }
       const width = sideWidthLiveRef.current;
       sideWidthLiveRef.current = null;
       callResizeRef.current = null;
       setCallResizing(false);
+      setSideChatResizing(false);
       if (width != null) setSideChatWidth(width);
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
@@ -1719,6 +1822,8 @@ export function ChatApp() {
             } ${
               callResizing ? "is-resizing" : ""
             } ${
+              sideChatResizing ? "is-side-resizing" : ""
+            } ${
               wideCallLayout &&
               fullCallOpen &&
               ((callResizing && sideWidthLiveRef.current != null
@@ -2146,14 +2251,21 @@ export function ChatApp() {
                   onPointerMove={handleSideResizeMove}
                   onPointerUp={handleSideResizeEnd}
                   onPointerCancel={handleSideResizeEnd}
-                  onDoubleClick={() => setSideChatWidth(null)}
+                  onDoubleClick={() => {
+                    if (sideChatWidth == null) return;
+                    captureSideScrollLock();
+                    setSideChatWidth(null);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
                     event.preventDefault();
                     const current = sideChatWidth ?? SIDE_CHAT_MIN;
-                    setSideChatWidth(
-                      clampSideChatWidth(current + (event.key === "ArrowLeft" ? 24 : -24)),
+                    const next = clampSideChatWidth(
+                      current + (event.key === "ArrowLeft" ? 24 : -24),
                     );
+                    if (next === current) return;
+                    captureSideScrollLock();
+                    setSideChatWidth(next);
                   }}
                 >
                   <span aria-hidden />
