@@ -554,7 +554,7 @@ function VoiceStagePanel({
                     : selfSpeaking
                       ? "Вы говорите"
                       : sittingAlone
-                        ? "Вы один в голосовом канале"
+                        ? undefined
                         : "Это вы"
                   : undefined
               }
