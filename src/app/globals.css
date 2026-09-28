@@ -12707,6 +12707,13 @@ button:active:not(:disabled) {
   min-height: 0;
 }
 
+:is(.room--group-call, .room--direct-call) .call-layout__chat .composer {
+  padding: 7px 8px calc(8px + var(--safe-bottom));
+  background: var(--surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .room--group-call .call-layout__chat-head,
 :is(.room--group-call, .room--direct-call) .call-layout__utility,
 .room--group-call > .call-layout__resize {
@@ -12871,10 +12878,6 @@ button:active:not(:disabled) {
     left: auto;
     right: -6px;
     transform: scaleX(-1);
-  }
-
-  :is(.room--group-call, .room--direct-call) .call-layout__chat .composer {
-    padding: 7px 8px 8px;
   }
 
   :is(.room--group-call, .room--direct-call) .call-layout__chat .composer__box {
