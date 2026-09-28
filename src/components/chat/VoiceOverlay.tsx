@@ -568,18 +568,6 @@ function VoiceStagePanel({
       </div>
 
       <div className="call__bar">
-        <p className="call__status">
-          <strong>{active?.title}</strong>
-          <span>
-            {peers.length === 0
-              ? "только вы"
-              : `${peers.length + 1} участников`}
-            {screenCount > 0
-              ? ` · ${screenCount === 1 ? "демонстрация" : `${screenCount} демонстрации`}`
-              : ""}
-            {deafened ? " · без звука" : ""}
-          </span>
-        </p>
         <div className="call__actions call__actions--dock">
           <button
             type="button"

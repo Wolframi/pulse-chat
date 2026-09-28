@@ -2178,9 +2178,11 @@ button:active:not(:disabled) {
   gap: 10px;
   width: 100%;
   min-width: 0;
+  min-height: calc(70px + var(--safe-bottom));
   flex: 0 0 auto;
+  box-sizing: border-box;
   margin: 0;
-  padding: 10px 10px calc(10px + var(--safe-bottom));
+  padding: 7px 10px calc(8px + var(--safe-bottom));
   border: 0;
   border-top: 1px solid color-mix(in srgb, #3d8f66 35%, var(--line));
   border-radius: 0;
@@ -12708,6 +12710,8 @@ button:active:not(:disabled) {
 }
 
 :is(.room--group-call, .room--direct-call) .call-layout__chat .composer {
+  min-height: calc(70px + var(--safe-bottom));
+  box-sizing: border-box;
   padding: 7px 8px calc(8px + var(--safe-bottom));
   background: var(--surface);
   backdrop-filter: none;
@@ -12881,7 +12885,7 @@ button:active:not(:disabled) {
   }
 
   :is(.room--group-call, .room--direct-call) .call-layout__chat .composer__box {
-    min-height: 46px;
+    min-height: 54px;
     border-radius: 15px;
   }
 
