@@ -18,6 +18,7 @@ import type {
   GroupVisibility,
   PeopleUser,
   PublicGroupHit,
+  VoiceChannelUser,
 } from "@/lib/types";
 import { Avatar } from "@/components/chat/Avatar";
 import {
@@ -619,6 +620,81 @@ export function ChatSidebar({
       });
   }, [activeGuild, people]);
 
+  const voiceRoster = useMemo(
+    () =>
+      (activeGuild?.voiceChannels || []).filter(
+        (channel) => channel.users.length > 0,
+      ),
+    [activeGuild],
+  );
+  const pinGuildBottom = voiceRoster.length > 0 || showCallMembers;
+  const guildListRef = useRef<HTMLDivElement>(null);
+  const guildSplitRef = useRef<{ startY: number; startHeight: number } | null>(
+    null,
+  );
+  const [guildTopHeight, setGuildTopHeight] = useState<number | null>(null);
+  const [guildSplitting, setGuildSplitting] = useState(false);
+
+  function clampGuildTop(height: number, listHeight: number) {
+    const handle = 10;
+    const minTop = 120;
+    const minBottom = 96;
+    const maxTop = Math.max(minTop, listHeight - handle - minBottom);
+    return Math.min(maxTop, Math.max(minTop, Math.round(height)));
+  }
+
+  function handleGuildSplitDown(event: ReactPointerEvent<HTMLDivElement>) {
+    const list = guildListRef.current;
+    const top = event.currentTarget.previousElementSibling;
+    if (!list || !(top instanceof HTMLElement)) return;
+    event.preventDefault();
+    guildSplitRef.current = {
+      startY: event.clientY,
+      startHeight: top.getBoundingClientRect().height,
+    };
+    setGuildSplitting(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleGuildSplitMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = guildSplitRef.current;
+    const list = guildListRef.current;
+    if (!drag || !list) return;
+    setGuildTopHeight(
+      clampGuildTop(drag.startHeight + event.clientY - drag.startY, list.clientHeight),
+    );
+  }
+
+  function handleGuildSplitUp(event: ReactPointerEvent<HTMLDivElement>) {
+    guildSplitRef.current = null;
+    setGuildSplitting(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function renderVoiceUser(user: VoiceChannelUser) {
+    const person = peopleById.get(user.userId);
+    const avatarUrl = user.avatarUrl || person?.avatarUrl;
+    return (
+      <li
+        key={user.userId}
+        className={`voice-user ${user.speaking ? "is-speaking" : ""} ${
+          user.muted ? "is-muted" : ""
+        } ${user.deafened ? "is-deafened" : ""}`}
+      >
+        <span className="voice-user__avatar">
+          <Avatar name={user.name} src={avatarUrl} size="sm" />
+        </span>
+        <span className="voice-user__name">{user.name}</span>
+        <span className="voice-user__flags" aria-hidden>
+          {user.muted ? <IconMicOff size={12} /> : null}
+          {user.deafened ? <IconHeadphones size={12} /> : null}
+        </span>
+      </li>
+    );
+  }
+
   useEffect(() => {
     if (!revealedChannelId) return;
     const close = (event: PointerEvent) => {
@@ -754,7 +830,24 @@ export function ChatSidebar({
           {error && <p className="sidebar__error">{error}</p>}
 
           {activeGuild && (
-            <div className="sidebar__list sidebar__list--guild">
+            <div
+              ref={guildListRef}
+              className={`sidebar__list sidebar__list--guild${
+                pinGuildBottom ? " has-bottom" : ""
+              }${guildSplitting ? " is-splitting" : ""}`}
+            >
+              <div
+                className={
+                  pinGuildBottom
+                    ? `sidebar__guild-scroll${guildTopHeight == null ? "" : " is-resized"}`
+                    : "sidebar__guild-flow"
+                }
+                style={
+                  pinGuildBottom && guildTopHeight != null
+                    ? { height: guildTopHeight }
+                    : undefined
+                }
+              >
               <div className="sidebar__section-row">
                 <p className="sidebar__section">Текстовые каналы</p>
                 {onCreateTextChannel && (
@@ -1005,44 +1098,6 @@ export function ChatSidebar({
                           voiceItem
                         )}
                       </div>
-                      {channel.users.length > 0 && (
-                        <ul className="voice-channel__users">
-                          {channel.users.map((user) => {
-                            const person = peopleById.get(user.userId);
-                            const avatarUrl =
-                              user.avatarUrl || person?.avatarUrl;
-                            return (
-                              <li
-                                key={user.userId}
-                                className={`voice-user ${
-                                  user.speaking ? "is-speaking" : ""
-                                } ${user.muted ? "is-muted" : ""} ${
-                                  user.deafened ? "is-deafened" : ""
-                                }`}
-                              >
-                                <span className="voice-user__avatar">
-                                  <Avatar
-                                    name={user.name}
-                                    src={avatarUrl}
-                                    size="sm"
-                                  />
-                                </span>
-                                <span className="voice-user__name">
-                                  {user.name}
-                                </span>
-                                <span className="voice-user__flags" aria-hidden>
-                                  {user.muted ? (
-                                    <IconMicOff size={12} />
-                                  ) : null}
-                                  {user.deafened ? (
-                                    <IconHeadphones size={12} />
-                                  ) : null}
-                                </span>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )}
                     </div>
                   );
                 })
@@ -1095,40 +1150,98 @@ export function ChatSidebar({
                   )}
                 </>
               ) : null}
+              </div>
 
-              {showCallMembers ? (
-                <div className="sidebar__call-members">
-                  <p className="sidebar__section">Участники</p>
-                  <div className="sidebar__call-members-list">
-                    {guildMembers.map((user) => {
-                      const name = user.displayName || user.username;
-                      return (
-                        <button
-                          key={user.id}
-                          type="button"
-                          className={`person-item sidebar__member ${
-                            user.online ? "is-online" : "is-offline"
-                          }`}
-                          onClick={() => onOpenDm(user.id)}
-                        >
-                          <span className="person-item__avatar">
-                            <Avatar
-                              name={name}
-                              src={user.avatarUrl}
-                              size="sm"
-                              online={user.online}
-                            />
-                          </span>
-                          <span className="person-item__meta">
-                            <strong>
-                              {name}
-                              {user.id === currentUserId ? " (вы)" : ""}
-                            </strong>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+              {pinGuildBottom ? (
+                <div
+                  className="sidebar__guild-split"
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label="Изменить высоту приглашения и участников"
+                  aria-valuemin={120}
+                  aria-valuenow={guildTopHeight ?? undefined}
+                  tabIndex={0}
+                  onPointerDown={handleGuildSplitDown}
+                  onPointerMove={handleGuildSplitMove}
+                  onPointerUp={handleGuildSplitUp}
+                  onPointerCancel={handleGuildSplitUp}
+                  onDoubleClick={() => setGuildTopHeight(null)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                    const list = guildListRef.current;
+                    const top = event.currentTarget.previousElementSibling;
+                    if (!list || !(top instanceof HTMLElement)) return;
+                    event.preventDefault();
+                    const current = guildTopHeight ?? top.getBoundingClientRect().height;
+                    setGuildTopHeight(
+                      clampGuildTop(
+                        current + (event.key === "ArrowDown" ? 24 : -24),
+                        list.clientHeight,
+                      ),
+                    );
+                  }}
+                >
+                  <span aria-hidden />
+                </div>
+              ) : null}
+
+              {pinGuildBottom ? (
+                <div className="sidebar__guild-bottom">
+                  {voiceRoster.length > 0 ? (
+                    <div className="sidebar__voice-roster-scroll">
+                      {voiceRoster.map((channel) => (
+                        <div key={channel.id} className="sidebar__voice-roster">
+                          <p className="sidebar__section">{channel.title}</p>
+                          <ul className="voice-channel__users voice-channel__users--dock">
+                            {channel.users.map((user) => renderVoiceUser(user))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {!showCallMembers ? (
+                    <>
+                      <p className="sidebar__section">Участники</p>
+                      <p className="sidebar__meta-line">
+                        {activeGuild.members} · онлайн {activeGuild.online}
+                      </p>
+                    </>
+                  ) : null}
+                  {showCallMembers ? (
+                    <div className="sidebar__call-members">
+                      <p className="sidebar__section">Участники</p>
+                      <div className="sidebar__call-members-list">
+                        {guildMembers.map((user) => {
+                          const name = user.displayName || user.username;
+                          return (
+                            <button
+                              key={user.id}
+                              type="button"
+                              className={`person-item sidebar__member ${
+                                user.online ? "is-online" : "is-offline"
+                              }`}
+                              onClick={() => onOpenDm(user.id)}
+                            >
+                              <span className="person-item__avatar">
+                                <Avatar
+                                  name={name}
+                                  src={user.avatarUrl}
+                                  size="sm"
+                                  online={user.online}
+                                />
+                              </span>
+                              <span className="person-item__meta">
+                                <strong>
+                                  {name}
+                                  {user.id === currentUserId ? " (вы)" : ""}
+                                </strong>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <>
