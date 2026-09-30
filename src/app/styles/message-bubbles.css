@@ -81,7 +81,6 @@
 
 .bubble-group--mine {
   justify-content: flex-start;
-  padding-left: 0;
 }
 
 .bubble-group--mine .bubble-group__body {
