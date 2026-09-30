@@ -1,0 +1,168 @@
+.call-mini {
+  position: fixed;
+  top: calc(12px + var(--safe-top));
+  right: 16px;
+  bottom: auto;
+  left: auto;
+  z-index: 20;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 210px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
+  color: inherit;
+}
+
+.call-mini--inline {
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  bottom: auto;
+  z-index: 1;
+  width: 100%;
+  min-width: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.call-mini .call-mini__avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  max-width: 36px;
+  max-height: 36px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: visible;
+}
+
+.call-mini .call-mini__avatar .avatar {
+  width: 36px;
+  height: 36px;
+}
+
+.call-mini .call-mini__avatar.is-speaking {
+  outline: none;
+}
+
+.call-mini .call-mini__avatar.is-speaking .avatar {
+  outline: none;
+  box-shadow: 0 0 0 2px #23a55a;
+}
+
+.call-mini__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.call-mini__main:hover {
+  background: color-mix(in srgb, var(--bg-deep) 70%, transparent);
+}
+
+.call-mini__end {
+  width: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--danger-soft) 45%, var(--surface));
+  color: var(--danger);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.call-mini__end:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+.call-mini__text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.call-mini strong,
+.call-mini em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-mini strong {
+  font-size: 0.86rem;
+}
+
+.call-mini em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.call__minimize {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.call__timer {
+  margin: 0;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.call__btn.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.call__btn.is-off {
+  background: color-mix(in srgb, var(--danger-soft) 40%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+  color: var(--danger);
+}
+
+.call__stage-wait {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  justify-items: center;
+  color: rgba(255, 255, 255, 0.78);
+  pointer-events: none;
+}
+
+.call__stage-wait p {
+  margin: 0;
+  font-size: 0.86rem;
+}
