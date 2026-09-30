@@ -21,6 +21,11 @@ Open http://localhost:3000
 
 Групповые голосовые каналы идут через этот LiveKit. Личные звонки — P2P, SFU им не нужен.
 
+Расшифровка голосовых сообщений использует Deepgram Nova-3. Задайте серверный
+`DEEPGRAM_API_KEY` или сохраните ключ в `.deepgram-api-key`. По умолчанию включён
+мультиязычный режим (`DEEPGRAM_LANGUAGE=multi`); специализированные имена можно
+передать через `DEEPGRAM_KEYTERMS`, разделяя их запятыми или переводами строк.
+
 ## Demo accounts
 
 Created automatically unless `SEED_DEMO=0`:

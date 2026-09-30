@@ -53,10 +53,8 @@ git clean -fd \
   --exclude=.env \
   --exclude=.s3-storage.json \
   --exclude=.giphy-api-key \
-  --exclude=.groq-api-key \
-  --exclude=.groq-proxy-url \
-  --exclude=.groq-bridge-secret \
-  --exclude=.groq-egress-proxy \
+  --exclude=.deepgram-api-key \
+  --exclude=.deepgram-keyterms \
   --exclude=.livekit-url \
   --exclude=.livekit-api-key \
   --exclude=.livekit-api-secret \

@@ -13,10 +13,7 @@ function readSecret(filename) {
 }
 
 const giphyKey = readSecret(".giphy-api-key");
-const groqKey = readSecret(".groq-api-key");
-const groqProxyUrl = readSecret(".groq-proxy-url");
-const groqBridgeSecret = readSecret(".groq-bridge-secret");
-const groqEgressProxy = readSecret(".groq-egress-proxy");
+const deepgramKey = readSecret(".deepgram-api-key");
 
 module.exports = {
   apps: [
@@ -45,10 +42,7 @@ module.exports = {
         TRUST_PROXY: "1",
         UV_THREADPOOL_SIZE: "8",
         ...(giphyKey ? { GIPHY_API_KEY: giphyKey } : {}),
-        ...(groqKey ? { GROQ_API_KEY: groqKey } : {}),
-        ...(groqProxyUrl ? { GROQ_PROXY_URL: groqProxyUrl } : {}),
-        ...(groqBridgeSecret ? { GROQ_BRIDGE_SECRET: groqBridgeSecret } : {}),
-        ...(groqEgressProxy ? { GROQ_EGRESS_PROXY: groqEgressProxy } : {}),
+        ...(deepgramKey ? { DEEPGRAM_API_KEY: deepgramKey } : {}),
       },
     },
   ],

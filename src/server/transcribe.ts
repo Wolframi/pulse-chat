@@ -1,19 +1,12 @@
-import { spawn } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { File } from "node:buffer";
-import { FormData as UndiciFormData } from "undici";
-import {
-  groqFetch,
-  invalidateGroqEgress,
-  markGroqEgressOk,
-  resolveGroqEgress,
-} from "./groqEgress";
+import { DeepgramClient } from "@deepgram/sdk";
 
-const GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 const MAX_BYTES = 25 * 1024 * 1024;
 const inflight = new Map<string, Promise<string>>();
+
+let cachedApiKey = "";
+let cachedClient: DeepgramClient | null = null;
 
 function readSecretFile(filename: string) {
   try {
@@ -25,69 +18,58 @@ function readSecretFile(filename: string) {
   }
 }
 
-function groqApiKey() {
-  const fromFile = readSecretFile(".groq-api-key");
-  if (fromFile) return fromFile;
-  const fromEnv = String(process.env.GROQ_API_KEY || "").trim();
-  if (fromEnv) return fromEnv;
+function readEnvFileValue(name: string) {
   const envFile = readSecretFile(".env");
-  const match = envFile.match(/^GROQ_API_KEY\s*=\s*(.+)$/m);
-  if (!match) return "";
-  return match[1].trim().replace(/^["']|["']$/g, "");
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = envFile.match(new RegExp(`^${escaped}\\s*=\\s*(.+)$`, "m"));
+  return match?.[1]?.trim().replace(/^["']|["']$/g, "") || "";
 }
 
-function groqProxyUrl() {
+function deepgramApiKey() {
   return (
-    readSecretFile(".groq-proxy-url") ||
-    String(process.env.GROQ_PROXY_URL || "").trim()
+    readSecretFile(".deepgram-api-key") ||
+    String(process.env.DEEPGRAM_API_KEY || "").trim() ||
+    readEnvFileValue("DEEPGRAM_API_KEY")
   );
 }
 
-function groqBridgeSecret() {
+function deepgramLanguage() {
   return (
-    readSecretFile(".groq-bridge-secret") ||
-    String(process.env.GROQ_BRIDGE_SECRET || "").trim()
+    String(process.env.DEEPGRAM_LANGUAGE || "").trim() ||
+    readEnvFileValue("DEEPGRAM_LANGUAGE") ||
+    "multi"
   );
 }
 
-function transcriptionEndpoint() {
-  const proxy = groqProxyUrl();
-  if (!proxy) return GROQ_URL;
-  if (/\/openai\//.test(proxy) || /\/transcribe\/?$/.test(proxy)) return proxy;
-  return `${proxy.replace(/\/$/, "")}/openai/v1/audio/transcriptions`;
+function deepgramKeyterms() {
+  const raw =
+    String(process.env.DEEPGRAM_KEYTERMS || "").trim() ||
+    readSecretFile(".deepgram-keyterms") ||
+    readEnvFileValue("DEEPGRAM_KEYTERMS");
+  if (!raw) return undefined;
+  const terms = [
+    ...new Set(
+      raw
+        .split(/\r?\n|,/)
+        .map((term) => term.trim())
+        .filter(Boolean),
+    ),
+  ];
+  return terms.length ? terms.slice(0, 100) : undefined;
 }
 
-export function hasGroqKey() {
-  const proxy = groqProxyUrl();
-  const secret = groqBridgeSecret();
-  if (proxy && secret) return true;
-  return Boolean(groqApiKey());
+function deepgramClient() {
+  const apiKey = deepgramApiKey();
+  if (!apiKey) throw new Error("DEEPGRAM_API_KEY не задан");
+  if (!cachedClient || cachedApiKey !== apiKey) {
+    cachedApiKey = apiKey;
+    cachedClient = new DeepgramClient({ apiKey });
+  }
+  return cachedClient;
 }
 
-function ffmpegToWav(input: string) {
-  const out = `${input}.whisper.wav`;
-  return new Promise<string | null>((resolve) => {
-    const child = spawn(
-      "ffmpeg",
-      ["-y", "-i", input, "-ac", "1", "-ar", "16000", "-f", "wav", out],
-      { stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
-    );
-    const timer = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        /* ignore */
-      }
-    }, 30_000);
-    child.on("error", () => {
-      clearTimeout(timer);
-      resolve(null);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve(code === 0 && existsSync(out) ? out : null);
-    });
-  });
+export function hasTranscriptionKey() {
+  return Boolean(deepgramApiKey());
 }
 
 function uploadName(fileName: string, filePath: string, mime?: string) {
@@ -108,41 +90,13 @@ function uploadName(fileName: string, filePath: string, mime?: string) {
   return `voice${ext}`;
 }
 
-async function postGroqWithProxy(
-  form: UndiciFormData,
-  headers: Record<string, string>,
-) {
-  let lastError: Error | null = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const egress = await resolveGroqEgress(attempt > 0);
-    try {
-      const response = await groqFetch(
-        GROQ_URL,
-        { method: "POST", headers, body: form },
-        egress,
-      );
-      if (response.status === 403 || response.status === 407) {
-        invalidateGroqEgress(egress);
-        lastError = new Error(`Groq ${response.status} через прокси`);
-        continue;
-      }
-      if (response.status === 400) {
-        // Some proxies rewrite Content-Type — that 400 is the proxy's fault.
-        const probe = await response.clone().text().catch(() => "");
-        if (/multipart|content-type/i.test(probe)) {
-          invalidateGroqEgress(egress);
-          lastError = new Error("Прокси исказил запрос (Content-Type)");
-          continue;
-        }
-      }
-      markGroqEgressOk(egress);
-      return response;
-    } catch (error) {
-      invalidateGroqEgress(egress);
-      lastError = error instanceof Error ? error : new Error(String(error));
-    }
+function errorDetail(error: unknown) {
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
   }
-  throw lastError || new Error("Не удалось достучаться до Groq через прокси");
 }
 
 export async function transcribeAudioFile(
@@ -150,84 +104,53 @@ export async function transcribeAudioFile(
   fileName: string,
   mime?: string,
 ) {
-  const proxy = groqProxyUrl();
-  const bridgeSecret = groqBridgeSecret();
-  const key = groqApiKey();
-  const endpoint = transcriptionEndpoint();
-  const useVercelBridge = Boolean(proxy && bridgeSecret && !key);
-  if (!useVercelBridge && !key) {
-    throw new Error("GROQ_API_KEY не задан");
-  }
-  if (!existsSync(filePath)) {
-    throw new Error("Файл не найден");
+  if (!existsSync(filePath)) throw new Error("Файл не найден");
+
+  const size = statSync(filePath).size;
+  if (!size || size > MAX_BYTES) {
+    throw new Error("Файл слишком большой для расшифровки");
   }
 
-  const ext = path.extname(filePath).toLowerCase();
-  const converted =
-    ext === ".webm" || ext === ".weba" || ext === ".ogg"
-      ? await ffmpegToWav(filePath)
-      : null;
-  const sendPath = converted || filePath;
-  const sendName = converted ? "voice.wav" : uploadName(fileName, filePath, mime);
-  const sendMime = converted
-    ? "audio/wav"
-    : String(mime || "audio/webm").split(";")[0].trim() || "audio/webm";
+  const contentType =
+    String(mime || "audio/webm").split(";")[0].trim() || "audio/webm";
 
   try {
-    const bytes = await readFile(sendPath);
-    if (!bytes.byteLength || bytes.byteLength > MAX_BYTES) {
-      throw new Error("Файл слишком большой для расшифровки");
+    const result = await deepgramClient().listen.v1.media.transcribeFile(
+      {
+        path: filePath,
+        filename: uploadName(fileName, filePath, mime),
+        contentType,
+        contentLength: size,
+      },
+      {
+        model: "nova-3",
+        language: deepgramLanguage(),
+        smart_format: true,
+        numerals: true,
+        punctuate: true,
+        keyterm: deepgramKeyterms(),
+      },
+      {
+        timeoutInSeconds: 90,
+        maxRetries: 2,
+      },
+    );
+
+    if (!("results" in result)) {
+      throw new Error("Deepgram вернул асинхронный ответ без расшифровки");
     }
 
-    const headers: Record<string, string> = useVercelBridge
-      ? { "x-bridge-secret": bridgeSecret }
-      : { Authorization: `Bearer ${key}` };
-    let response: {
-      ok: boolean;
-      status: number;
-      text: () => Promise<string>;
-      json: () => Promise<unknown>;
-    };
-    if (useVercelBridge) {
-      const form = new FormData();
-      form.append(
-        "file",
-        new Blob([new Uint8Array(bytes)], { type: sendMime }),
-        sendName,
-      );
-      form.append("model", "whisper-large-v3");
-      form.append("temperature", "0");
-      form.append("response_format", "json");
-      response = await fetch(endpoint, { method: "POST", headers, body: form });
-    } else {
-      const form = new UndiciFormData();
-      form.append("file", new File([bytes], sendName, { type: sendMime }));
-      form.append("model", "whisper-large-v3");
-      form.append("temperature", "0");
-      form.append("response_format", "json");
-      response = await postGroqWithProxy(form, headers);
-    }
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      if (/audio_too_short|too short/i.test(detail)) {
-        return "";
-      }
-      throw new Error(
-        `Groq ${response.status}${detail ? `: ${detail.slice(0, 180)}` : ""}`,
-      );
-    }
-    const data = (await response.json()) as { text?: string };
-    const text = String(data.text || "").trim();
+    const text = result.results.channels
+      .map((channel) => channel.alternatives?.[0]?.transcript || "")
+      .filter(Boolean)
+      .join("\n")
+      .trim();
     if (!text || /^[\s.,!?…;:\-–—]+$/.test(text)) return "";
     return text;
-  } finally {
-    if (converted) {
-      try {
-        unlinkSync(converted);
-      } catch {
-        /* ignore */
-      }
-    }
+  } catch (error) {
+    const detail = errorDetail(error);
+    if (/audio[_ ]too[_ ]short|too short|no speech/i.test(detail)) return "";
+    throw new Error(`Deepgram: ${detail}`);
   }
 }
 

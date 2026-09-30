@@ -117,7 +117,7 @@ import {
   parseMediaSize,
 } from "./src/lib/files";
 import {
-  hasGroqKey,
+  hasTranscriptionKey,
   queueTranscription,
   transcribeAudioFile,
 } from "./src/server/transcribe";
@@ -1748,7 +1748,7 @@ function startVoiceTranscription(
   ) {
     return;
   }
-  if (!hasGroqKey()) {
+  if (!hasTranscriptionKey()) {
     message.transcriptionStatus = "error";
     persistMessages();
     io.to(chat.id).emit("message:update", publicMessage(message));
@@ -4210,7 +4210,7 @@ app.prepare().then(() => {
           ack?.({ ok: false, error: "Сообщение не найдено" });
           return;
         }
-        if (!hasGroqKey()) {
+        if (!hasTranscriptionKey()) {
           ack?.({ ok: false, error: "Расшифровка недоступна" });
           return;
         }
