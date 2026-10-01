@@ -28,6 +28,7 @@ import { ChatInfoPanel } from "@/components/chat/ChatInfoPanel";
 import { MessageList } from "@/components/chat/MessageList";
 import { AudioPlaybackBar } from "@/components/chat/AudioPlaybackBar";
 import dynamic from "next/dynamic";
+import { HologramMaiko } from "@/components/chat/HologramMaiko";
 import { Avatar } from "@/components/chat/Avatar";
 import {
   collectRoomAudioTracks,
@@ -1472,7 +1473,7 @@ export function ChatApp() {
     const reduced =
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const minMs = reduced ? 120 : 1100;
+    const minMs = reduced ? 120 : 4200;
     const now =
       typeof performance !== "undefined" ? performance.now() : Date.now();
     const wait = Math.max(0, minMs - (now - mountAt));
@@ -1668,14 +1669,7 @@ export function ChatApp() {
             exit={{ opacity: 0, scale: 1.015 }}
             transition={{ duration: 0.42, ease: easeOut }}
           >
-            <motion.p
-              className="boot__word"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, delay: 0.06, ease: easeOut }}
-            >
-              Майко
-            </motion.p>
+            <HologramMaiko />
           </motion.div>
         ) : !account ? (
           <motion.div
