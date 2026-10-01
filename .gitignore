@@ -24,6 +24,9 @@
 # production
 /build
 
+# Generated from the pinned DTLN dependency before dev/build/start.
+/public/audio/dtln-*/
+
 # misc
 .DS_Store
 *.pem

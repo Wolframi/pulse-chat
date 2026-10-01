@@ -12,7 +12,7 @@ import {
   subscribeVoiceSettings,
   type AudioDeviceOption,
 } from "@/lib/mediaDevices";
-import { getKrispEnabled, setKrispEnabled } from "@/lib/noiseFilter";
+import { getNeuralNoiseEnabled, setNeuralNoiseEnabled } from "@/lib/noiseFilter";
 import { IconHeadphones, IconMic, IconNoise, IconVolume } from "@/lib/icons";
 
 function meterCaptureConstraints(deviceId: string): MediaTrackConstraints {
@@ -41,7 +41,7 @@ export function VoiceSettings() {
   const [speakers, setSpeakers] = useState<AudioDeviceOption[]>([]);
   const [micId, setMicId] = useState(getMicDeviceId);
   const [speakerId, setSpeakerId] = useState(getSpeakerDeviceId);
-  const [krispOn, setKrispOn] = useState(getKrispEnabled);
+  const [dtlnOn, setDtlnOn] = useState(getNeuralNoiseEnabled);
   const [permError, setPermError] = useState<string | null>(null);
   const [testingOut, setTestingOut] = useState(false);
   const [outputSupported] = useState(canSelectAudioOutput);
@@ -199,7 +199,7 @@ export function VoiceSettings() {
     return subscribeVoiceSettings(() => {
       setMicId(getMicDeviceId());
       setSpeakerId(getSpeakerDeviceId());
-      setKrispOn(getKrispEnabled());
+      setDtlnOn(getNeuralNoiseEnabled());
     });
   }, []);
 
@@ -292,19 +292,20 @@ export function VoiceSettings() {
         <span className="voice-settings__krisp">
           <IconNoise size={14} />
           <span>
-            Krisp
-            <em>Нейросеть убирает клавиатуру, вентилятор и улицу</em>
+            DTLN
+            <em>Нейросетевое шумоподавление на вашем устройстве</em>
           </span>
         </span>
         <button
           type="button"
           role="switch"
-          aria-checked={krispOn}
-          className={`profile__switch ${krispOn ? "is-on" : ""}`}
+          aria-label="Шумоподавление DTLN"
+          aria-checked={dtlnOn}
+          className={`profile__switch ${dtlnOn ? "is-on" : ""}`}
           onClick={() => {
-            const next = !krispOn;
-            setKrispOn(next);
-            setKrispEnabled(next);
+            const next = !dtlnOn;
+            setDtlnOn(next);
+            setNeuralNoiseEnabled(next);
           }}
         >
           <span className="profile__switch-knob" />

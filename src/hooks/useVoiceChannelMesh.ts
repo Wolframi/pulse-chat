@@ -31,9 +31,9 @@ import {
 } from "@/lib/webrtcMedia";
 import {
   captureFilteredMic,
-  getKrispEnabled,
+  getNeuralNoiseEnabled,
   getNoiseFilterPref,
-  setKrispEnabled,
+  setNeuralNoiseEnabled,
   setMicEnabled,
   stopNoiseFilter,
   type NoiseFilterKind,
@@ -152,6 +152,7 @@ export function useVoiceChannelMesh({
   const cameraWasOffRef = useRef(true);
   const mediaBusyRef = useRef(false);
   const noiseFilterRef = useRef<NoiseFilterSession | null>(null);
+  const voiceSettingsUpdateRef = useRef<Promise<void>>(Promise.resolve());
   const [selfSpeaking, setSelfSpeaking] = useState(false);
   const [noiseFilterEnabled, setNoiseFilterEnabled] = useState(
     getNoiseFilterPref,
@@ -819,7 +820,7 @@ export function useVoiceChannelMesh({
         await ensureIceServers();
         const { filter, stream } = await captureFilteredMic();
         noiseFilterRef.current = filter;
-        setNoiseFilterEnabled(getKrispEnabled());
+        setNoiseFilterEnabled(getNeuralNoiseEnabled());
         setNoiseFilterKind(filter.kind);
         const keepMuted =
           opts?.muted ?? (opts?.preserveControls ? mutedRef.current : false);
@@ -1003,7 +1004,7 @@ export function useVoiceChannelMesh({
   }, [socket]);
 
   const toggleNoiseFilter = useCallback(() => {
-    setKrispEnabled(!getKrispEnabled());
+    setNeuralNoiseEnabled(!getNeuralNoiseEnabled());
   }, []);
 
   const applyVoiceSettings = useCallback(
@@ -1015,12 +1016,23 @@ export function useVoiceChannelMesh({
           ),
         );
       }
-      setNoiseFilterEnabled(getKrispEnabled());
+      setNoiseFilterEnabled(getNeuralNoiseEnabled());
       if (!change.mic && !change.noise) return;
       if (!localStreamRef.current || !channelIdRef.current) return;
       try {
+        if (!change.mic && noiseFilterRef.current) {
+          const filter = noiseFilterRef.current;
+          await filter.setEnabled(getNeuralNoiseEnabled());
+          setNoiseFilterKind(filter.kind);
+          return;
+        }
+        const previousStream = localStreamRef.current;
         const next = await captureFilteredMic();
         try {
+          if (localStreamRef.current !== previousStream) {
+            await stopNoiseFilter(next.filter);
+            return;
+          }
           const prev = noiseFilterRef.current;
           const stream = withReplacedAudioTrack(
             localStreamRef.current,
@@ -1051,7 +1063,8 @@ export function useVoiceChannelMesh({
   );
 
   useEffect(() => subscribeVoiceSettings((change) => {
-    void applyVoiceSettings(change);
+    voiceSettingsUpdateRef.current = voiceSettingsUpdateRef.current
+      .catch(() => undefined).then(() => applyVoiceSettings(change));
   }), [applyVoiceSettings]);
 
   const publishLocalVideos = useCallback(() => {

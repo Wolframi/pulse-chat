@@ -18,9 +18,9 @@ import type { VoiceChannelUser } from "@/lib/types";
 import {
   attachNoiseFilterToLiveKitTrack,
   audioCaptureConstraints,
-  getKrispEnabled,
+  getNeuralNoiseEnabled,
   getNoiseFilterPref,
-  setKrispEnabled,
+  setNeuralNoiseEnabled,
   stopNoiseFilter,
   type NoiseFilterKind,
   type NoiseFilterSession,
@@ -239,6 +239,7 @@ export function useVoiceChannelLiveKit({
   const remoteAudioTracksRef = useRef(new Map<string, RemoteTrack>());
   const stopScreenShareRef = useRef<() => Promise<void>>(async () => {});
   const noiseFilterRef = useRef<NoiseFilterSession | null>(null);
+  const noiseUpdateRef = useRef<Promise<void>>(Promise.resolve());
   const minimizedRef = useRef(false);
   const startMediaInflightRef = useRef<Promise<void> | null>(null);
   const startMediaRef = useRef<
@@ -392,23 +393,34 @@ export function useVoiceChannelLiveKit({
     [socket],
   );
 
-  const applyNoiseFilterToRoom = useCallback(async (room: Room) => {
-    const publication = room.localParticipant.getTrackPublication(
-      Track.Source.Microphone,
-    );
-    const track = publication?.track;
-    if (!(track instanceof LocalAudioTrack)) return;
-    const prev = noiseFilterRef.current;
-    noiseFilterRef.current = null;
-    await stopNoiseFilter(prev);
-    const session = await attachNoiseFilterToLiveKitTrack(track);
-    if (roomRef.current !== room) {
-      await stopNoiseFilter(session);
-      return;
-    }
-    noiseFilterRef.current = session;
-    setNoiseFilterEnabled(getKrispEnabled());
-    setNoiseFilterKind(session.kind);
+  const applyNoiseFilterToRoom = useCallback((room: Room) => {
+    const update = noiseUpdateRef.current.catch(() => undefined).then(async () => {
+      if (roomRef.current !== room) return;
+      const publication = room.localParticipant.getTrackPublication(
+        Track.Source.Microphone,
+      );
+      const track = publication?.track;
+      if (!(track instanceof LocalAudioTrack)) return;
+      const prev = noiseFilterRef.current;
+      if (prev && prev.outputTrack === track.mediaStreamTrack) {
+        await prev.setEnabled(getNeuralNoiseEnabled());
+        setNoiseFilterEnabled(getNeuralNoiseEnabled());
+        setNoiseFilterKind(prev.kind);
+        return;
+      }
+      noiseFilterRef.current = null;
+      await stopNoiseFilter(prev);
+      const session = await attachNoiseFilterToLiveKitTrack(track);
+      if (roomRef.current !== room) {
+        await stopNoiseFilter(session);
+        return;
+      }
+      noiseFilterRef.current = session;
+      setNoiseFilterEnabled(getNeuralNoiseEnabled());
+      setNoiseFilterKind(session.kind);
+    });
+    noiseUpdateRef.current = update;
+    return update;
   }, []);
 
   const applyRemoteVideoQuality = useCallback(() => {
@@ -1039,13 +1051,13 @@ export function useVoiceChannelLiveKit({
   }, [applyNoiseFilterToRoom, socket, syncLocalStream]);
 
   const toggleNoiseFilter = useCallback(() => {
-    setKrispEnabled(!getKrispEnabled());
+    setNeuralNoiseEnabled(!getNeuralNoiseEnabled());
   }, []);
 
   const applyVoiceSettings = useCallback(
     async (change: VoiceSettingsChange) => {
       const room = roomRef.current;
-      setNoiseFilterEnabled(getKrispEnabled());
+      setNoiseFilterEnabled(getNeuralNoiseEnabled());
       if (change.speaker) {
         const speakerId = getSpeakerDeviceId() || "default";
         if (room) {

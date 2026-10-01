@@ -2,10 +2,11 @@
 
 import type { LocalAudioTrack, AudioProcessorOptions, TrackProcessor } from "livekit-client";
 import { Track } from "livekit-client";
+import { createDtlnGraph, type DtlnGraph } from "@/lib/dtlnGraph";
 import { toast } from "sonner";
 import { emitVoiceSettings, getMicDeviceId } from "@/lib/mediaDevices";
 
-export type NoiseFilterKind = "krisp" | "rnnoise" | "browser";
+export type NoiseFilterKind = "dtln" | "browser";
 
 export type NoiseFilterSession = {
   kind: NoiseFilterKind;
@@ -33,7 +34,8 @@ export async function stopNoiseFilter(session: NoiseFilterSession | null) {
 }
 
 const PREF_KEY = "pulse-noise-suppression";
-const KRISP_KEY = "pulse-krisp";
+// Keep the existing preference key when migrating from Krisp to DTLN.
+const NEURAL_KEY = "pulse-krisp";
 const BROWSER_NS_KEY = "pulse-browser-ns";
 let noiseFallbackToastShown = false;
 let prefsMigrated = false;
@@ -80,35 +82,35 @@ function clampNsStrength(value: number) {
 function migrateVoicePrefs() {
   if (prefsMigrated || typeof window === "undefined") return;
   prefsMigrated = true;
-  if (readStorage(KRISP_KEY) !== null || readStorage(BROWSER_NS_KEY) !== null) {
+  if (readStorage(NEURAL_KEY) !== null || readStorage(BROWSER_NS_KEY) !== null) {
     return;
   }
   const legacy = readStorage(PREF_KEY);
   if (legacy === null) return;
   const mode = parseNoiseMode(legacy);
   if (mode === "high") {
-    writeStorage(KRISP_KEY, "1");
+    writeStorage(NEURAL_KEY, "1");
     writeStorage(BROWSER_NS_KEY, "70");
   } else if (mode === "standard") {
-    writeStorage(KRISP_KEY, "0");
+    writeStorage(NEURAL_KEY, "0");
     writeStorage(BROWSER_NS_KEY, "70");
   } else {
-    writeStorage(KRISP_KEY, "0");
+    writeStorage(NEURAL_KEY, "0");
     writeStorage(BROWSER_NS_KEY, "0");
   }
 }
 
-export function getKrispEnabled() {
+export function getNeuralNoiseEnabled() {
   migrateVoicePrefs();
-  const value = readStorage(KRISP_KEY);
+  const value = readStorage(NEURAL_KEY);
   if (value === null) return true;
   return value === "1";
 }
 
-export function setKrispEnabled(enabled: boolean, emit = true) {
+export function setNeuralNoiseEnabled(enabled: boolean, emit = true) {
   migrateVoicePrefs();
-  if (enabled === getKrispEnabled()) return;
-  writeStorage(KRISP_KEY, enabled ? "1" : "0");
+  if (enabled === getNeuralNoiseEnabled()) return;
+  writeStorage(NEURAL_KEY, enabled ? "1" : "0");
   if (emit) emitVoiceSettings({ noise: true });
 }
 
@@ -129,40 +131,40 @@ export function setBrowserNsStrength(value: number, emit = true) {
 }
 
 export function wantsBrowserNs() {
-  return !getKrispEnabled() && getBrowserNsStrength() > 0;
+  return !getNeuralNoiseEnabled() && getBrowserNsStrength() > 0;
 }
 
 export function getNoiseFilterMode(): NoiseFilterMode {
-  if (getKrispEnabled()) return "high";
+  if (getNeuralNoiseEnabled()) return "high";
   if (getBrowserNsStrength() > 0) return "standard";
   return "off";
 }
 
 export function getLastNoiseFilterMode(): NoiseFilterMode {
-  return getKrispEnabled() ? "high" : "standard";
+  return getNeuralNoiseEnabled() ? "high" : "standard";
 }
 
 export function setNoiseFilterMode(mode: NoiseFilterMode, emit = true) {
   if (mode === "high") {
-    writeStorage(KRISP_KEY, "1");
+    writeStorage(NEURAL_KEY, "1");
     if (readStorage(BROWSER_NS_KEY) === null) writeStorage(BROWSER_NS_KEY, "70");
   } else if (mode === "standard") {
-    writeStorage(KRISP_KEY, "0");
+    writeStorage(NEURAL_KEY, "0");
     if (getBrowserNsStrength() === 0) writeStorage(BROWSER_NS_KEY, "70");
   } else {
-    writeStorage(KRISP_KEY, "0");
+    writeStorage(NEURAL_KEY, "0");
     writeStorage(BROWSER_NS_KEY, "0");
   }
   if (emit) emitVoiceSettings({ noise: true });
 }
 
-/** Overlay sparkles: Krisp on/off, independent from the built-in slider. */
+/** Overlay sparkles: DTLN on/off, independent from the built-in slider. */
 export function getNoiseFilterPref(): boolean {
-  return getKrispEnabled();
+  return getNeuralNoiseEnabled();
 }
 
 export function setNoiseFilterPref(enabled: boolean) {
-  setKrispEnabled(enabled);
+  setNeuralNoiseEnabled(enabled);
 }
 
 function resolveNoiseMode(mode?: NoiseFilterMode | boolean): NoiseFilterMode {
@@ -172,10 +174,8 @@ function resolveNoiseMode(mode?: NoiseFilterMode | boolean): NoiseFilterMode {
   return getNoiseFilterMode();
 }
 
-/** Capture constraints: AEC/AGC always; browser NS when Krisp is off and the slider is above 0. */
-export function audioCaptureConstraints(
-  _neuralNs?: boolean,
-): MediaTrackConstraints {
+/** Capture constraints: AEC/AGC always; browser NS when DTLN is off and the slider is above 0. */
+export function audioCaptureConstraints(): MediaTrackConstraints {
   const micId = getMicDeviceId();
   return {
     echoCancellation: true,
@@ -199,380 +199,134 @@ export function setMicEnabled(
   for (const track of stream.getAudioTracks()) track.enabled = enabled;
 }
 
-async function enableBrowserNs(track: MediaStreamTrack) {
+async function setBrowserNs(track: MediaStreamTrack, enabled: boolean) {
+  if (track.readyState === "ended" || track.getSettings().noiseSuppression === enabled) return;
   try {
-    await track.applyConstraints({ noiseSuppression: true });
+    // applyConstraints replaces the constraint set: preserve the selected mic and AEC/AGC.
+    await track.applyConstraints({ ...track.getConstraints(), noiseSuppression: enabled });
   } catch {
-    /* some devices reject mid-stream NS toggles */
+    /* Devices can reject changes during capture; keep the existing audio. */
   }
 }
 
-async function disableBrowserNs(track: MediaStreamTrack) {
-  try {
-    await track.applyConstraints({ noiseSuppression: false });
-  } catch {
-    /* ignore */
-  }
-}
-
-type RnnoiseGraph = {
-  outputTrack: MediaStreamTrack;
-  setEnabled: (enabled: boolean) => void;
-  stop: () => Promise<void>;
-};
-
-let rnnoiseModulePromise: Promise<{
-  frameSize: number;
-  createDenoiseState: () => {
-    processFrame: (frame: Float32Array) => number;
-    destroy: () => void;
-  };
-}> | null = null;
-
-function loadRnnoise() {
-  if (!rnnoiseModulePromise) {
-    rnnoiseModulePromise = import("@shiguredo/rnnoise-wasm").then((mod) =>
-      mod.Rnnoise.load(),
-    );
-  }
-  return rnnoiseModulePromise;
-}
-
-async function startRnnoiseGraph(
-  sourceTrack: MediaStreamTrack,
-  enabled: boolean,
-  audioContext?: AudioContext,
-): Promise<RnnoiseGraph> {
-  const rnnoise = await loadRnnoise();
-  const denoise = rnnoise.createDenoiseState();
-  const frameSize = rnnoise.frameSize;
-
-  const Ctx =
-    window.AudioContext ||
-    (window as unknown as { webkitAudioContext: typeof AudioContext })
-      .webkitAudioContext;
-  const ctx = audioContext ?? new Ctx({ sampleRate: 48000 });
-  if (ctx.state === "suspended") await ctx.resume();
-
-  const source = ctx.createMediaStreamSource(new MediaStream([sourceTrack]));
-  const dest = ctx.createMediaStreamDestination();
-  const dry = ctx.createGain();
-  const wet = ctx.createGain();
-  dry.gain.value = enabled ? 0 : 1;
-  wet.gain.value = enabled ? 1 : 0;
-
-  const processor = ctx.createScriptProcessor(512, 1, 1);
-  const pending = new Float32Array(frameSize);
-  let pendingCount = 0;
-  // One ScriptProcessor block of zeros: 512 in vs 480-sample RNNoise frames.
-  // Keep this tiny — extra delay is heard as Krisp lag.
-  const DELAY_SAMPLES = 512;
-  const RING = 2048;
-  const ring = new Float32Array(RING);
-  let readPos = 0;
-  let writePos = DELAY_SAMPLES;
-  let queued = DELAY_SAMPLES;
-
-  const resetDelay = () => {
-    ring.fill(0);
-    readPos = 0;
-    writePos = DELAY_SAMPLES;
-    queued = DELAY_SAMPLES;
-  };
-
-  processor.onaudioprocess = (event) => {
-    const input = event.inputBuffer.getChannelData(0);
-    const output = event.outputBuffer.getChannelData(0);
-    if (wet.gain.value < 0.5) {
-      output.fill(0);
-      pendingCount = 0;
-      resetDelay();
-      return;
-    }
-    for (let i = 0; i < input.length; i += 1) {
-      pending[pendingCount] = input[i];
-      pendingCount += 1;
-      if (pendingCount < frameSize) continue;
-      const frame = pending.slice();
-      for (let j = 0; j < frameSize; j += 1) frame[j] *= 32768;
-      try {
-        denoise.processFrame(frame);
-      } catch {
-        /* wasm torn down */
-      }
-      for (let j = 0; j < frameSize; j += 1) {
-        ring[writePos] = frame[j] / 32768;
-        writePos = (writePos + 1) % RING;
-        queued += 1;
-      }
-      pendingCount = 0;
-    }
-    for (let i = 0; i < output.length; i += 1) {
-      if (queued > 0) {
-        output[i] = ring[readPos];
-        readPos = (readPos + 1) % RING;
-        queued -= 1;
-      } else {
-        output[i] = 0;
-      }
-    }
-  };
-
-  source.connect(dry);
-  dry.connect(dest);
-  source.connect(processor);
-  processor.connect(wet);
-  wet.connect(dest);
-
-  const outputTrack = dest.stream.getAudioTracks()[0];
-  if (!outputTrack) throw new Error("RNNoise: нет выходного трека");
-
-  return {
-    outputTrack,
-    setEnabled: (next) => {
-      dry.gain.value = next ? 0 : 1;
-      wet.gain.value = next ? 1 : 0;
-    },
-    stop: async () => {
-      try {
-        processor.disconnect();
-        wet.disconnect();
-        dry.disconnect();
-        source.disconnect();
-      } catch {
-        /* ignore */
-      }
-      denoise.destroy();
-      if (!audioContext) {
-        try {
-          await ctx.close();
-        } catch {
-          /* ignore */
-        }
-      }
-    },
-  };
-}
-
-function browserSession(
-  sourceTrack: MediaStreamTrack,
-  enabled: boolean,
-  ownsSource = false,
-): NoiseFilterSession {
-  const session: NoiseFilterSession = {
-    kind: "browser",
-    enabled,
-    outputTrack: sourceTrack,
-    sourceTrack,
-    ownsSource,
-    setEnabled: async (next) => {
-      session.enabled = next;
-      if (next) await enableBrowserNs(sourceTrack);
-      else await disableBrowserNs(sourceTrack);
-    },
-    stop: async () => {
-      /* caller owns the mic track */
-    },
-  };
-  return session;
-}
-
-async function tryKrispOnTrack(
-  track: LocalAudioTrack,
-  enabled: boolean,
-  ownsSource = false,
-): Promise<NoiseFilterSession | null> {
-  try {
-    const { KrispNoiseFilter, isKrispNoiseFilterSupported } = await import(
-      "@livekit/krisp-noise-filter"
-    );
-    if (!isKrispNoiseFilterSupported()) return null;
-    const processor = KrispNoiseFilter({
-      quality: "low",
-      bufferOverflowMs: 50,
-      bufferDropMs: 80,
-    });
-    await track.setProcessor(processor);
-    await processor.setEnabled(enabled);
-    const output =
-      processor.processedTrack || track.mediaStreamTrack || track.mediaStreamTrack;
-    const session: NoiseFilterSession = {
-      kind: "krisp",
-      enabled,
-      outputTrack: output,
-      sourceTrack: track.mediaStreamTrack,
-      ownsSource,
-      setEnabled: async (next) => {
-        session.enabled = next;
-        await processor.setEnabled(next);
-        if (next) await disableBrowserNs(track.mediaStreamTrack);
-        else if (wantsBrowserNs()) {
-          await enableBrowserNs(track.mediaStreamTrack);
-        } else {
-          await disableBrowserNs(track.mediaStreamTrack);
-        }
-      },
-      stop: async () => {
-        try {
-          await track.stopProcessor();
-        } catch {
-          /* ignore */
-        }
-      },
-    };
-    if (enabled) await disableBrowserNs(track.mediaStreamTrack);
-    return session;
-  } catch {
-    try {
-      await track.stopProcessor();
-    } catch {
-      /* ignore */
-    }
-    return null;
-  }
-}
-
-function createRnnoiseProcessor(): TrackProcessor<
-  Track.Kind.Audio,
-  AudioProcessorOptions
-> & {
-  setEnabled: (enabled: boolean) => void;
-} {
-  let graph: RnnoiseGraph | null = null;
-  const processor: TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> & {
-    setEnabled: (enabled: boolean) => void;
-  } = {
-    name: "pulse-rnnoise",
-    processedTrack: undefined,
-    setEnabled: (enabled) => {
-      graph?.setEnabled(enabled);
-    },
-    init: async (opts) => {
-      graph = await startRnnoiseGraph(opts.track, true, opts.audioContext);
-      processor.processedTrack = graph.outputTrack;
-    },
-    restart: async (opts) => {
-      await graph?.stop();
-      graph = await startRnnoiseGraph(opts.track, true, opts.audioContext);
-      processor.processedTrack = graph.outputTrack;
-    },
-    destroy: async () => {
-      await graph?.stop();
-      graph = null;
-      processor.processedTrack = undefined;
-    },
-  };
-  return processor;
-}
-
-async function tryRnnoiseOnLiveKitTrack(
-  track: LocalAudioTrack,
-  enabled: boolean,
-): Promise<NoiseFilterSession | null> {
-  try {
-    const processor = createRnnoiseProcessor();
-    await track.setProcessor(processor);
-    processor.setEnabled(enabled);
-    const output = processor.processedTrack || track.mediaStreamTrack;
-    const session: NoiseFilterSession = {
-      kind: "rnnoise",
-      enabled,
-      outputTrack: output,
-      sourceTrack: track.mediaStreamTrack,
-      ownsSource: false,
-      setEnabled: async (next) => {
-        session.enabled = next;
-        processor.setEnabled(next);
-        if (next) await disableBrowserNs(track.mediaStreamTrack);
-        else if (wantsBrowserNs()) {
-          await enableBrowserNs(track.mediaStreamTrack);
-        } else {
-          await disableBrowserNs(track.mediaStreamTrack);
-        }
-      },
-      stop: async () => {
-        try {
-          await track.stopProcessor();
-        } catch {
-          /* ignore */
-        }
-      },
-    };
-    if (enabled) await disableBrowserNs(track.mediaStreamTrack);
-    return session;
-  } catch {
-    try {
-      await track.stopProcessor();
-    } catch {
-      /* ignore */
-    }
-    return null;
-  }
-}
-
-async function applyBrowserNsPref(track: MediaStreamTrack) {
-  if (wantsBrowserNs()) await enableBrowserNs(track);
-  else await disableBrowserNs(track);
-}
-
-/** Attach Krisp → RNNoise → browser NS to a published LiveKit mic track. */
-export async function attachNoiseFilterToLiveKitTrack(
-  track: LocalAudioTrack,
-  mode: NoiseFilterMode | boolean = getNoiseFilterMode(),
-): Promise<NoiseFilterSession> {
-  const resolved = resolveNoiseMode(mode);
-  if (resolved === "high") {
-    const krisp = await tryKrispOnTrack(track, true);
-    if (krisp) {
-      await krisp.setEnabled(true);
-      return krisp;
-    }
-    await enableBrowserNs(track.mediaStreamTrack);
-    const session = browserSession(track.mediaStreamTrack, true, false);
-    warnNoiseFallback(session, true);
-    return session;
-  }
-  await applyBrowserNsPref(track.mediaStreamTrack);
-  return browserSession(track.mediaStreamTrack, wantsBrowserNs(), false);
-}
-
-/** Wrap a raw mic track (1:1 P2P, voice notes). Output track is what you send/record. */
+/** Stable output for the whole capture; toggles never reopen the microphone. */
 export async function startNoiseFilter(
   sourceTrack: MediaStreamTrack,
   mode: NoiseFilterMode | boolean = getNoiseFilterMode(),
 ): Promise<NoiseFilterSession> {
   const resolved = resolveNoiseMode(mode);
-  if (resolved === "high") {
-    try {
-      const { LocalAudioTrack } = await import("livekit-client");
-      const lkTrack = new LocalAudioTrack(sourceTrack, undefined, true);
-      const krisp = await tryKrispOnTrack(lkTrack, true, true);
-      if (krisp) {
-        await krisp.setEnabled(true);
-        const innerStop = krisp.stop;
-        krisp.stop = async () => {
-          await innerStop();
-          try {
-            lkTrack.stop();
-          } catch {
-            /* ignore */
-          }
-        };
-        return krisp;
+  let graph: DtlnGraph | undefined;
+  let stopped = false;
+  let failed = false;
+  let updates = Promise.resolve();
+  const session: NoiseFilterSession = {
+    kind: "browser",
+    enabled: resolved !== "off",
+    sourceTrack,
+    outputTrack: sourceTrack,
+    ownsSource: true,
+    setEnabled(next) {
+      updates = updates.catch(() => undefined).then(async () => {
+        if (stopped) return;
+        const available = graph && await graph.setEnabled(next);
+        if (stopped) return;
+        session.kind = available && !failed ? "dtln" : "browser";
+        session.enabled = next || wantsBrowserNs();
+        await setBrowserNs(sourceTrack, session.kind === "browser" ? session.enabled : !next && wantsBrowserNs());
+        warnNoiseFallback(session, next);
+      });
+      return updates;
+    },
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      await graph?.stop();
+    },
+  };
+  try {
+    graph = await createDtlnGraph(sourceTrack, () => {
+      failed = true;
+      session.kind = "browser";
+      if (!stopped) {
+        void setBrowserNs(sourceTrack, session.enabled);
+        warnNoiseFallback(session, session.enabled);
+        emitVoiceSettings({ noise: true });
       }
-      await lkTrack.stopProcessor().catch(() => undefined);
-    } catch {
-      /* unsupported browser / processor failed — browser NS */
-    }
-
-    await enableBrowserNs(sourceTrack);
-    const session = browserSession(sourceTrack, true, true);
-    warnNoiseFallback(session, true);
-    return session;
+    });
+    session.outputTrack = graph.outputTrack;
+    const available = await graph.setEnabled(resolved === "high");
+    session.kind = available && !failed ? "dtln" : "browser";
+  } catch {
+    failed = true;
+    await graph?.stop();
+    graph = undefined;
+    session.outputTrack = sourceTrack;
   }
+  await setBrowserNs(sourceTrack, resolved === "standard" || (resolved === "high" && session.kind === "browser"));
+  warnNoiseFallback(session, resolved === "high");
+  return session;
+}
 
-  await applyBrowserNsPref(sourceTrack);
-  return browserSession(sourceTrack, wantsBrowserNs(), true);
+/** LiveKit owns capture; the processor owns only its graph and output track. */
+export async function attachNoiseFilterToLiveKitTrack(
+  track: LocalAudioTrack,
+  mode: NoiseFilterMode | boolean = getNoiseFilterMode(),
+): Promise<NoiseFilterSession> {
+  let current: NoiseFilterSession | undefined;
+  let desired = resolveNoiseMode(mode);
+  const processor: TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> = {
+    name: "pulse-dtln",
+    async init(opts) {
+      current = await startNoiseFilter(opts.track, desired);
+      current.ownsSource = false;
+      // LiveKit stops processedTrack on teardown; never give it the raw capture.
+      processor.processedTrack = current.outputTrack === opts.track ? undefined : current.outputTrack;
+    },
+    async restart(opts) {
+      // Device changes supply a new raw source. Never keep the old processed track.
+      await current?.stop();
+      await processor.init(opts);
+    },
+    async destroy() {
+      await current?.stop();
+      processor.processedTrack = undefined;
+    },
+  };
+  try {
+    await track.setProcessor(processor);
+  } catch {
+    if (track.getProcessor() === processor) await track.stopProcessor().catch(() => undefined);
+    else await processor.destroy();
+    // A failed processor must not leave a silent microphone in the room.
+    await setBrowserNs(track.mediaStreamTrack, desired !== "off");
+    current = {
+      kind: "browser", enabled: desired !== "off", ownsSource: false,
+      sourceTrack: track.mediaStreamTrack, outputTrack: track.mediaStreamTrack,
+      async setEnabled(next) {
+        if (!current) return;
+        current.enabled = next || wantsBrowserNs();
+        await setBrowserNs(current.sourceTrack, current.enabled);
+      },
+      async stop() {},
+    };
+    warnNoiseFallback(current, desired === "high");
+  }
+  return {
+    get kind() { return current!.kind; },
+    get enabled() { return current!.enabled; },
+    get sourceTrack() { return current!.sourceTrack; },
+    get outputTrack() { return current!.outputTrack; },
+    ownsSource: false,
+    async setEnabled(next) {
+      desired = next ? "high" : wantsBrowserNs() ? "standard" : "off";
+      await current?.setEnabled(next);
+    },
+    async stop() {
+      // Do not tear down a newer processor installed by another capture.
+      if (track.getProcessor() === processor) await track.stopProcessor();
+      else await current?.stop();
+    },
+  };
 }
 
 export async function captureFilteredMic() {
@@ -590,10 +344,7 @@ export async function captureFilteredMic() {
   }
   try {
     const filter = await startNoiseFilter(sourceTrack);
-    return {
-      filter,
-      stream: new MediaStream([filter.outputTrack]),
-    };
+    return { filter, stream: new MediaStream([filter.outputTrack]) };
   } catch (err) {
     capture.getTracks().forEach((track) => track.stop());
     throw err;
@@ -601,8 +352,6 @@ export async function captureFilteredMic() {
 }
 
 export function noiseFilterLabel(kind: NoiseFilterKind, enabled: boolean) {
-  if (!enabled || !getKrispEnabled()) return "Krisp выкл.";
-  if (kind === "krisp") return "Krisp";
-  if (kind === "rnnoise") return "Krisp · RNNoise";
-  return "Krisp · браузер";
+  if (!enabled || !getNeuralNoiseEnabled()) return "DTLN выкл.";
+  return kind === "dtln" ? "DTLN" : "Шумоподавление · браузер";
 }

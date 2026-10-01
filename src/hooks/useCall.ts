@@ -46,9 +46,9 @@ import {
 } from "@/lib/webrtcMedia";
 import {
   captureFilteredMic,
-  getKrispEnabled,
+  getNeuralNoiseEnabled,
   getNoiseFilterPref,
-  setKrispEnabled,
+  setNeuralNoiseEnabled,
   setMicEnabled,
   stopNoiseFilter,
   type NoiseFilterKind,
@@ -147,6 +147,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   const remoteMediaRevisionRef = useRef(-1);
   const mediaBusyRef = useRef(false);
   const noiseFilterRef = useRef<NoiseFilterSession | null>(null);
+  const voiceSettingsUpdateRef = useRef<Promise<void>>(Promise.resolve());
   const mutedRef = useRef(false);
   const deafenedRef = useRef(false);
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -953,7 +954,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   const getMedia = useCallback(async (_mode: CallMode) => {
     const { filter, stream } = await captureFilteredMic();
     noiseFilterRef.current = filter;
-    setNoiseFilterEnabled(getKrispEnabled());
+    setNoiseFilterEnabled(getNeuralNoiseEnabled());
     setNoiseFilterKind(filter.kind);
     setCameraOff(true);
     localCameraOffRef.current = true;
@@ -1519,7 +1520,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   }, [muted]);
 
   const toggleNoiseFilter = useCallback(() => {
-    setKrispEnabled(!getKrispEnabled());
+    setNeuralNoiseEnabled(!getNeuralNoiseEnabled());
   }, []);
 
   const applyVoiceSettings = useCallback(
@@ -1527,12 +1528,23 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
       if (change.speaker) {
         await applyAudioOutput(remoteAudioRef.current);
       }
-      setNoiseFilterEnabled(getKrispEnabled());
+      setNoiseFilterEnabled(getNeuralNoiseEnabled());
       if (!change.mic && !change.noise) return;
       if (!localStreamRef.current) return;
       try {
+        if (!change.mic && noiseFilterRef.current) {
+          const filter = noiseFilterRef.current;
+          await filter.setEnabled(getNeuralNoiseEnabled());
+          setNoiseFilterKind(filter.kind);
+          return;
+        }
+        const previousStream = localStreamRef.current;
         const next = await captureFilteredMic();
         try {
+          if (localStreamRef.current !== previousStream) {
+            await stopNoiseFilter(next.filter);
+            return;
+          }
           const prev = noiseFilterRef.current;
           const stream = withReplacedAudioTrack(
             localStreamRef.current,
@@ -1563,7 +1575,8 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   );
 
   useEffect(() => subscribeVoiceSettings((change) => {
-    void applyVoiceSettings(change);
+    voiceSettingsUpdateRef.current = voiceSettingsUpdateRef.current
+      .catch(() => undefined).then(() => applyVoiceSettings(change));
   }), [applyVoiceSettings]);
 
   const performToggleCamera = useCallback(async () => {

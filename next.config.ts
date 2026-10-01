@@ -2,6 +2,12 @@ import type { NextConfig } from "next";
 import { lanDevHosts } from "./src/lib/devHosts";
 
 const nextConfig: NextConfig = {
+  async headers() {
+    return ["runtime.wasm", "model-1.tflite", "model-2.tflite"].map((asset) => ({
+      source: `/audio/dtln-0.1.1/${asset}`,
+      headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+    }));
+  },
   // Dev HMR/assets when opening via LAN IP, 127.0.0.1, or Cloudflare tunnels
   allowedDevOrigins: [
     "127.0.0.1",
@@ -25,8 +31,6 @@ const nextConfig: NextConfig = {
     "lucide-react",
     "react-textarea-autosize",
     "vaul",
-    "@livekit/krisp-noise-filter",
-    "@shiguredo/rnnoise-wasm",
   ],
 };
 

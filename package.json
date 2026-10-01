@@ -8,7 +8,11 @@
     "start": "node scripts/run-tsx.mjs NODE_ENV=production server.ts",
     "lint": "eslint",
     "media:migrate": "tsx scripts/migrate-media-s3.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "audio:prepare": "node scripts/prepare-dtln.mjs",
+    "predev": "npm run audio:prepare",
+    "prebuild": "npm run audio:prepare",
+    "prestart": "npm run audio:prepare"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1139.0",
@@ -16,9 +20,8 @@
     "@deepgram/sdk": "^5.13.0",
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
-    "@livekit/krisp-noise-filter": "^0.4.4",
-    "@shiguredo/rnnoise-wasm": "^2025.1.5",
     "@wavesurfer/react": "^1.0.12",
+    "@workadventure/noise-suppression": "0.1.1",
     "busboy": "^1.6.0",
     "date-fns": "^4.4.0",
     "emoji-mart": "^5.6.0",
@@ -53,6 +56,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/web-push": "^3.6.4",
+    "esbuild": "0.28.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "playwright": "^1.62.1",
