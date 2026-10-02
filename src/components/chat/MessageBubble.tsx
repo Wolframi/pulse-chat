@@ -269,6 +269,23 @@ function AlbumMosaic({
   const [probed, setProbed] = useState<Record<string, { width: number; height: number }>>(
     {},
   );
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [near, setNear] = useState(false);
+
+  useEffect(() => {
+    const node = gridRef.current;
+    if (!node || near) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setNear(true);
+        observer.disconnect();
+      },
+      { rootMargin: "600px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [near]);
 
   const sizes = files.map((file, index) => {
     const stored = parseMediaSize(file);
@@ -292,6 +309,7 @@ function AlbumMosaic({
 
   return (
     <div
+      ref={gridRef}
       className="bubble__album-grid"
       style={{
         width: "100%",
@@ -326,10 +344,10 @@ function AlbumMosaic({
             {video ? (
               <>
                 <video
-                  src={src}
+                  src={near ? src : undefined}
                   muted
                   playsInline
-                  preload="metadata"
+                  preload={near ? "metadata" : "none"}
                   controls={false}
                   onLoadedMetadata={(event) => {
                     if (known) return;
@@ -561,7 +579,7 @@ function PhotoImage({
       className={className}
       loading={loading}
       decoding="async"
-      fetchPriority="low"
+      fetchPriority="auto"
       referrerPolicy="no-referrer"
       onLoad={onLoad}
       onError={() => {
@@ -760,7 +778,12 @@ function FileBodyInner({
               )}
               {uploading ? (
                 <div className="bubble__upload-slot">
-                  <VoiceBubble src={src} mine={mine} track={track} />
+                  <VoiceBubble
+                    src={src}
+                    mine={mine}
+                    track={track}
+                    transcript={Boolean((message.transcription || "").trim())}
+                  />
                   <UploadRing
                     progress={uploadProgress}
                     onCancel={cancelUpload}
@@ -768,7 +791,12 @@ function FileBodyInner({
                   />
                 </div>
               ) : (
-                <VoiceBubble src={src} mine={mine} track={track} />
+                <VoiceBubble
+                  src={src}
+                  mine={mine}
+                  track={track}
+                  transcript={Boolean((message.transcription || "").trim())}
+                />
               )}
               {voice ? (
                 <VoiceTranscript

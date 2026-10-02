@@ -742,8 +742,27 @@
   align-self: end;
 }
 
-.voice-transcript.is-open .voice-transcript__clock {
+.voice-transcript.is-open .voice-transcript__clock,
+.voice-transcript--text .voice-transcript__clock {
   margin-top: 4px;
+}
+
+.voice-transcript--text {
+  grid-template-areas:
+    "panel panel"
+    ". clock";
+  align-items: start;
+}
+
+.voice-transcript--text .voice-transcript__panel {
+  display: block;
+  grid-template-rows: none;
+  overflow: hidden;
+}
+
+.voice-transcript--text .voice-transcript__text {
+  margin: 0;
+  padding: 6px 1px 0;
 }
 
 .voice-transcript__bar {
@@ -848,6 +867,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  grid-area: panel;
   margin-top: 4px;
 }
 
@@ -947,6 +967,45 @@
 .voice-bubble__play:disabled {
   opacity: 0.45;
   cursor: wait;
+}
+
+.voice-bubble:has(.voice-bubble__badge) {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-areas: "play wave badge time";
+}
+
+.voice-bubble__badge {
+  grid-area: badge;
+  width: 22px;
+  height: 22px;
+  align-self: center;
+  justify-self: center;
+  background: currentColor;
+  opacity: 0.82;
+  -webkit-mask: url("/icons/voice-transcript.png") center / contain no-repeat;
+  mask: url("/icons/voice-transcript.png") center / contain no-repeat;
+  mask-mode: alpha;
+}
+
+.voice-bubble__badge.is-enter {
+  animation: voice-transcript-in 0.36s var(--ease-soft);
+}
+
+@keyframes voice-transcript-in {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 0.82;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-bubble__badge.is-enter {
+    animation: none;
+  }
 }
 
 .voice-bubble__time {

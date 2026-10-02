@@ -12,6 +12,7 @@ import { Avatar } from "@/components/chat/Avatar";
 import { MessageList } from "@/components/chat/MessageList";
 import { UnifiedPicker } from "@/components/chat/UnifiedPicker";
 import { VoiceOverlay } from "@/components/chat/VoiceOverlay";
+import { HeaderCallChip } from "@/components/chat/HeaderCallChip";
 import {
   IconAttach,
   IconHash,
@@ -216,7 +217,11 @@ function usePreviewStreams() {
   return streams;
 }
 
-export function CallLayoutPreview() {
+export function CallLayoutPreview({
+  initialMinimized = false,
+}: {
+  initialMinimized?: boolean;
+}) {
   const { remote: remoteStreams, local: localStream } = usePreviewStreams();
   const [muted, setMuted] = useState(false);
   const [deafened, setDeafened] = useState(false);
@@ -228,6 +233,7 @@ export function CallLayoutPreview() {
   const [draftText, setDraftText] = useState("");
   const [callScenario, setCallScenario] =
     useState<PreviewCallScenario>("screens");
+  const [collapsedCall, setCollapsedCall] = useState(initialMinimized);
   const [compactLayout, setCompactLayout] = useState(false);
   const [utilityPortal, setUtilityPortal] = useState<HTMLDivElement | null>(null);
   const [composerPortal, setComposerPortal] = useState<HTMLDivElement | null>(null);
@@ -238,7 +244,8 @@ export function CallLayoutPreview() {
   const ready = Object.keys(remoteStreams).length === 3 && Boolean(localStream);
 
   useEffect(() => {
-    const requested = new URLSearchParams(window.location.search).get("scenario");
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get("scenario");
     setCallScenario(
       requested === "solo" || requested === "duo" || requested === "direct"
         ? requested
@@ -457,7 +464,7 @@ export function CallLayoutPreview() {
 
         <section
           ref={roomRef}
-          className={`room room--in-call ${callScenario === "direct" ? "room--direct-call" : ""} ${
+          className={`room ${collapsedCall ? "" : "room--in-call"} ${callScenario === "direct" ? "room--direct-call" : ""} ${
             resizing ? "is-resizing" : ""
           } ${
             pickerOpen ? "is-call-picker-open" : ""
@@ -480,6 +487,22 @@ export function CallLayoutPreview() {
                 <p className="room__title">{callSummary}</p>
               </div>
             </div>
+            <div className="room__call-chip">
+              {collapsedCall ? (
+                <HeaderCallChip
+                  title={callScenario === "direct" ? "Алиса" : "Общий звонок"}
+                  subtitle={
+                    callScenario === "direct" ? "12:04 · экран" : "4 в канале · экран"
+                  }
+                  mark={callScenario === "direct" ? "call" : "voice"}
+                  speaking
+                  muted={muted}
+                  onOpen={() => setCollapsedCall(false)}
+                  onToggleMute={() => setMuted((value) => !value)}
+                  onEnd={() => setCollapsedCall(false)}
+                />
+              ) : null}
+            </div>
             <div className="room__meta">
               <button type="button" className="icon-btn" aria-label="Участники"><IconUsers size={18} /></button>
               <button type="button" className="icon-btn" aria-label="Поиск"><IconSearch size={18} /></button>
@@ -489,7 +512,7 @@ export function CallLayoutPreview() {
 
           <div id="pulse-call-dock" className="room__call-dock is-screen" />
 
-          {callScenario !== "direct" ? (
+          {callScenario !== "direct" && !collapsedCall ? (
           <div
             className="call-preview__resize"
             role="separator"
@@ -617,7 +640,7 @@ export function CallLayoutPreview() {
         deafened={deafened}
         cameraOff={cameraOff}
         sharingScreen={sharingScreen}
-        minimized={false}
+        minimized={collapsedCall}
         currentGroupId="preview-group"
         selfSpeaking={false}
         onLeave={() => undefined}

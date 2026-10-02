@@ -814,13 +814,23 @@ function liveVideoTracks(stream: MediaStream) {
 }
 
 /** Prefer a camera track when a stream carries both camera and screen. */
+const videoStreams = new WeakMap<MediaStreamTrack, MediaStream>();
+
+function streamForVideoTrack(track: MediaStreamTrack) {
+  let stream = videoStreams.get(track);
+  if (!stream) {
+    stream = new MediaStream([track]);
+    videoStreams.set(track, stream);
+  }
+  return stream;
+}
+
 export function pickCameraStream(stream: MediaStream | null) {
   if (!stream) return null;
   const live = liveVideoTracks(stream);
   const camera = live.find((track) => !videoTrackLooksLikeScreen(track));
   if (!camera) return null;
-  if (live.length === 1) return stream;
-  return new MediaStream([camera]);
+  return streamForVideoTrack(camera);
 }
 
 /** Prefer a screen track when a stream carries both camera and screen. */
@@ -829,8 +839,7 @@ export function pickScreenStream(stream: MediaStream | null) {
   const live = liveVideoTracks(stream);
   const screen = live.find((track) => videoTrackLooksLikeScreen(track));
   if (!screen) return null;
-  if (live.length === 1) return stream;
-  return new MediaStream([screen]);
+  return streamForVideoTrack(screen);
 }
 
 export function streamHasCameraVideo(stream: MediaStream | null) {

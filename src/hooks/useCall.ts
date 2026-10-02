@@ -463,7 +463,13 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     statsTimerRef.current = setInterval(() => {
       const pc = pcRef.current;
       if (!pc) return;
+      if (pc.connectionState !== "connected") {
+        setNetworkQuality(null);
+        lastNetworkRef.current = null;
+        return;
+      }
       void pc.getStats().then((report) => {
+        if (pcRef.current !== pc || pc.connectionState !== "connected") return;
         // Media-flow watchdog: ICE can stay "connected" while media stalls
         // (one-way audio, frozen NAT mapping). Force ICE restart when no
         // inbound bytes arrive for several ticks.
@@ -511,6 +517,8 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
           setNetworkQuality({ rttMs, level });
         }
         void adaptVideoQuality(level);
+      }).catch(() => {
+        if (pcRef.current === pc) setNetworkQuality(null);
       });
     }, 2000);
 

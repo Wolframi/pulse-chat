@@ -23,6 +23,7 @@ import { GuildMemberList } from "@/components/chat/GuildMemberList";
 import { CallOverlay } from "@/components/chat/CallOverlay";
 import { VoiceOverlay } from "@/components/chat/VoiceOverlay";
 import { VoiceDock } from "@/components/chat/VoiceDock";
+import { HeaderCallChip } from "@/components/chat/HeaderCallChip";
 import { ProfilePanel } from "@/components/chat/ProfilePanel";
 import { ChatInfoPanel } from "@/components/chat/ChatInfoPanel";
 import { MessageList } from "@/components/chat/MessageList";
@@ -41,9 +42,7 @@ const SIDE_CHAT_MAX = 560;
 
 type SideScrollLock = {
   scroller: HTMLElement;
-  anchor: HTMLElement;
-  anchorId: string;
-  offset: number;
+  fromBottom: number;
   pinBottom: boolean;
 };
 
@@ -224,6 +223,10 @@ export function ChatApp() {
 
   useEffect(() => {
     if (!voiceError) return;
+    if (voiceError === "Переподключение к SFU…") {
+      clearVoiceError();
+      return;
+    }
     toast.error(voiceError);
     clearVoiceError();
   }, [clearVoiceError, voiceError]);
@@ -934,6 +937,40 @@ export function ChatApp() {
 
   const fullCallOpen = groupCallOpen || directCallOpen;
 
+  const directCallChip = Boolean(
+    active && (minimized || session?.room !== active.chatId),
+  );
+  const voiceCallChip = Boolean(
+    voice.active &&
+      !directCallChip &&
+      (voice.minimized || session?.room !== voice.active.groupId),
+  );
+  const callChipAvatar = active
+    ? people.find((user) => user.id === active.peerId)?.avatarUrl ||
+      (currentChat?.peerId === active.peerId ? currentChat.avatarUrl : null) ||
+      null
+    : null;
+  const callChipSubtitle = active
+    ? `${
+        status === "На линии"
+          ? durationLabel
+          : !status || /^Соединение/.test(status)
+            ? "Подключение…"
+            : status
+      }${sharingScreen || remoteSharingScreen ? " · экран" : ""}`
+    : "";
+  const voiceChipSubtitle = voice.connectionLabel
+    ? voice.connectionLabel
+    : `${
+        voice.peers.length === 0
+          ? "только вы"
+          : `${voice.peers.length + 1} в канале`
+      }${
+        voice.sharingScreen || voice.peers.some((peer) => peer.sharingScreen)
+          ? " · экран"
+          : ""
+      }`;
+
   const groupTextChannels = useMemo(() => {
     if (currentChat?.type !== "group") return [];
     return [
@@ -1018,10 +1055,8 @@ export function ChatApp() {
 
   const sideWidthLiveRef = useRef<number | null>(null);
   const sideAppliedWidthRef = useRef<number | null>(null);
-  const sideResizeFrameRef = useRef(0);
   const sideScrollLockRef = useRef<SideScrollLock | null>(null);
-  const sideFrozenScrollRef = useRef<number | null>(null);
-  const sideHoldScrollRef = useRef(false);
+  const sideDragCleanupRef = useRef<(() => void) | null>(null);
 
   const captureSideScrollLock = useCallback(() => {
     const scroller = callRoomRef.current?.querySelector<HTMLElement>(
@@ -1031,77 +1066,25 @@ export function ChatApp() {
       sideScrollLockRef.current = null;
       return;
     }
-    const messages = scroller.querySelectorAll<HTMLElement>("[id^='msg-']");
-    if (!messages.length) {
-      sideScrollLockRef.current = null;
-      return;
-    }
-    const box = scroller.getBoundingClientRect();
-    const targetY = box.top + Math.min(96, box.height * 0.28);
-    let lo = 0;
-    let hi = messages.length - 1;
-    let index = messages.length - 1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      const rect = messages[mid].getBoundingClientRect();
-      if (rect.bottom < targetY) lo = mid + 1;
-      else {
-        index = mid;
-        hi = mid - 1;
-      }
-    }
-    const anchor = messages[index];
-    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    const fromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     sideScrollLockRef.current = {
       scroller,
-      anchor,
-      anchorId: anchor.id,
-      offset: anchor.getBoundingClientRect().top - box.top,
-      pinBottom: distance < 2,
+      fromBottom,
+      pinBottom: fromBottom < 2,
     };
     scroller.dataset.lockScroll = "1";
   }, []);
 
-  const handleSideResizeStart = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!wideCallLayout) return;
-      const stage = event.currentTarget.nextElementSibling;
-      if (!(stage instanceof HTMLElement)) return;
-      event.preventDefault();
-      const width = stage.getBoundingClientRect().width;
-      sideWidthLiveRef.current = width;
-      sideAppliedWidthRef.current = width;
-      sideHoldScrollRef.current = true;
-      callResizeRef.current = {
-        startY: event.clientX,
-        startHeight: width,
-      };
-      captureSideScrollLock();
-      const scroller = sideScrollLockRef.current?.scroller;
-      if (scroller) sideFrozenScrollRef.current = scroller.scrollTop;
-      setCallResizing(true);
-      setSideChatResizing(true);
-      event.currentTarget.setPointerCapture(event.pointerId);
-    },
-    [captureSideScrollLock, wideCallLayout],
-  );
-
   const restoreSideScrollLock = useCallback(() => {
     const lock = sideScrollLockRef.current;
     if (!lock?.scroller.isConnected) return;
-    const anchor = lock.anchor.isConnected
-      ? lock.anchor
-      : lock.scroller.querySelector<HTMLElement>(`#${CSS.escape(lock.anchorId)}`);
-    if (!anchor) return;
+    const scroller = lock.scroller;
     if (lock.pinBottom) {
-      lock.scroller.scrollTop = lock.scroller.scrollHeight;
+      scroller.scrollTop = scroller.scrollHeight;
       return;
     }
-    const delta =
-      anchor.getBoundingClientRect().top -
-      lock.scroller.getBoundingClientRect().top -
-      lock.offset;
-    if (Math.abs(delta) > 0.5) lock.scroller.scrollTop += delta;
+    const next = Math.max(0, scroller.scrollHeight - scroller.clientHeight - lock.fromBottom);
+    if (Math.abs(scroller.scrollTop - next) > 1) scroller.scrollTop = next;
   }, []);
 
   const releaseSideScrollLock = useCallback(() => {
@@ -1116,30 +1099,16 @@ export function ChatApp() {
   }, [restoreSideScrollLock]);
 
   useLayoutEffect(() => {
-    if (sideChatResizing) {
-      restoreSideScrollLock();
-      const scroller = sideScrollLockRef.current?.scroller;
-      if (scroller) sideFrozenScrollRef.current = scroller.scrollTop;
-      return;
+    if (sideChatResizing) return;
+    if (
+      sideWidthLiveRef.current != null &&
+      sideChatWidth === sideWidthLiveRef.current
+    ) {
+      sideWidthLiveRef.current = null;
     }
-    sideHoldScrollRef.current = false;
     restoreSideScrollLock();
     releaseSideScrollLock();
   }, [releaseSideScrollLock, restoreSideScrollLock, sideChatResizing, sideChatWidth]);
-
-  useEffect(() => {
-    if (!sideChatResizing) return;
-    const scroller = sideScrollLockRef.current?.scroller;
-    if (!scroller) return;
-    const hold = () => {
-      if (!sideHoldScrollRef.current) return;
-      const frozen = sideFrozenScrollRef.current;
-      if (frozen == null || scroller.scrollTop === frozen) return;
-      scroller.scrollTop = frozen;
-    };
-    scroller.addEventListener("scroll", hold);
-    return () => scroller.removeEventListener("scroll", hold);
-  }, [sideChatResizing]);
 
   const applySideChatWidth = useCallback((width: number) => {
     const room = callRoomRef.current;
@@ -1148,56 +1117,66 @@ export function ChatApp() {
     room.classList.toggle("is-side-wide", width >= SIDE_CHAT_WIDE);
   }, []);
 
-  const handleSideResizeMove = useCallback(
+  const handleSideResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      const resize = callResizeRef.current;
-      if (!resize || !wideCallLayout) return;
-      if (event.cancelable) event.preventDefault();
-      const width = clampSideChatWidth(
-        resize.startHeight + resize.startY - event.clientX,
-      );
-      if (width === sideAppliedWidthRef.current) {
-        const scroller = sideScrollLockRef.current?.scroller;
-        const frozen = sideFrozenScrollRef.current;
-        if (scroller && frozen != null && scroller.scrollTop !== frozen) {
-          scroller.scrollTop = frozen;
-        }
-        return;
-      }
-      sideWidthLiveRef.current = width;
-      if (sideResizeFrameRef.current) return;
-      sideResizeFrameRef.current = requestAnimationFrame(() => {
-        sideResizeFrameRef.current = 0;
-        const next = sideWidthLiveRef.current;
-        if (next == null || next === sideAppliedWidthRef.current) return;
+      if (!wideCallLayout || event.button !== 0) return;
+      const stage = event.currentTarget.nextElementSibling;
+      if (!(stage instanceof HTMLElement)) return;
+      event.preventDefault();
+      const handle = event.currentTarget;
+      const startX = event.clientX;
+      const startWidth = stage.getBoundingClientRect().width;
+      const pointerId = event.pointerId;
+      sideDragCleanupRef.current?.();
+      sideWidthLiveRef.current = startWidth;
+      sideAppliedWidthRef.current = startWidth;
+      captureSideScrollLock();
+      setCallResizing(true);
+      setSideChatResizing(true);
+      handle.setPointerCapture(pointerId);
+
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        const next = clampSideChatWidth(startWidth + startX - ev.clientX);
+        if (next === sideAppliedWidthRef.current) return;
+        sideWidthLiveRef.current = next;
         sideAppliedWidthRef.current = next;
         applySideChatWidth(next);
-      });
+        restoreSideScrollLock();
+      };
+      const finish = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", finish);
+        sideDragCleanupRef.current = null;
+        sideAppliedWidthRef.current = null;
+        const next = sideWidthLiveRef.current;
+        setCallResizing(false);
+        setSideChatResizing(false);
+        if (next != null) setSideChatWidth(next);
+        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+      };
+      const cleanup = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", finish);
+      };
+      sideDragCleanupRef.current = cleanup;
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", finish);
+      window.addEventListener("pointercancel", finish);
     },
-    [applySideChatWidth, clampSideChatWidth, wideCallLayout],
+    [
+      applySideChatWidth,
+      captureSideScrollLock,
+      clampSideChatWidth,
+      restoreSideScrollLock,
+      wideCallLayout,
+    ],
   );
 
-  const handleSideResizeEnd = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (sideResizeFrameRef.current) {
-        cancelAnimationFrame(sideResizeFrameRef.current);
-        sideResizeFrameRef.current = 0;
-      }
-      const width = sideWidthLiveRef.current;
-      sideWidthLiveRef.current = null;
-      sideAppliedWidthRef.current = null;
-      sideHoldScrollRef.current = false;
-      sideFrozenScrollRef.current = null;
-      callResizeRef.current = null;
-      setCallResizing(false);
-      setSideChatResizing(false);
-      if (width != null) setSideChatWidth(width);
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-    },
-    [],
-  );
+  useEffect(() => () => sideDragCleanupRef.current?.(), []);
 
   const showMemberRail = Boolean(
     account &&
@@ -1583,6 +1562,8 @@ export function ChatApp() {
         selfSpeaking={voice.selfSpeaking}
         noiseFilterEnabled={voice.noiseFilterEnabled}
         noiseFilterKind={voice.noiseFilterKind}
+        connectionLabel={voice.connectionLabel}
+        connectionQuality={voice.connectionQuality}
         onLeave={voice.leave}
         onToggleMute={voice.toggleMute}
         onToggleDeafen={voice.toggleDeafen}
@@ -1832,6 +1813,9 @@ export function ChatApp() {
               />
               {voice.active && (
                 <VoiceDock
+                  title={voice.active.title}
+                  connectionLabel={voice.connectionLabel}
+        connectionQuality={voice.connectionQuality}
                   muted={voice.muted}
                   deafened={voice.deafened}
                   onToggleMute={voice.toggleMute}
@@ -1872,9 +1856,8 @@ export function ChatApp() {
             } ${
               wideCallLayout &&
               fullCallOpen &&
-              ((callResizing && sideWidthLiveRef.current != null
-                ? sideWidthLiveRef.current
-                : sideChatWidth) ?? SIDE_CHAT_MIN) >= SIDE_CHAT_WIDE
+              (sideWidthLiveRef.current ?? sideChatWidth ?? SIDE_CHAT_MIN) >=
+                SIDE_CHAT_WIDE
                 ? "is-side-wide"
                 : ""
             }`}
@@ -1887,9 +1870,7 @@ export function ChatApp() {
                   fullCallOpen
                     ? {
                         "--call-side-chat-width": `${
-                          (callResizing && sideWidthLiveRef.current != null
-                            ? sideWidthLiveRef.current
-                            : sideChatWidth) ?? SIDE_CHAT_MIN
+                          sideWidthLiveRef.current ?? sideChatWidth ?? SIDE_CHAT_MIN
                         }px`,
                       }
                     : {}),
@@ -1998,6 +1979,44 @@ export function ChatApp() {
                       </motion.h2>
                     </AnimatePresence>
                   </div>
+                </div>
+
+                <div className="room__call-chip">
+                  {directCallChip && active ? (
+                    <HeaderCallChip
+                      title={active.peerName}
+                      subtitle={callChipSubtitle}
+                      avatarUrl={callChipAvatar}
+                      mark="call"
+                      speaking={localSpeaking || remoteSpeaking}
+                      muted={muted}
+                      onOpen={() => {
+                        if (active.chatId) handleOpenChat(active.chatId);
+                        setMinimized(false);
+                      }}
+                      onToggleMute={toggleMute}
+                      onEnd={endCall}
+                    />
+                  ) : voiceCallChip && voice.active ? (
+                    <HeaderCallChip
+                      title={voice.active.title}
+                      subtitle={voiceChipSubtitle}
+                      mark="voice"
+                      speaking={
+                        voice.selfSpeaking ||
+                        voice.peers.some((peer) => peer.speaking)
+                      }
+                      muted={voice.muted}
+                      onOpen={() => {
+                        if (voice.active?.groupId) {
+                          handleOpenChat(voice.active.groupId);
+                        }
+                        voice.setMinimized(false);
+                      }}
+                      onToggleMute={voice.toggleMute}
+                      onEnd={voice.leave}
+                    />
+                  ) : null}
                 </div>
 
                 <div className="room__meta">
@@ -2240,13 +2259,6 @@ export function ChatApp() {
                     ))
                 ? "is-camera"
                 : ""
-          } ${
-            (active && session?.room === active.chatId && minimized) ||
-            (voice.active &&
-              session?.room === voice.active.groupId &&
-              voice.minimized)
-              ? "is-mini"
-              : ""
           }`}
         />
 
@@ -2294,9 +2306,6 @@ export function ChatApp() {
                   aria-valuenow={sideChatWidth ?? SIDE_CHAT_MIN}
                   tabIndex={0}
                   onPointerDown={handleSideResizeStart}
-                  onPointerMove={handleSideResizeMove}
-                  onPointerUp={handleSideResizeEnd}
-                  onPointerCancel={handleSideResizeEnd}
                   onDoubleClick={() => {
                     if (sideChatWidth == null) return;
                     captureSideScrollLock();

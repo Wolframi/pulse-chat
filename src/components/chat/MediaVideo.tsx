@@ -15,15 +15,22 @@ type MediaVideoProps = Omit<
   active?: boolean;
 };
 
-function videoTrackKey(stream: MediaStream | null) {
-  if (!stream) return "";
-  return stream
-    .getVideoTracks()
-    .map(
-      (track) =>
-        `${track.id}:${track.readyState}:${track.muted}:${track.enabled}`,
-    )
-    .join("|");
+function videoTracks(stream: MediaStream | null) {
+  return stream?.getVideoTracks() ?? [];
+}
+
+function sameVideoTracks(a: MediaStream | null, b: MediaStream | null) {
+  const left = videoTracks(a);
+  const right = videoTracks(b);
+  return (
+    left.length > 0 &&
+    left.length === right.length &&
+    left.every((track, index) => track === right[index])
+  );
+}
+
+function liveVideo(stream: MediaStream | null) {
+  return videoTracks(stream).some((track) => track.readyState === "live");
 }
 
 export const MediaVideo = forwardRef<HTMLVideoElement, MediaVideoProps>(
@@ -32,60 +39,53 @@ export const MediaVideo = forwardRef<HTMLVideoElement, MediaVideoProps>(
     forwardedRef,
   ) {
     const videoRef = useRef<HTMLVideoElement | null>(null);
+    const heldRef = useRef<MediaStream | null>(null);
+    const incoming = active ? stream : null;
+    if (incoming && liveVideo(incoming)) heldRef.current = incoming;
+    else if (!liveVideo(heldRef.current)) heldRef.current = null;
+    const shown = (incoming && liveVideo(incoming) ? incoming : null) ?? heldRef.current;
+
+    useEffect(() => {
+      const video = videoRef.current;
+      if (video) video.muted = muted;
+    }, [muted]);
 
     useEffect(() => {
       const video = videoRef.current;
       if (!video) return;
-      const nextStream = active ? stream : null;
-      let boundKey = "";
+      const nextStream = shown;
       const startedAt = performance.now();
-      let binding = false;
 
-      const bind = (force = false) => {
-        const key = videoTrackKey(nextStream);
-        if (!force && video.srcObject === nextStream && key === boundKey) {
-          video.muted = muted;
-          return;
-        }
-        binding = true;
-        if (nextStream) {
-          if (video.srcObject === nextStream) video.srcObject = null;
-          video.srcObject = nextStream;
-        } else {
-          video.srcObject = null;
-        }
-        boundKey = key;
-        video.muted = muted;
-        binding = false;
+      const bind = () => {
+        const current = video.srcObject instanceof MediaStream ? video.srcObject : null;
+        if (sameVideoTracks(current, nextStream)) return;
+        video.srcObject = nextStream;
       };
 
       const play = () => {
-        if (!active || !video.srcObject) return;
+        if (!video.srcObject) return;
         if (document.visibilityState === "hidden") return;
         void video.play().catch(() => undefined);
       };
 
       const recoverIfBlack = () => {
-        if (binding || !nextStream || !active) return;
+        if (!nextStream) return;
         if (performance.now() - startedAt < 1600) return;
-        if (video.readyState < 2 || video.videoWidth > 0) return;
-        const live = nextStream
-          .getVideoTracks()
-          .some(
-            (track) =>
-              track.readyState === "live" && track.enabled && !track.muted,
-          );
+        if (video.videoWidth > 0) return;
+        const live = videoTracks(nextStream).some(
+          (track) => track.readyState === "live" && track.enabled && !track.muted,
+        );
         if (!live) return;
-        bind(true);
+        bind();
         play();
       };
 
       const onTrackChange = () => {
-        bind(true);
+        bind();
         play();
       };
 
-      bind(true);
+      bind();
       play();
 
       const retryTimers: number[] = [];
@@ -95,14 +95,14 @@ export const MediaVideo = forwardRef<HTMLVideoElement, MediaVideoProps>(
       window.addEventListener("online", play);
       nextStream?.addEventListener("addtrack", onTrackChange);
       nextStream?.addEventListener("removetrack", onTrackChange);
-      for (const track of nextStream?.getVideoTracks() ?? []) {
+      for (const track of videoTracks(nextStream)) {
         track.addEventListener("unmute", onTrackChange);
         track.addEventListener("ended", onTrackChange);
       }
-      for (const delay of [0, 250, 900, 1800]) {
+      for (const delay of [0, 250, 900]) {
         retryTimers.push(window.setTimeout(play, delay));
       }
-      const poll = window.setInterval(recoverIfBlack, 900);
+      const poll = window.setInterval(recoverIfBlack, 1200);
 
       return () => {
         window.clearInterval(poll);
@@ -113,12 +113,12 @@ export const MediaVideo = forwardRef<HTMLVideoElement, MediaVideoProps>(
         window.removeEventListener("online", play);
         nextStream?.removeEventListener("addtrack", onTrackChange);
         nextStream?.removeEventListener("removetrack", onTrackChange);
-        for (const track of nextStream?.getVideoTracks() ?? []) {
+        for (const track of videoTracks(nextStream)) {
           track.removeEventListener("unmute", onTrackChange);
           track.removeEventListener("ended", onTrackChange);
         }
       };
-    }, [active, muted, stream]);
+    }, [shown]);
 
     return (
       <video

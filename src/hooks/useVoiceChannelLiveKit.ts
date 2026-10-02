@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AudioPresets,
+  ConnectionQuality,
   LocalAudioTrack,
   LocalVideoTrack,
   Room,
@@ -112,6 +113,9 @@ const SCREEN_VIDEO_PUBLISH = {
 
 const ROOM_PUBLISH_DEFAULTS = {
   audioPreset: { maxBitrate: 64_000 },
+  // Mute must not stop the mic capture. Re-opening the device renegotiates
+  // the peer connection and blinks camera and screen share.
+  stopMicTrackOnMute: false,
   dtx: true,
   red: true,
   forceStereo: false,
@@ -229,6 +233,8 @@ export function useVoiceChannelLiveKit({
   const [mediaBusy, setMediaBusy] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [connectionQuality, setConnectionQuality] = useState<ConnectionQuality>(ConnectionQuality.Unknown);
+  const [linkPhase, setLinkPhase] = useState<"connecting" | "reconnecting" | "failed" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selfSpeaking, setSelfSpeaking] = useState(false);
   const [noiseFilterEnabled, setNoiseFilterEnabled] = useState(
@@ -266,6 +272,31 @@ export function useVoiceChannelLiveKit({
   const noiseFilterRef = useRef<NoiseFilterSession | null>(null);
   const noiseUpdateRef = useRef<Promise<void>>(Promise.resolve());
   const minimizedRef = useRef(false);
+  const qualitySettleRef = useRef<number | null>(null);
+  const settleLinkQuality = useCallback((room: Room) => {
+    if (qualitySettleRef.current != null) {
+      window.clearTimeout(qualitySettleRef.current);
+      qualitySettleRef.current = null;
+    }
+    const quality = room.localParticipant.connectionQuality;
+    setConnectionQuality(quality);
+    if (quality !== ConnectionQuality.Unknown) {
+      setLinkPhase((phase) =>
+        phase === "connecting" || phase === "reconnecting" ? null : phase,
+      );
+      return;
+    }
+    qualitySettleRef.current = window.setTimeout(() => {
+      qualitySettleRef.current = null;
+      if (roomRef.current !== room) return;
+      setConnectionQuality((current) =>
+        current === ConnectionQuality.Unknown ? ConnectionQuality.Good : current,
+      );
+      setLinkPhase((phase) =>
+        phase === "connecting" || phase === "reconnecting" ? null : phase,
+      );
+    }, 1400);
+  }, []);
   const startMediaInflightRef = useRef<Promise<void> | null>(null);
   const startMediaRef = useRef<
     | ((
@@ -279,6 +310,7 @@ export function useVoiceChannelLiveKit({
           deafened?: boolean;
           cameraOff?: boolean;
           sharingScreen?: boolean;
+          reconnecting?: boolean;
         },
       ) => Promise<void>)
     | null
@@ -349,10 +381,16 @@ export function useVoiceChannelLiveKit({
       (track): track is MediaStreamTrack =>
         Boolean(track && track.readyState === "live"),
     );
-    setLocalStream(new MediaStream(tracks));
+    setLocalStream((previous) => {
+      const before = previous?.getTracks() ?? [];
+      return previous && before.length === tracks.length && tracks.every((track) => before.includes(track))
+        ? previous
+        : new MediaStream(tracks);
+    });
   }, []);
 
   const syncRemoteStreams = useCallback(() => {
+    setRemoteStreams((previous) => {
     const next: Record<string, MediaStream> = {};
     for (const [userId, tracksBySource] of remoteTracksRef.current) {
       const screen = tracksBySource.get(Track.Source.ScreenShare);
@@ -362,9 +400,16 @@ export function useVoiceChannelLiveKit({
         (track): track is MediaStreamTrack =>
           Boolean(track && track.readyState === "live"),
       );
-      if (videos.length) next[userId] = new MediaStream(videos);
+      if (videos.length) {
+        const before = previous[userId]?.getVideoTracks() ?? [];
+        next[userId] = before.length === videos.length && videos.every((track) => before.includes(track))
+          ? previous[userId]
+          : new MediaStream(videos);
+      }
     }
-    setRemoteStreams(next);
+    return Object.keys(previous).length === Object.keys(next).length &&
+      Object.keys(next).every((id) => next[id] === previous[id]) ? previous : next;
+    });
   }, []);
 
   const cleanupRoom = useCallback(() => {
@@ -373,6 +418,11 @@ export function useVoiceChannelLiveKit({
     void stopNoiseFilter(filter);
     const room = roomRef.current;
     roomRef.current = null;
+    if (qualitySettleRef.current != null) {
+      window.clearTimeout(qualitySettleRef.current);
+      qualitySettleRef.current = null;
+    }
+    setConnectionQuality(ConnectionQuality.Unknown);
     if (room) {
       room.removeAllListeners();
       void room.disconnect(true).catch(() => undefined);
@@ -576,8 +626,11 @@ export function useVoiceChannelLiveKit({
           }
         }
       });
-      room.on(RoomEvent.TrackMuted, () => syncRemoteStreams());
-      room.on(RoomEvent.TrackUnmuted, () => syncRemoteStreams());
+      const onVideoSignal = (publication: { kind: Track.Kind }) => {
+        if (publication.kind === Track.Kind.Video) syncRemoteStreams();
+      };
+      room.on(RoomEvent.TrackMuted, onVideoSignal);
+      room.on(RoomEvent.TrackUnmuted, onVideoSignal);
       room.on(RoomEvent.ParticipantDisconnected, (participant) => {
         remoteTracksRef.current.delete(participant.identity);
         remoteVideoPubsRef.current.delete(participant.identity);
@@ -609,8 +662,28 @@ export function useVoiceChannelLiveKit({
           if (!stillLive) void stopScreenShareRef.current();
         }
       });
-      room.on(RoomEvent.Reconnecting, () => setError("Переподключение к SFU…"));
-      room.on(RoomEvent.Reconnected, () => setError(null));
+      room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
+        if (roomRef.current !== room || participant !== room.localParticipant) return;
+        setConnectionQuality(quality);
+        if (quality === ConnectionQuality.Unknown) return;
+        if (qualitySettleRef.current != null) {
+          window.clearTimeout(qualitySettleRef.current);
+          qualitySettleRef.current = null;
+        }
+        setLinkPhase((phase) =>
+          phase === "connecting" || phase === "reconnecting" ? null : phase,
+        );
+      });
+      const reconnecting = () => {
+        setLinkPhase("reconnecting");
+        setConnectionQuality(ConnectionQuality.Unknown);
+      };
+      room.on(RoomEvent.Reconnecting, reconnecting);
+      room.on(RoomEvent.SignalReconnecting, reconnecting);
+      room.on(RoomEvent.Reconnected, () => {
+        setLinkPhase(null);
+        settleLinkQuality(room);
+      });
       room.on(RoomEvent.Disconnected, () => {
         if (intentionalDisconnectRef.current) return;
         // Under the hybrid coordinator, presence stays up — only media dies.
@@ -628,7 +701,7 @@ export function useVoiceChannelLiveKit({
         setRemoteStreams({});
         joiningRef.current = false;
         setJoining(false);
-        setError("Переподключение к SFU…");
+        setLinkPhase("reconnecting");
         if (current) {
           window.setTimeout(() => {
             if (activeRef.current?.channelId !== current.channelId) return;
@@ -638,8 +711,12 @@ export function useVoiceChannelLiveKit({
               current.groupId,
               current.title,
               peers,
-              { preserveControls: true },
-            );
+              { preserveControls: true, reconnecting: true },
+            )?.catch((error: unknown) => {
+              if (error instanceof Error && error.name === "AbortError") return;
+              setLinkPhase("failed");
+              setConnectionQuality(ConnectionQuality.Lost);
+            });
           }, 600);
         }
       });
@@ -651,6 +728,7 @@ export function useVoiceChannelLiveKit({
       managedPresence,
       removeRemoteTrack,
       resetState,
+      settleLinkQuality,
       socket,
       syncLocalStream,
       syncRemoteStreams,
@@ -667,6 +745,7 @@ export function useVoiceChannelLiveKit({
     }
     joiningRef.current = false;
     setJoining(false);
+    setLinkPhase(null);
     intentionalDisconnectRef.current = true;
     cleanupRoom();
     resetState();
@@ -693,6 +772,7 @@ export function useVoiceChannelLiveKit({
         deafened?: boolean;
         cameraOff?: boolean;
         sharingScreen?: boolean;
+        reconnecting?: boolean;
       },
     ) => {
       if (!socket || !selfId || !token) {
@@ -704,6 +784,7 @@ export function useVoiceChannelLiveKit({
       }
       if (activeRef.current?.channelId === channelId && roomRef.current) {
         setPeers(peers);
+        setLinkPhase(null);
         return;
       }
       const inflight = startMediaInflightRef.current;
@@ -711,6 +792,7 @@ export function useVoiceChannelLiveKit({
         await inflight;
         if (activeRef.current?.channelId === channelId && roomRef.current) {
           setPeers(peers);
+          setLinkPhase(null);
           return;
         }
       }
@@ -729,6 +811,11 @@ export function useVoiceChannelLiveKit({
 
       joiningRef.current = true;
       setJoining(true);
+      setLinkPhase(opts?.reconnecting ? "reconnecting" : "connecting");
+      setConnectionQuality(ConnectionQuality.Unknown);
+      const pendingActive = { channelId, groupId, title };
+      activeRef.current = pendingActive;
+      setActive(pendingActive);
       setError(null);
       const attempt = ++joinAttemptRef.current;
       const controller = new AbortController();
@@ -898,6 +985,7 @@ export function useVoiceChannelLiveKit({
         emitMediaState(keepCameraOff, keepSharing);
         if (effectiveMuted) socket.emit("voice:mute", { muted: true });
         if (keepDeafened) socket.emit("voice:deafen", { deafened: true });
+        settleLinkQuality(room);
       } catch (joinError) {
         if (attempt !== joinAttemptRef.current || controller.signal.aborted) {
           const cancelled = new Error("SFU join cancelled");
@@ -905,10 +993,20 @@ export function useVoiceChannelLiveKit({
           throw cancelled;
         }
         cleanupRoom();
-        if (!managedPresence) resetState();
-        else {
+        if (opts?.reconnecting) {
           setLocalStream(null);
           setRemoteStreams({});
+          setLinkPhase("failed");
+          setConnectionQuality(ConnectionQuality.Lost);
+        } else if (!managedPresence) {
+          resetState();
+          setLinkPhase(null);
+        } else {
+          activeRef.current = null;
+          setActive(null);
+          setLocalStream(null);
+          setRemoteStreams({});
+          setLinkPhase(null);
         }
         setError(
           joinError instanceof Error
@@ -944,6 +1042,7 @@ export function useVoiceChannelLiveKit({
       emitMediaState,
       managedPresence,
       resetState,
+      settleLinkQuality,
       selfId,
       socket,
       stopMedia,
@@ -1558,6 +1657,8 @@ export function useVoiceChannelLiveKit({
     mediaBusy,
     minimized,
     joining,
+    linkPhase,
+    connectionQuality,
     error,
     join,
     leave,

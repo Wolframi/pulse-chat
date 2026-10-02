@@ -8,7 +8,12 @@ import {
   IconPhoneOff,
 } from "@/lib/icons";
 
+import { ConnectionSignal, type SignalQuality } from "@/components/chat/ConnectionSignal";
+
 type VoiceDockProps = {
+  title: string;
+  connectionLabel?: string | null;
+  connectionQuality?: SignalQuality;
   muted: boolean;
   deafened: boolean;
   onToggleMute: () => void;
@@ -18,6 +23,9 @@ type VoiceDockProps = {
 };
 
 export function VoiceDock({
+  title,
+  connectionLabel = null,
+  connectionQuality = "unknown",
   muted,
   deafened,
   onToggleMute,
@@ -27,6 +35,10 @@ export function VoiceDock({
 }: VoiceDockProps) {
   return (
     <div className="voice-dock" role="status" aria-live="polite">
+      <div className="voice-dock__meta">
+        <strong title={title}>{title}</strong>
+        <ConnectionSignal quality={connectionQuality} pending={connectionLabel} />
+      </div>
       <div className="voice-dock__actions">
         {onExpand ? (
           <button

@@ -17,6 +17,8 @@ export function VideoThumb({ url, onOpen }: VideoThumbProps) {
   const base = signedMediaSrc(url) || mediaSrc(url);
   const [bust, setBust] = useState(0);
   const tries = useRef(0);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [near, setNear] = useState(false);
   const src = bust > 0 && !isLocalMediaUrl(base) ? `${base}${base.includes("?") ? "&" : "?"}v=${bust}` : base;
 
   useEffect(() => {
@@ -24,8 +26,24 @@ export function VideoThumb({ url, onOpen }: VideoThumbProps) {
     setBust(0);
   }, [base]);
 
+  useEffect(() => {
+    const node = buttonRef.current;
+    if (!node || near) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setNear(true);
+        observer.disconnect();
+      },
+      { rootMargin: "600px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [near]);
+
   return (
     <button
+      ref={buttonRef}
       type="button"
       className="bubble__video-btn"
       onClick={onOpen}
@@ -35,10 +53,10 @@ export function VideoThumb({ url, onOpen }: VideoThumbProps) {
       <video
         key={src}
         className="bubble__video"
-        src={src}
+        src={near ? src : undefined}
         muted
         playsInline
-        preload="metadata"
+        preload={near ? "metadata" : "none"}
         controls={false}
         disablePictureInPicture
         onPlay={(event) => {

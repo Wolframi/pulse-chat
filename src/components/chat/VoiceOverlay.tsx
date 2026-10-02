@@ -14,16 +14,15 @@ import {
   IconCamera,
   IconCameraOff,
   IconSwitchCamera,
-  IconExpand,
   IconHeadphones,
   IconMic,
   IconMicOff,
   IconMinimize,
   IconPhoneOff,
   IconScreen,
-  IconVolume,
   IconNoise,
 } from "@/lib/icons";
+import { ConnectionSignal, type SignalQuality } from "@/components/chat/ConnectionSignal";
 import { Avatar } from "@/components/chat/Avatar";
 import { MediaVideo } from "@/components/chat/MediaVideo";
 import {
@@ -63,6 +62,8 @@ type VoiceOverlayProps = {
   selfSpeaking?: boolean;
   noiseFilterEnabled?: boolean;
   noiseFilterKind?: NoiseFilterKind;
+  connectionLabel?: string | null;
+  connectionQuality?: SignalQuality;
   onLeave: () => void;
   onToggleMute: () => void;
   onToggleDeafen: () => void;
@@ -149,7 +150,7 @@ function useStablePickedStream(
           `${track.id}:${track.readyState}:${track.enabled}:${track.contentHint}`,
       )
       .join("|") ?? "";
-  return useMemo(() => {
+  const picked = useMemo(() => {
     if (!stream) return null;
     return kind === "camera"
       ? pickCameraStream(stream)
@@ -157,6 +158,13 @@ function useStablePickedStream(
     // signature captures track identity/state changes for the same MediaStream object
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream, signature, kind]);
+  const heldRef = useRef<MediaStream | null>(null);
+  const pickedLive = picked?.getVideoTracks().some((track) => track.readyState === "live");
+  if (picked && pickedLive) heldRef.current = picked;
+  else if (!heldRef.current?.getVideoTracks().some((track) => track.readyState === "live")) {
+    heldRef.current = null;
+  }
+  return (pickedLive ? picked : null) ?? heldRef.current;
 }
 
 function participantGridClass(count: number) {
@@ -288,6 +296,8 @@ function VoiceStagePanel({
   selfSpeaking = false,
   noiseFilterEnabled = true,
   noiseFilterKind = "browser",
+  connectionLabel = null,
+  connectionQuality = "unknown",
   onLeave,
   onToggleMute,
   onToggleDeafen,
@@ -428,6 +438,12 @@ function VoiceStagePanel({
           screenMode ? "is-screen" : "is-tiles"
         }`}
       >
+        <div className="call__qos"><ConnectionSignal quality={connectionQuality} pending={connectionLabel} /></div>
+        {connectionLabel ? (
+          <p className="call__link" role="status">
+            {connectionLabel}
+          </p>
+        ) : null}
         {screenMode ? (
           <div className="call__stage-body">
             <section className="call__main-area">
@@ -573,6 +589,12 @@ function VoiceStagePanel({
       </div>
 
       <div className="call__bar">
+        <p className="call__status">
+          <strong>{active?.title}</strong>
+          <span className={connectionLabel ? "is-pending" : ""}>
+            {connectionLabel || "в канале"}
+          </span>
+        </p>
         <div className="call__actions call__actions--dock">
           <button
             type="button"
@@ -662,7 +684,11 @@ function DockPortal({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     function sync() {
-      setSlot(document.getElementById("pulse-call-dock"));
+      const next = document.getElementById("pulse-call-dock");
+      setSlot((current) => {
+        if (next) return next === current ? current : next;
+        return current?.isConnected ? current : null;
+      });
     }
     sync();
     const obs = new MutationObserver(sync);
@@ -691,6 +717,8 @@ export function VoiceOverlay({
   selfSpeaking = false,
   noiseFilterEnabled = true,
   noiseFilterKind = "browser",
+  connectionLabel = null,
+  connectionQuality = "unknown",
   onLeave,
   onToggleMute,
   onToggleDeafen,
@@ -706,7 +734,6 @@ export function VoiceOverlay({
     active && currentGroupId && active.groupId === currentGroupId,
   );
   const showDock = Boolean(active && voiceInThisGroup && !minimized);
-  const showMini = Boolean(active && !voiceInThisGroup);
   const screenSources = useMemo(
     () =>
       collectScreenSources(
@@ -749,56 +776,9 @@ export function VoiceOverlay({
     return () => window.removeEventListener("keydown", onKey);
   }, [showDock, onToggleMinimized]);
 
-  const anyRemoteScreen = peers.some((p) => p.sharingScreen);
-  const anyCamera =
-    !cameraOff || peers.some((p) => !p.cameraOff);
-
   return (
     <>
-      <ScreenShareKeepalive sources={screenSources} />
-      <AnimatePresence>
-        {showMini && active && (
-          <motion.div
-            className="call-mini"
-            initial={{ opacity: 0, y: 16, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.98 }}
-            transition={softSpring}
-          >
-            <button
-              type="button"
-              className="call-mini__main"
-              onClick={() => onExpand?.()}
-              aria-label={`Развернуть голосовой канал ${active.title}`}
-            >
-              <span className="call-mini__avatar">
-                <IconVolume size={18} />
-              </span>
-              <span className="call-mini__text">
-                <strong>{active.title}</strong>
-                <em>
-                  {peers.length === 0
-                    ? "только вы"
-                    : `${peers.length + 1} участников`}
-                  {sharingScreen || anyRemoteScreen ? " · экран" : ""}
-                  {anyCamera ? " · видео" : ""}
-                </em>
-              </span>
-              <IconExpand size={16} />
-            </button>
-            <button
-              type="button"
-              className="call-mini__end"
-              onClick={onLeave}
-              aria-label="Выйти из канала"
-              title="Отключиться"
-            >
-              <IconPhoneOff size={16} />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+      {showDock ? null : <ScreenShareKeepalive sources={screenSources} />}
       <AnimatePresence>
         {showDock && active ? (
           <DockPortal>
@@ -817,6 +797,8 @@ export function VoiceOverlay({
               selfSpeaking={selfSpeaking}
               noiseFilterEnabled={noiseFilterEnabled}
               noiseFilterKind={noiseFilterKind}
+              connectionLabel={connectionLabel}
+              connectionQuality={connectionQuality}
               onLeave={onLeave}
               onToggleMute={onToggleMute}
               onToggleDeafen={onToggleDeafen}

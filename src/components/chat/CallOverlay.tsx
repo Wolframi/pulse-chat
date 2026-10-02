@@ -15,7 +15,6 @@ import {
   IconCamera,
   IconCameraOff,
   IconSwitchCamera,
-  IconExpand,
   IconMic,
   IconMicOff,
   IconMinimize,
@@ -25,6 +24,7 @@ import {
   IconHeadphones,
   IconNoise,
 } from "@/lib/icons";
+import { ConnectionSignal } from "@/components/chat/ConnectionSignal";
 import { Avatar } from "@/components/chat/Avatar";
 import { MediaVideo } from "@/components/chat/MediaVideo";
 import {
@@ -55,7 +55,7 @@ function useStablePickedStream(
           `${track.id}:${track.readyState}:${track.enabled}:${track.contentHint}`,
       )
       .join("|") ?? "";
-  return useMemo(() => {
+  const picked = useMemo(() => {
     if (!stream) return null;
     return kind === "camera"
       ? pickCameraStream(stream)
@@ -63,6 +63,13 @@ function useStablePickedStream(
     // signature captures track identity/state changes for the same MediaStream object
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream, signature, kind]);
+  const heldRef = useRef<MediaStream | null>(null);
+  const pickedLive = picked?.getVideoTracks().some((track) => track.readyState === "live");
+  if (picked && pickedLive) heldRef.current = picked;
+  else if (!heldRef.current?.getVideoTracks().some((track) => track.readyState === "live")) {
+    heldRef.current = null;
+  }
+  return (pickedLive ? picked : null) ?? heldRef.current;
 }
 
 type ActiveCall = {
@@ -145,6 +152,22 @@ type CallOverlayProps = {
   noiseFilterEnabled?: boolean;
   noiseFilterKind?: NoiseFilterKind;
 };
+
+function callPhaseLabel(status: string, durationLabel: string, ringing: boolean) {
+  if (ringing) return "Звоним…";
+  if (status === "На линии") return durationLabel;
+  if (!status || /^Соединение/.test(status)) return "Подключение…";
+  return status;
+}
+
+/** Shown on the stage itself — the dock bar hides its caption on a phone. */
+function callLinkBanner(status: string, ringing: boolean) {
+  if (ringing) return null;
+  if (!status || /^Соединение/.test(status)) return "Подключение…";
+  if (/переподключ/i.test(status)) return status;
+  if (/связь (нестабильна|потеряна)/i.test(status)) return status;
+  return null;
+}
 
 function useRingTone(enabled: boolean) {
   useEffect(() => {
@@ -237,11 +260,8 @@ export function CallPanel({
   }, [active.peerId]);
 
   const ringing = isOutboundRinging(active.outbound, status);
-  const statusText = ringing
-    ? "Звоним…"
-    : status === "На линии"
-      ? durationLabel
-      : status || "Звонок";
+  const statusText = callPhaseLabel(status, durationLabel, ringing);
+  const linkBanner = callLinkBanner(status, ringing);
 
   return (
     <motion.div
@@ -268,20 +288,20 @@ export function CallPanel({
         <IconMinimize size={16} />
       </button>
 
-      {networkQuality && (
-        <div
-          className={`call__qos call__qos--${networkQuality.level}`}
-          title="Качество сети"
-        >
-          {networkQuality.rttMs} ms
-        </div>
-      )}
+      <div className="call__qos">
+        <ConnectionSignal quality={networkQuality?.level} rttMs={networkQuality?.rttMs} pending={linkBanner || (ringing ? statusText : null)} />
+      </div>
 
       <div
         className={`call__stage call__stage--discord ${
           screenMode ? "is-screen" : "is-tiles"
         }`}
       >
+        {linkBanner ? (
+          <p className="call__link" role="status">
+            {linkBanner}
+          </p>
+        ) : null}
         {screenMode ? (
           <div className="call__stage-body">
             <section className="call__main-area">
@@ -510,70 +530,16 @@ export function CallPanel({
   );
 }
 
-function CallMiniBar({
-  peerName,
-  peerAvatarUrl,
-  speaking,
-  statusLabel,
-  sharingScreen,
-  inline = false,
-  onExpand,
-  onEnd,
-}: {
-  peerName: string;
-  peerAvatarUrl?: string | null;
-  speaking?: boolean;
-  statusLabel: string;
-  sharingScreen?: boolean;
-  inline?: boolean;
-  onExpand: () => void;
-  onEnd: () => void;
-}) {
-  return (
-    <motion.div
-      className={`call-mini ${inline ? "call-mini--inline" : ""}`}
-      initial={{ opacity: 0, y: inline ? -8 : 16, scale: inline ? 1 : 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: inline ? -6 : 10, scale: inline ? 1 : 0.98 }}
-      transition={softSpring}
-    >
-      <button
-        type="button"
-        className="call-mini__main"
-        onClick={onExpand}
-        aria-label={`Развернуть звонок с ${peerName}`}
-      >
-        <span className={`call-mini__avatar ${speaking ? "is-speaking" : ""}`}>
-          <Avatar name={peerName} src={peerAvatarUrl} size="sm" />
-        </span>
-        <span className="call-mini__text">
-          <strong>{peerName}</strong>
-          <em>
-            {statusLabel}
-            {sharingScreen ? " · экран" : ""}
-          </em>
-        </span>
-        <IconExpand size={16} />
-      </button>
-      <button
-        type="button"
-        className="call-mini__end"
-        onClick={onEnd}
-        aria-label="Завершить звонок"
-        title="Завершить"
-      >
-        <IconPhoneOff size={16} />
-      </button>
-    </motion.div>
-  );
-}
-
 function DockPortal({ children }: { children: ReactNode }) {
   const [slot, setSlot] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     function sync() {
-      setSlot(document.getElementById("pulse-call-dock"));
+      const next = document.getElementById("pulse-call-dock");
+      setSlot((current) => {
+        if (next) return next === current ? current : next;
+        return current?.isConnected ? current : null;
+      });
     }
     sync();
     const obs = new MutationObserver(sync);
@@ -621,7 +587,6 @@ export function CallOverlay({
   canFlipCamera = false,
   onToggleScreenShare,
   onToggleMinimized,
-  onExpandCall,
 }: CallOverlayProps) {
   const acceptRef = useRef<HTMLButtonElement>(null);
   const showIncoming = Boolean(incoming && !active);
@@ -629,8 +594,6 @@ export function CallOverlay({
     active && currentChatId && active.chatId === currentChatId,
   );
   const showDock = Boolean(active && callInThisChat && !minimized && !showIncoming);
-  const showInlineMini = Boolean(active && callInThisChat && minimized && !showIncoming);
-  const showFloatMini = Boolean(active && !callInThisChat && !showIncoming);
   const screenKeepalives = useMemo(() => {
     const list: { id: string; label: string; stream: MediaStream }[] = [];
     const local = pickScreenStream(localStream);
@@ -673,24 +636,8 @@ export function CallOverlay({
 
   return (
     <>
-      <ScreenShareKeepalive sources={screenKeepalives} />
+      {showDock ? null : <ScreenShareKeepalive sources={screenKeepalives} />}
       <audio ref={remoteAudioRef} autoPlay playsInline hidden />
-
-      <AnimatePresence>
-        {showFloatMini && active && (
-          <CallMiniBar
-            peerName={active.peerName}
-            peerAvatarUrl={peerAvatarUrl}
-            speaking={remoteSpeaking}
-            statusLabel={
-              status === "На линии" ? durationLabel : status || "Звонок"
-            }
-            sharingScreen={sharingScreen}
-            onExpand={() => onExpandCall?.()}
-            onEnd={onEnd}
-          />
-        )}
-      </AnimatePresence>
 
       <AnimatePresence>
         {showIncoming && incoming && (
@@ -743,25 +690,6 @@ export function CallOverlay({
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {showInlineMini && active ? (
-          <DockPortal>
-            <CallMiniBar
-              peerName={active.peerName}
-              peerAvatarUrl={peerAvatarUrl}
-              speaking={remoteSpeaking}
-              statusLabel={
-                status === "На линии" ? durationLabel : status || "Звонок"
-              }
-              sharingScreen={sharingScreen}
-              inline
-              onExpand={onToggleMinimized}
-              onEnd={onEnd}
-            />
-          </DockPortal>
-        ) : null}
       </AnimatePresence>
 
       <AnimatePresence>

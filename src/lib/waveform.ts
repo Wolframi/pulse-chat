@@ -60,32 +60,131 @@ function resamplePeaks(peaks: number[], count: number): number[] {
 }
 
 const waveformCache = new Map<string, { peaks: number[]; duration: number }>();
+const waveformJobs = new Map<string, Promise<{ peaks: number[]; duration: number } | null>>();
+let activeWaveforms = 0;
+const waveformQueue: (() => void)[] = [];
+
+function waveStorage() {
+  try {
+    return typeof sessionStorage === "undefined" ? null : sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredWave(storageKey: string) {
+  const store = waveStorage();
+  if (!store) return null;
+  try {
+    const raw = store.getItem(storageKey);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as { peaks?: unknown; duration?: unknown };
+    if (
+      !Array.isArray(data.peaks) ||
+      data.peaks.length === 0 ||
+      data.peaks.length > 192 ||
+      data.peaks.some((n) => typeof n !== "number" || !Number.isFinite(n)) ||
+      typeof data.duration !== "number" ||
+      !Number.isFinite(data.duration) ||
+      data.duration <= 0
+    ) {
+      return null;
+    }
+    return { peaks: data.peaks as number[], duration: data.duration };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredWave(storageKey: string, data: { peaks: number[]; duration: number }) {
+  const store = waveStorage();
+  if (!store) return;
+  try {
+    store.setItem(storageKey, JSON.stringify(data));
+  } catch {
+    /* private mode or a full session store */
+  }
+}
+
+async function waveformSlot() {
+  if (activeWaveforms >= 6) await new Promise<void>((resolve) => waveformQueue.push(resolve));
+  else activeWaveforms += 1;
+  return () => {
+    const next = waveformQueue.shift();
+    if (next) next();
+    else activeWaveforms -= 1;
+  };
+}
 
 export async function peaksFromAudioUrl(
   url: string,
   barCount: number,
   signal?: AbortSignal,
 ): Promise<{ peaks: number[]; duration: number } | null> {
-  const key = `${url}#${barCount}#v2`;
+  if (signal?.aborted) return null;
+  const parsed = new URL(url, window.location.href);
+  const hosted = parsed.origin === window.location.origin && parsed.pathname.startsWith("/uploads/");
+  const key = `${hosted ? parsed.pathname : url}#v4`;
+  const storageKey = `pulse-wave:${key}`;
   const cached = waveformCache.get(key);
-  if (cached) return cached;
+  if (cached) return { peaks: resamplePeaks(cached.peaks, barCount), duration: cached.duration };
+  const stored = readStoredWave(storageKey);
+  if (stored) {
+    waveformCache.set(key, stored);
+    return { peaks: resamplePeaks(stored.peaks, barCount), duration: stored.duration };
+  }
+  let job = waveformJobs.get(key);
+  if (!job) {
+    job = (async () => {
+      const release = await waveformSlot();
+      try {
+        const data = await loadAudioPeaks(url, hosted);
+        if (data) {
+          if (waveformCache.size >= 256) waveformCache.delete(waveformCache.keys().next().value!);
+          waveformCache.set(key, data);
+          writeStoredWave(storageKey, data);
+        }
+        return data;
+      } finally { release(); }
+    })().finally(() => waveformJobs.delete(key));
+    waveformJobs.set(key, job);
+  }
+  const data = await job;
+  if (signal?.aborted || !data) return null;
+  return { peaks: resamplePeaks(data.peaks, barCount), duration: data.duration };
+}
+
+async function loadAudioPeaks(url: string, hosted: boolean) {
   try {
-    const response = await fetch(url, { signal });
+    if (hosted) {
+      const waveUrl = new URL(url, window.location.href);
+      waveUrl.searchParams.set("waveform", "1");
+      try {
+        const response = await fetch(waveUrl, { signal: AbortSignal.timeout(12_000) });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          const data = await response.json();
+          if (Array.isArray(data.peaks) && data.peaks.length > 0 && data.peaks.length <= 192 &&
+            data.peaks.every((n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1) &&
+            Number.isFinite(data.duration) && data.duration > 0) {
+            return { peaks: data.peaks as number[], duration: data.duration as number };
+          }
+        }
+      } catch { /* Older servers / unavailable ffmpeg: decode on the client. */ }
+    }
+    const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
     if (!response.ok) return null;
     const buffer = await response.arrayBuffer();
-    if (signal?.aborted) return null;
     const AudioCtx =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext })
         .webkitAudioContext;
     const ctx = new AudioCtx();
     try {
-      const decoded = await ctx.decodeAudioData(buffer.slice(0));
+      const decoded = await ctx.decodeAudioData(buffer);
       const channel = decoded.getChannelData(0);
-      const peaks = peaksFromChannelData(channel, barCount);
+      const peaks = peaksFromChannelData(channel, 160);
       const duration = Number.isFinite(decoded.duration) ? decoded.duration : 0;
       const data = { peaks, duration };
-      waveformCache.set(key, data);
       return data;
     } finally {
       void ctx.close().catch(() => undefined);

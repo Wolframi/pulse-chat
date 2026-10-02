@@ -116,6 +116,27 @@
   height: 100%;
 }
 
+.call__link {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(8, 8, 12, 0.78);
+  color: #f2f3f5;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .call__stage--discord {
   position: relative;
   min-height: 0;
@@ -610,3 +631,12 @@
   object-fit: contain;
   background: #0a0a0c;
 }
+.connection-signal { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; font-size: 12px; font-weight: 650; line-height: 1.15; color: #929ba8; }
+.connection-signal--excellent, .connection-signal--good { color: #68c793; }
+.connection-signal--ok { color: #e6ba64; }
+.connection-signal--poor, .connection-signal--lost { color: #ee8585; }
+.connection-signal__bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 13px; flex: 0 0 auto; }
+.connection-signal__bars i { width: 3px; height: 5px; border-radius: 1px; background: currentColor; opacity: .25; }
+.connection-signal__bars i:nth-child(2) { height: 9px; }
+.connection-signal__bars i:nth-child(3) { height: 13px; }
+.connection-signal__bars i.is-lit { opacity: 1; }

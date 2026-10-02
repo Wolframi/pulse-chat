@@ -25,9 +25,10 @@ type VoiceBubbleProps = {
   src: string;
   mine?: boolean;
   track: AudioTrack;
+  transcript?: boolean;
 };
 
-function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
+function VoiceBubbleInner({ src, mine = false, track, transcript = false }: VoiceBubbleProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const timeRef = useRef<HTMLSpanElement>(null);
@@ -40,10 +41,11 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
   const dragTargetRef = useRef<HTMLElement | null>(null);
   const progressRef = useRef(0);
 
-  const [loadWave, setLoadWave] = useState(true);
+  const [loadWave, setLoadWave] = useState(false);
   const [ready, setReady] = useState(false);
   const [duration, setDuration] = useState(0);
   const [failed, setFailed] = useState(false);
+  const transcriptOnMount = useRef(transcript);
 
   const isCurrent = useAudioPlaybackSelector((state) => state.current?.id === track.id);
   const playing = useAudioPlaybackSelector(
@@ -84,7 +86,6 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
   }, []);
 
   useEffect(() => {
-    setLoadWave(true);
     setReady(false);
     setDuration(0);
     setFailed(false);
@@ -93,6 +94,18 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
     progressLockRef.current = 0;
     progressRef.current = 0;
   }, [src]);
+
+  useEffect(() => {
+    const node = wrapRef.current;
+    if (!node || loadWave) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return;
+      setLoadWave(true);
+      observer.disconnect();
+    }, { rootMargin: "300px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadWave]);
 
   useEffect(() => {
     if (!loadWave || !src) return;
@@ -318,6 +331,16 @@ function VoiceBubbleInner({ src, mine = false, track }: VoiceBubbleProps) {
         </div>
       </div>
 
+      {transcript ? (
+        <span
+          className={`voice-bubble__badge ${
+            transcriptOnMount.current ? "" : "is-enter"
+          }`}
+          title="Расшифровка"
+          aria-hidden
+        />
+      ) : null}
+
       <span ref={timeRef} className="voice-bubble__time">
         {label}
       </span>
@@ -334,6 +357,7 @@ export const VoiceBubble = memo(VoiceBubbleInner, (prev, next) => {
     prev.track.roomId === next.track.roomId &&
     prev.track.kind === next.track.kind &&
     prev.track.title === next.track.title &&
-    prev.track.author === next.track.author
+    prev.track.author === next.track.author &&
+    Boolean(prev.transcript) === Boolean(next.transcript)
   );
 });

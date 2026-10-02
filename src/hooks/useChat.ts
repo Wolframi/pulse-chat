@@ -40,7 +40,7 @@ import {
   subscribeWebPush,
 } from "@/lib/notify";
 import { isChatMuted } from "@/lib/mute";
-import { compressUploadBatch } from "@/lib/compressImage";
+import { compressImageFile } from "@/lib/compressImage";
 import { readMediaSize } from "@/lib/mediaSize";
 import { watchAppBoot } from "@/lib/liveReload";
 import { parseGiphyMediaUrl } from "@/lib/giphyMedia";
@@ -1562,15 +1562,17 @@ export function useChat() {
         const results = await runPool(job.files, 3, async (file, index) => {
           const done = job.uploaded[index];
           if (done) return done;
+          const prepared = await compressImageFile(file);
+          if (controller.signal.aborted) throw new Error("Загрузка отменена");
           const [uploaded, pixels] = await Promise.all([
-            uploadFileWithRetry(file, token, {
+            uploadFileWithRetry(prepared, token, {
               signal: controller.signal,
               onProgress: (ratio) => {
                 loaded[index] = sizes[index] * ratio;
                 report();
               },
             }),
-            readMediaSize(file),
+            readMediaSize(prepared),
           ]);
           const size = parseMediaSize(pixels);
           const result = size ? { ...uploaded, ...size } : uploaded;
@@ -1694,7 +1696,7 @@ export function useChat() {
         return { ok: false, completed: [] };
       }
 
-      const batch = await compressUploadBatch(files);
+      const batch = files;
       for (const file of batch) {
         const invalid = validateFile(file);
         if (invalid) {

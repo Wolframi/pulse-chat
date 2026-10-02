@@ -60,6 +60,7 @@ export function useVoiceChannel({
 
   const activeRef = useRef<ActiveVoice | null>(null);
   const joinAttemptRef = useRef(0);
+  const joiningRef = useRef(false);
   const sfuApiRef = useRef<{
     localStream: MediaStream | null;
     muted: boolean;
@@ -106,9 +107,11 @@ export function useVoiceChannel({
           nextPeers,
           opts,
         );
+        if (activeRef.current !== session) return;
         setPeers(nextPeers);
         setError(null);
       } catch (err) {
+        if (activeRef.current !== session) return;
         if (err instanceof Error && err.name === "AbortError") return;
         api.stopMedia();
         socket?.emit("voice:leave");
@@ -129,6 +132,7 @@ export function useVoiceChannel({
 
   const leave = useCallback(() => {
     joinAttemptRef.current += 1;
+    joiningRef.current = false;
     sfuApiRef.current?.stopMedia();
     socket?.emit("voice:leave");
     activeRef.current = null;
@@ -147,12 +151,13 @@ export function useVoiceChannel({
         setError("Сначала завершите звонок");
         return;
       }
-      if (activeRef.current?.channelId === channelId) {
+      if (activeRef.current?.channelId === channelId && sfu.linkPhase !== "failed") {
         setMinimized(false);
         sfu.setMinimized(false);
         return;
       }
       const attempt = ++joinAttemptRef.current;
+      joiningRef.current = true;
       setJoining(true);
       setError(null);
       if (activeRef.current) {
@@ -165,6 +170,11 @@ export function useVoiceChannel({
         setPeers([]);
       }
 
+      const pendingSession = { channelId, groupId, title };
+      activeRef.current = pendingSession;
+      setActive(pendingSession);
+      setMinimized(false);
+      sfu.setMinimized(false);
       try {
         const result = await new Promise<JoinAck>((resolve, reject) => {
           const timeout = window.setTimeout(() => {
@@ -177,6 +187,8 @@ export function useVoiceChannel({
         });
         if (attempt !== joinAttemptRef.current) return;
         if (!result.ok) {
+          activeRef.current = null;
+          setActive(null);
           setError(result.error || "Не удалось войти в канал");
           return;
         }
@@ -216,10 +228,13 @@ export function useVoiceChannel({
           err instanceof Error ? err.message : "Не удалось войти в канал",
         );
       } finally {
-        if (attempt === joinAttemptRef.current) setJoining(false);
+        if (attempt === joinAttemptRef.current) {
+          joiningRef.current = false;
+          setJoining(false);
+        }
       }
     },
-    [callBusy, leave, selfId, sfu.setMinimized, socket, startSfu, token],
+    [callBusy, leave, selfId, sfu.setMinimized, sfu.linkPhase, socket, startSfu, token],
   );
 
   useEffect(() => {
@@ -242,7 +257,7 @@ export function useVoiceChannel({
         (item) => item.id === current.channelId,
       );
       if (!channel) {
-        if (!sfuApiRef.current?.joining) leave();
+        if (!joiningRef.current && !sfuApiRef.current?.joining) leave();
         return;
       }
       const nextPeers = channel.users.filter((user) => user.userId !== selfId);
@@ -250,7 +265,7 @@ export function useVoiceChannel({
       const api = sfuApiRef.current;
       if (!api) return;
       api.setPeersExternal(nextPeers);
-      if (nextPeers.length > 0 && !api.hasRoom() && !api.joining) {
+      if (nextPeers.length > 0 && !joiningRef.current && !api.hasRoom() && !api.joining) {
         void startSfu(current, nextPeers, { preserveControls: true });
       }
     };
@@ -376,6 +391,15 @@ export function useVoiceChannel({
     mediaBusy: sfu.mediaBusy,
     minimized,
     joining: joining || sfu.joining,
+    connectionQuality: sfu.connectionQuality,
+    connectionLabel:
+      sfu.linkPhase === "failed"
+        ? "Связь потеряна — подключитесь к каналу снова"
+        : sfu.linkPhase === "reconnecting"
+        ? "Восстановление связи…"
+        : joining || sfu.joining || sfu.linkPhase === "connecting"
+          ? "Подключение…"
+          : null,
     error: error || sfu.error,
     join,
     leave,

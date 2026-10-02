@@ -1,7 +1,12 @@
 import { notFound } from "next/navigation";
 import { CallLayoutPreview } from "@/components/chat/CallLayoutPreview";
 
-export default function CallPreviewPage() {
+export default async function CallPreviewPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ minimized?: string }>;
+}) {
   if (process.env.NODE_ENV !== "development") notFound();
-  return <CallLayoutPreview />;
+  const params = await searchParams;
+  return <CallLayoutPreview initialMinimized={params.minimized === "1"} />;
 }

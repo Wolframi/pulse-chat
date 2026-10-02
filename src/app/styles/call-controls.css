@@ -38,6 +38,10 @@
   font-size: 0.78rem;
 }
 
+.call__card--dock .call__status span.is-pending {
+  color: #e8c56b;
+}
+
 .call__card--dock .call__actions--dock {
   grid-column: 2;
   justify-self: center;

@@ -22,7 +22,8 @@ fi
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$LOG_FILE"; }
 
 build_app() {
-  SEED_DEMO=0 NEXT_PUBLIC_DEMO=0 ./node_modules/.bin/next build
+  # npm run build, not next build: prebuild generates gitignored DTLN assets.
+  SEED_DEMO=0 NEXT_PUBLIC_DEMO=0 npm run build
 }
 
 cd "$APP_DIR"
@@ -50,11 +51,16 @@ git reset --hard origin/master
 git clean -fd \
   --exclude=data \
   --exclude=uploads \
+  --exclude=public/audio \
   --exclude=.env \
   --exclude=.s3-storage.json \
   --exclude=.giphy-api-key \
   --exclude=.deepgram-api-key \
   --exclude=.deepgram-keyterms \
+  --exclude=.groq-api-key \
+  --exclude=.groq-proxy-url \
+  --exclude=.groq-bridge-secret \
+  --exclude=.groq-egress-proxy \
   --exclude=.livekit-url \
   --exclude=.livekit-api-key \
   --exclude=.livekit-api-secret \

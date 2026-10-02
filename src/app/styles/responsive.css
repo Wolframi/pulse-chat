@@ -800,8 +800,8 @@
   }
 
   .voice-dock {
-    padding: 0 10px var(--safe-bottom);
     gap: 8px;
+    padding: 8px 10px calc(8px + var(--safe-bottom));
   }
 
   .voice-dock__btn {

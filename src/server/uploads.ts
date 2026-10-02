@@ -5,7 +5,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import Busboy from "busboy";
 import { pipeline } from "node:stream/promises";
@@ -27,6 +27,7 @@ import {
 import { isDevAccessibleHost } from "../lib/devHosts";
 import { restoreSession } from "./auth";
 import { rateLimit } from "./rateLimit";
+import { audioWaveform } from "./audioWaveform";
 import {
   isTranscodableVideoPath,
   normalizedVideoName,
@@ -52,6 +53,7 @@ import {
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 const THUMB_DIR = path.join(UPLOAD_DIR, "thumbs");
 const THUMB_WIDTHS = new Set(["320", "430", "860", "1080"]);
+const THUMB_SOURCE_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp"]);
 const MAX_SIZE = 500 * 1024 * 1024;
 const AVATAR_MAX_SIZE = 2 * 1024 * 1024;
 const DEV = process.env.NODE_ENV !== "production";
@@ -628,9 +630,40 @@ export function uploadNameFromUrl(url: string) {
   }
 }
 
+type UploadInfo = {
+  fileName: string;
+  size: number;
+  mtime: Date;
+  etag: string;
+  image: boolean;
+  mime: string;
+};
+
+const uploadInfoCache = new Map<string, { info: UploadInfo; at: number }>();
+const uploadInfoJobs = new Map<string, Promise<UploadInfo | null>>();
+const UPLOAD_INFO_TTL_MS = 60_000;
+
+export function forgetUploadInfo(fileName: string) {
+  if (fileName) uploadInfoCache.delete(fileName);
+}
+
 export async function getUploadInfo(url: string) {
   const fileName = uploadNameFromUrl(url);
   if (!fileName) return null;
+  const cached = uploadInfoCache.get(fileName);
+  if (cached && Date.now() - cached.at < UPLOAD_INFO_TTL_MS) return cached.info;
+  let job = uploadInfoJobs.get(fileName);
+  if (!job) {
+    job = readUploadInfo(fileName).finally(() => uploadInfoJobs.delete(fileName));
+    uploadInfoJobs.set(fileName, job);
+  }
+  const info = await job;
+  if (uploadInfoCache.size >= 2048) uploadInfoCache.delete(uploadInfoCache.keys().next().value!);
+  if (info) uploadInfoCache.set(fileName, { info, at: Date.now() });
+  return info;
+}
+
+async function readUploadInfo(fileName: string): Promise<UploadInfo | null> {
   if (s3Enabled) {
     const stored = await headObject(`uploads/${fileName}`);
     if (!stored) return null;
@@ -700,12 +733,14 @@ function isJpegFile(filePath: string) {
   }
 }
 
-/** Synchronous ffmpeg JPEG resize — only for the (rare) first thumb hit. */
-function resizeThumbSync(source: string, target: string, width: number) {
+/** ffmpeg resize off the request path so the first view is not stuck on a thumb. */
+function resizeThumb(source: string, target: string, width: number) {
   const tmp = `${target}.tmp`;
   const side = Math.max(32, Math.min(1080, Math.round(width) || 430));
-  try {
-    const result = spawnSync(
+  return new Promise<boolean>((resolve) => {
+    let stderr = "";
+    let settled = false;
+    const child = spawn(
       "ffmpeg",
       [
         "-y",
@@ -723,30 +758,47 @@ function resizeThumbSync(source: string, target: string, width: number) {
         "image2",
         tmp,
       ],
-      { timeout: 15_000, stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
+      { stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
     );
-    if (result.status === 0 && existsSync(tmp) && isJpegFile(tmp)) {
-      renameSync(tmp, target);
-      return true;
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(false);
+    }, 15_000);
+    function finish(ok: boolean) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!ok) {
+        try {
+          unlinkSync(tmp);
+        } catch {
+          /* ignore */
+        }
+      }
+      resolve(ok);
     }
-    console.error(
-      "[thumbs] ffmpeg failed",
-      "status:",
-      result.status,
-      "err:",
-      result.error?.message || "",
-      "stderr:",
-      String(result.stderr || "").slice(-200),
-    );
-  } catch (error) {
-    console.error("[thumbs] spawn error", (error as Error).message);
-  }
-  try {
-    unlinkSync(tmp);
-  } catch {
-    /* ignore */
-  }
-  return false;
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-200);
+    });
+    child.on("error", (error) => {
+      console.error("[thumbs] spawn error", error.message);
+      finish(false);
+    });
+    child.on("close", (status) => {
+      if (status === 0 && existsSync(tmp) && isJpegFile(tmp)) {
+        try {
+          renameSync(tmp, target);
+          finish(true);
+          return;
+        } catch (error) {
+          console.error("[thumbs] rename failed", (error as Error).message);
+        }
+      } else if (status !== 0) {
+        console.error("[thumbs] ffmpeg failed", "status:", status, "stderr:", stderr);
+      }
+      finish(false);
+    });
+  });
 }
 
 export function sweepOrphanUploads(
@@ -849,6 +901,29 @@ async function serveUpload(req: IncomingMessage, res: ServerResponse) {
   }
 
   const size = info.size;
+  if (parsed.searchParams.get("waveform") === "1") {
+    if (size > 64 * 1024 * 1024 || !INLINE_MEDIA_EXT.has(ext) || looksImage) {
+      res.writeHead(422, { "Cache-Control": "no-store" });
+      res.end();
+      return;
+    }
+    const waveform = await audioWaveform(fileName, (consume) => withUploadFile(bare, consume));
+    if (res.destroyed) return;
+    if (!waveform) {
+      res.writeHead(503, { "Cache-Control": "no-store", "Retry-After": "5" });
+      res.end();
+      return;
+    }
+    const body = JSON.stringify(waveform);
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Length": Buffer.byteLength(body),
+      "Cache-Control": "private, max-age=86400",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end(req.method === "HEAD" ? undefined : body);
+    return;
+  }
   const isVoiceName = /^voice[-_]/i.test(original);
   let mime = info.mime;
   if (looksImage && !mime.startsWith("image/")) {
@@ -878,17 +953,19 @@ async function serveUpload(req: IncomingMessage, res: ServerResponse) {
   const disposition = `${forceAttach ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(original)}`;
   const isVideo = mime.startsWith("video/");
 
-  // Thumbnail proxy: ?w=… serves a cached resized JPEG (photos only).
+  // Thumbnail proxy: a ready thumb is served immediately. A miss falls
+  // through to the original so the chat is not stuck on ffmpeg.
   const wantW = parsed.searchParams.get("w");
   if (
     wantW &&
     THUMB_WIDTHS.has(wantW) &&
     looksImage &&
-    (ext === ".jpg" || ext === ".jpeg") &&
-    size > 120_000 // small files already stream fine
+    THUMB_SOURCE_EXT.has(ext) &&
+    size > 120_000
   ) {
     const thumbName = `${fileName}.w${wantW}.jpg`;
-    const thumbSize = await ensureThumbnail(fileName, thumbName, Number(wantW));
+    const thumbSize = await readyThumbnailSize(thumbName);
+    if (thumbSize <= 0) scheduleThumbnail(fileName, thumbName, Number(wantW));
     if (thumbSize > 0) {
       const headers = {
           "Content-Type": "image/jpeg",
@@ -976,32 +1053,39 @@ async function serveUpload(req: IncomingMessage, res: ServerResponse) {
   return true;
 }
 
-const thumbnailJobs = new Map<string, Promise<number>>();
-function ensureThumbnail(fileName: string, thumbName: string, width: number) {
-  const existing = thumbnailJobs.get(thumbName);
-  if (existing) return existing;
+const thumbnailJobs = new Map<string, Promise<void>>();
+
+async function readyThumbnailSize(thumbName: string) {
+  const key = `uploads/thumbs/${thumbName}`;
+  const target = path.join(THUMB_DIR, thumbName);
+  if (s3Enabled) {
+    const remote = await headObject(key);
+    return remote?.ContentLength || 0;
+  }
+  if (existsSync(target) && isJpegFile(target)) return statSync(target).size;
+  return 0;
+}
+
+function scheduleThumbnail(fileName: string, thumbName: string, width: number) {
+  if (thumbnailJobs.has(thumbName)) return;
+  if (!rateLimit("thumb-gen", 120, 60_000)) return;
   const job = (async () => {
     const key = `uploads/thumbs/${thumbName}`;
     const target = path.join(THUMB_DIR, thumbName);
-    if (s3Enabled) {
-      const remote = await headObject(key);
-      if (remote) return remote.ContentLength || 0;
-    } else if (existsSync(target) && isJpegFile(target)) {
-      return statSync(target).size;
-    }
-    if (!rateLimit("thumb-gen", 120, 60_000)) return 0;
+    if ((await readyThumbnailSize(thumbName)) > 0) return;
     try {
-      const ok = await withUploadFile(`/uploads/${fileName}`, (source) => resizeThumbSync(source, target, width));
-      if (!ok) return 0;
-      const size = statSync(target).size;
+      const ok = await withUploadFile(`/uploads/${fileName}`, (source) =>
+        resizeThumb(source, target, width),
+      );
+      if (!ok) return;
       if (s3Enabled) await putObjectFile(key, target, "image/jpeg", { image: "true" });
-      return size;
+    } catch (error) {
+      console.error("[thumbs] generate failed", (error as Error).name);
     } finally {
       if (s3Enabled) cleanupPath(target);
     }
   })().finally(() => thumbnailJobs.delete(thumbName));
   thumbnailJobs.set(thumbName, job);
-  return job;
 }
 
 export function handleUpload(req: IncomingMessage, res: ServerResponse) {
@@ -1211,6 +1295,7 @@ export function handleUpload(req: IncomingMessage, res: ServerResponse) {
             await putObjectFile(`uploads/${finalStored}`, finalPath, savedMime, {
               image: String(looksLikeImage(finalPath)),
             });
+            forgetUploadInfo(finalStored);
           }
           const displaySource = originalNameField || original;
           saved = {
@@ -1219,14 +1304,23 @@ export function handleUpload(req: IncomingMessage, res: ServerResponse) {
             size: finalSize,
             mime: savedMime,
           };
+          const wavePromise =
+            savedMime.startsWith("audio/") && finalSize <= 64 * 1024 * 1024
+              ? audioWaveform(finalStored, (consume) => consume(finalPath))
+              : null;
           if (transcode) {
-            scheduleBrowserVideoTranscode(finalPath, savedMime, s3Enabled ? async (convertedPath, changed) => {
-              if (changed) await putObjectFile(`uploads/${finalStored}`, convertedPath, "video/mp4", { image: "false" });
+            scheduleBrowserVideoTranscode(finalPath, savedMime, async (convertedPath, changed) => {
+              if (changed) forgetUploadInfo(finalStored);
+              if (!s3Enabled) return;
+              if (changed) {
+                await putObjectFile(`uploads/${finalStored}`, convertedPath, "video/mp4", { image: "false" });
+              }
               cleanupPath(convertedPath);
               if (convertedPath !== finalPath) cleanupPath(finalPath);
-            } : undefined);
+            });
           } else if (s3Enabled) {
-            cleanupPath(finalPath);
+            if (wavePromise) void wavePromise.finally(() => cleanupPath(finalPath));
+            else cleanupPath(finalPath);
           }
           resolve();
         })().catch((error) => {
@@ -1414,7 +1508,10 @@ function scheduleStoredVideoTranscode(stored: string, mime: string) {
   void (async () => {
     const source = await downloadObjectToTemp(key);
     scheduleBrowserVideoTranscode(source, mime, async (convertedPath, changed) => {
-      if (changed) await putObjectFile(key, convertedPath, "video/mp4", { image: "false" });
+      if (changed) {
+        await putObjectFile(key, convertedPath, "video/mp4", { image: "false" });
+        forgetUploadInfo(stored);
+      }
       cleanupPath(convertedPath);
       if (convertedPath !== source) cleanupPath(source);
     });
