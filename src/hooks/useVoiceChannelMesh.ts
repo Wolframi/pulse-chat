@@ -18,8 +18,9 @@ import {
   attachLocalVideoTrackByHint,
   applyVideoSenderParams,
   CAMERA_SEND_PARAMS,
-  CAMERA_VIDEO_CONSTRAINTS,
+  openCameraStream,
   captureScreenShare,
+  noteRemotePresentation,
   detachLocalScreenAudioTrack,
   detachLocalVideoTrackByHint,
   optimizePeerConnection,
@@ -221,18 +222,11 @@ export function useVoiceChannelMesh({
       const videoTracks = receiverTracks.filter(
         (track) => track.kind === "video",
       );
-      const eventVideo =
-        eventTrack?.kind === "video" ? eventTrack : undefined;
-      // Rollback/glare can leave an inactive receiver before the actual
-      // mobile video receiver. A video element renders only its first video
-      // track, so publish exactly the receiver that is carrying frames.
-      const videoTrack =
-        videoTracks.find((track) => !track.muted) ||
-        eventVideo ||
-        videoTracks[videoTracks.length - 1];
-      const tracks = [...audioTracks, videoTrack].filter(
-        (track): track is MediaStreamTrack => Boolean(track),
-      );
+      const audible = videoTracks.filter((track) => !track.muted);
+      const chosenVideos = audible.length
+        ? audible
+        : videoTracks.slice(-1);
+      const tracks = [...audioTracks, ...chosenVideos];
 
       let stream = remoteStreamsRef.current.get(peerId);
       if (!stream) {
@@ -246,6 +240,7 @@ export function useVoiceChannelMesh({
       for (const track of tracks) {
         if (!stream.getTrackById(track.id)) stream.addTrack(track);
       }
+      if (chosenVideos.length > 1) noteRemotePresentation(stream, true);
 
       if (audioTracks.length) {
         const audio = ensureRemoteAudio(peerId);
@@ -855,10 +850,7 @@ export function useVoiceChannelMesh({
         }
         if (!keepCameraOff) {
           try {
-            const cam = await navigator.mediaDevices.getUserMedia({
-              video: CAMERA_VIDEO_CONSTRAINTS,
-              audio: false,
-            });
+            const cam = await openCameraStream();
             const track = cam.getVideoTracks()[0];
             if (track) {
               prepareCameraTrack(track);
@@ -1098,10 +1090,7 @@ export function useVoiceChannelMesh({
         let track = cameraTrackRef.current;
         if (!track || track.readyState === "ended") {
           try {
-            const cam = await navigator.mediaDevices.getUserMedia({
-              video: CAMERA_VIDEO_CONSTRAINTS,
-              audio: false,
-            });
+            const cam = await openCameraStream();
             track = cam.getVideoTracks()[0];
             if (!track) throw new Error("no-video");
             cameraTrackRef.current = track;
@@ -1475,6 +1464,8 @@ export function useVoiceChannelMesh({
 
       if (type === "screen-on") {
         patchPeerMedia(fromUserId, { sharingScreen: true, cameraOff: true });
+        const shared = remoteStreamsRef.current.get(fromUserId);
+        if (shared) noteRemotePresentation(shared, true);
         scheduleRemoteSync(fromUserId);
         return;
       }

@@ -191,6 +191,8 @@ export function ChatApp() {
     toggleDeafen,
     toggleNoiseFilter,
     toggleCamera,
+    flipCamera,
+    canFlipCamera,
     toggleScreenShare,
     setMinimized,
   } = useCall({
@@ -1554,6 +1556,8 @@ export function ChatApp() {
         onToggleDeafen={toggleDeafen}
         onToggleNoiseFilter={toggleNoiseFilter}
         onToggleCamera={toggleCamera}
+        onFlipCamera={flipCamera}
+        canFlipCamera={canFlipCamera}
         onToggleScreenShare={toggleScreenShare}
         onToggleMinimized={() => setMinimized((value) => !value)}
         onExpandCall={() => {
@@ -1584,6 +1588,8 @@ export function ChatApp() {
         onToggleDeafen={voice.toggleDeafen}
         onToggleNoiseFilter={voice.toggleNoiseFilter}
         onToggleCamera={voice.toggleCamera}
+        onFlipCamera={voice.flipCamera}
+        canFlipCamera={voice.canFlipCamera}
         onToggleScreenShare={voice.toggleScreenShare}
         onToggleMinimized={() => voice.setMinimized((value) => !value)}
         onExpand={() => {

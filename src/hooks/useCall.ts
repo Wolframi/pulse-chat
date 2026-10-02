@@ -26,12 +26,14 @@ import {
   attachLocalVideoTrackByHint,
   callNetworkLevel,
   CAMERA_SEND_PARAMS,
-  CAMERA_VIDEO_CONSTRAINTS,
   captureScreenShare,
   detachLocalScreenAudioTrack,
   detachLocalVideoTrackByHint,
   emptyCallStatsCursor,
+  noteRemotePresentation,
+  openCameraStream,
   optimizePeerConnection,
+  phoneCanFlipCamera,
   prepareCameraTrack,
   prepareScreenTrack,
   readCallNetworkSample,
@@ -39,10 +41,12 @@ import {
   replaceAudioSenders,
   SCREEN_SEND_PARAMS,
   setLocalDescriptionTuned,
+  splitCallAudioTracks,
   videoQualityForCall,
   withReplacedAudioTrack,
   type CallNetworkLevel,
   type CallStatsCursor,
+  type CameraFacing,
 } from "@/lib/webrtcMedia";
 import {
   captureFilteredMic,
@@ -204,15 +208,6 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
   const [noiseFilterKind, setNoiseFilterKind] =
     useState<NoiseFilterKind>("browser");
   const [remoteSharingScreen, setRemoteSharingScreen] = useState(false);
-
-  // Пока собеседник демонстрирует экран — его аудио участвует в ручке
-  // громкости демонстрации.
-  useEffect(() => {
-    const element = remoteAudioRef.current;
-    if (!element || !remoteSharingScreen) return;
-    registerScreenAudio(element, peerRef.current?.peerId || "remote");
-    return () => unregisterScreenAudio(element);
-  }, [remoteSharingScreen]);
   const [remoteCameraOff, setRemoteCameraOff] = useState(true);
   const [minimized, setMinimized] = useState(false);
   const [status, setStatus] = useState("");
@@ -233,7 +228,12 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     null,
   );
   const lastMediaRequestRef = useRef({ revision: -1, at: 0 });
-  const videoQualityKeyRef = useRef("");
+  const videoQualityKeyRef = useRef<Record<string, string>>({});
+  const cameraFacingRef = useRef<CameraFacing>("user");
+  const remoteSharingScreenRef = useRef(false);
+  const remoteScreenAudioIdsRef = useRef(new Set<string>());
+  const screenAudioElRef = useRef<HTMLAudioElement | null>(null);
+  const [canFlipCamera, setCanFlipCamera] = useState(false);
   const statsCursorRef = useRef<CallStatsCursor>(emptyCallStatsCursor());
   const lastNetworkRef = useRef<{
     rttMs: number;
@@ -324,15 +324,37 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     setNetworkQuality(null);
     setLocalSpeaking(false);
     setRemoteSpeaking(false);
-    videoQualityKeyRef.current = "";
+    videoQualityKeyRef.current = {};
     statsCursorRef.current = emptyCallStatsCursor();
     lastNetworkRef.current = null;
+  }, []);
+
+  const ensureScreenAudioEl = useCallback(() => {
+    const existing = screenAudioElRef.current;
+    if (existing) return existing;
+    const audio = document.createElement("audio");
+    audio.autoplay = true;
+    audio.hidden = true;
+    audio.setAttribute("playsinline", "");
+    document.body.appendChild(audio);
+    screenAudioElRef.current = audio;
+    return audio;
+  }, []);
+
+  const stopScreenAudioEl = useCallback(() => {
+    const audio = screenAudioElRef.current;
+    if (!audio) return;
+    unregisterScreenAudio(audio);
+    audio.srcObject = null;
+    audio.remove();
+    screenAudioElRef.current = null;
   }, []);
 
   const publishRemoteStream = useCallback(() => {
     const stream = remoteStreamRef.current;
     if (!stream) {
       setRemoteStream(null);
+      stopScreenAudioEl();
       return;
     }
     const liveTracks = stream
@@ -340,24 +362,52 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
       .filter((track) => track.readyState === "live");
     const audioTracks = liveTracks.filter((track) => track.kind === "audio");
     const videoTracks = liveTracks.filter((track) => track.kind === "video");
-    const videoTrack =
-      videoTracks.find((track) => !track.muted) ||
-      videoTracks[videoTracks.length - 1];
-    const clone = new MediaStream(
-      [...audioTracks, videoTrack].filter(
-        (track): track is MediaStreamTrack => Boolean(track),
-      ),
+    const audible = videoTracks.filter((track) => !track.muted);
+    const chosenVideos = audible.length ? audible : videoTracks.slice(-1);
+    const { voice, screen } = splitCallAudioTracks(
+      audioTracks,
+      remoteScreenAudioIdsRef.current,
     );
+    const clone = new MediaStream([...voice, ...chosenVideos]);
+    noteRemotePresentation(clone, chosenVideos.length > 1);
     setRemoteStream(clone);
     if (remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = clone;
+      remoteAudioRef.current.srcObject = new MediaStream(voice);
       remoteAudioRef.current.muted = deafenedRef.current;
       void applyAudioOutput(remoteAudioRef.current);
-      if (!deafenedRef.current) {
+      if (!deafenedRef.current && voice.length) {
         void remoteAudioRef.current.play().catch(() => undefined);
       }
     }
-  }, []);
+    if (!screen.length) {
+      const audio = screenAudioElRef.current;
+      if (audio) {
+        unregisterScreenAudio(audio);
+        audio.srcObject = null;
+      }
+      return;
+    }
+    const screenAudio = ensureScreenAudioEl();
+    const currentIds = (screenAudio.srcObject as MediaStream | null)
+      ?.getAudioTracks()
+      .map((track) => track.id)
+      .join("|");
+    const nextIds = screen.map((track) => track.id).join("|");
+    if (currentIds !== nextIds) {
+      screenAudio.srcObject = new MediaStream(screen);
+    }
+    screenAudio.muted = deafenedRef.current;
+    registerScreenAudio(screenAudio, peerRef.current?.peerId || "remote");
+    void applyAudioOutput(screenAudio);
+    if (!deafenedRef.current) {
+      void screenAudio.play().catch(() => undefined);
+    }
+  }, [ensureScreenAudioEl, stopScreenAudioEl]);
+
+  useEffect(() => {
+    remoteSharingScreenRef.current = remoteSharingScreen;
+    publishRemoteStream();
+  }, [publishRemoteStream, remoteSharingScreen]);
 
   const adaptVideoQuality = useCallback(
     async (level: CallNetworkLevel) => {
@@ -374,9 +424,9 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
       ) => {
         if (!sender?.track) return;
         const next = videoQualityForCall(kind, level, hidden);
-        const key = `${kind}:${next.label}:${hidden ? "hid" : "vis"}`;
-        if (videoQualityKeyRef.current === key) return;
-        videoQualityKeyRef.current = key;
+        const key = `${next.label}:${hidden ? "hid" : "vis"}`;
+        if (videoQualityKeyRef.current[kind] === key) return;
+        videoQualityKeyRef.current[kind] = key;
         await applyVideoSenderParams(sender, {
           maxBitrate: next.maxBitrate,
           maxFramerate: next.maxFramerate,
@@ -403,7 +453,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
           item.track === cameraTrackRef.current,
       );
       if (screenSender) await applyKind("screen", screenSender);
-      else if (cameraSender) await applyKind("camera", cameraSender);
+      if (cameraSender) await applyKind("camera", cameraSender);
     },
     [],
   );
@@ -613,6 +663,8 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
     }
+    stopScreenAudioEl();
+    remoteScreenAudioIdsRef.current.clear();
     const filter = noiseFilterRef.current;
     noiseFilterRef.current = null;
     void stopNoiseFilter(filter);
@@ -666,7 +718,9 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     localMediaRevisionRef.current = 0;
     remoteMediaRevisionRef.current = -1;
     lastMediaRequestRef.current = { revision: -1, at: 0 };
-  }, [clearTimers, stopScreenShare]);
+    remoteSharingScreenRef.current = false;
+    cameraFacingRef.current = "user";
+  }, [clearTimers, stopScreenAudioEl, stopScreenShare]);
 
   const cleanupRef = useRef(cleanup);
   cleanupRef.current = cleanup;
@@ -696,6 +750,9 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     if (remoteAudioRef.current) {
       remoteAudioRef.current.srcObject = null;
     }
+    stopScreenAudioEl();
+    remoteScreenAudioIdsRef.current.clear();
+    remoteSharingScreenRef.current = false;
     pendingIceRef.current = [];
     pendingOfferRef.current = null;
     remoteReadyRef.current = false;
@@ -708,7 +765,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     setRemoteSpeaking(false);
     setStatus("Собеседник вышел");
     scheduleCleanup(1200);
-  }, [scheduleCleanup]);
+  }, [scheduleCleanup, stopScreenAudioEl]);
 
   const markConnected = useCallback(() => {
     if (peerReturnTimerRef.current) {
@@ -1487,6 +1544,10 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
         remoteAudioRef.current.muted = false;
         void remoteAudioRef.current.play().catch(() => undefined);
       }
+      if (screenAudioElRef.current) {
+        screenAudioElRef.current.muted = false;
+        void screenAudioElRef.current.play().catch(() => undefined);
+      }
     }
   }, [muted]);
 
@@ -1497,6 +1558,10 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     if (remoteAudioRef.current) {
       remoteAudioRef.current.muted = next;
       if (!next) void remoteAudioRef.current.play().catch(() => undefined);
+    }
+    if (screenAudioElRef.current) {
+      screenAudioElRef.current.muted = next;
+      if (!next) void screenAudioElRef.current.play().catch(() => undefined);
     }
     if (next) {
       if (!muted) {
@@ -1588,12 +1653,10 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
       let track = cameraTrackRef.current;
       if (!track || track.readyState === "ended") {
         try {
-          const cam = await navigator.mediaDevices.getUserMedia({
-            video: CAMERA_VIDEO_CONSTRAINTS,
-            audio: false,
-          });
+          const cam = await openCameraStream(cameraFacingRef.current);
           track = cam.getVideoTracks()[0];
           if (!track) throw new Error("no-video");
+          setCanFlipCamera(await phoneCanFlipCamera());
           prepareCameraTrack(track);
           track.onended = () => {
             if (cameraTrackRef.current !== track) return;
@@ -1639,7 +1702,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
             maxBitrate: CAMERA_SEND_PARAMS.maxBitrate,
             maxFramerate: CAMERA_SEND_PARAMS.maxFramerate,
           });
-          videoQualityKeyRef.current = "";
+          videoQualityKeyRef.current = {};
         }
       } catch {
         /* keep local preview even if renegotiation lags */
@@ -1686,6 +1749,56 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
       setMediaBusy(false);
     }
   }, [performToggleCamera]);
+
+  const flipCamera = useCallback(async () => {
+    if (mediaBusyRef.current || cameraWasOffRef.current) return;
+    const pc = pcRef.current;
+    const previous = cameraTrackRef.current;
+    const nextFacing: CameraFacing =
+      cameraFacingRef.current === "user" ? "environment" : "user";
+    mediaBusyRef.current = true;
+    setMediaBusy(true);
+    try {
+      const cam = await openCameraStream(nextFacing);
+      const track = cam.getVideoTracks()[0];
+      if (!track) throw new Error("no-video");
+      prepareCameraTrack(track);
+      track.onended = () => {
+        if (cameraTrackRef.current !== track) return;
+        cameraTrackRef.current = null;
+        cameraWasOffRef.current = true;
+        setCameraOff(true);
+        localCameraOffRef.current = true;
+        setStatus("Камера отключена");
+        publishLocalVideos();
+        const endedPc = pcRef.current;
+        if (endedPc) void detachLocalVideoTrackByHint(endedPc, "motion");
+      };
+      cameraFacingRef.current = nextFacing;
+      cameraTrackRef.current = track;
+      previous?.stop();
+      const media = publishLocalVideos();
+      if (pc) {
+        const sender = await attachLocalVideoTrackByHint(
+          pc,
+          track,
+          media,
+          "motion",
+        );
+        await applyVideoSenderParams(sender, {
+          maxBitrate: CAMERA_SEND_PARAMS.maxBitrate,
+          maxFramerate: CAMERA_SEND_PARAMS.maxFramerate,
+        });
+        videoQualityKeyRef.current = {};
+      }
+      setCanFlipCamera(true);
+    } catch {
+      setStatus("Не удалось переключить камеру");
+    } finally {
+      mediaBusyRef.current = false;
+      setMediaBusy(false);
+    }
+  }, [applyVideoSenderParams, publishLocalVideos]);
 
   const performToggleScreenShare = useCallback(async () => {
     const peer = peerRef.current;
@@ -1737,7 +1850,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
           maxFramerate: SCREEN_SEND_PARAMS.maxFramerate,
           maintainResolution: true,
         });
-        videoQualityKeyRef.current = "";
+        videoQualityKeyRef.current = {};
         if (screenAudio) {
           await attachLocalScreenAudioTrack(pc, screenAudio, media);
         }
@@ -1832,7 +1945,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
             maxBitrate: CAMERA_SEND_PARAMS.maxBitrate,
             maxFramerate: CAMERA_SEND_PARAMS.maxFramerate,
           });
-          videoQualityKeyRef.current = "";
+          videoQualityKeyRef.current = {};
         }
         if (screen) {
           const sender = await attachLocalVideoTrackByHint(
@@ -1846,7 +1959,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
             maxFramerate: SCREEN_SEND_PARAMS.maxFramerate,
             maintainResolution: true,
           });
-          videoQualityKeyRef.current = "";
+          videoQualityKeyRef.current = {};
         }
         emitCurrentMediaState(!camera, Boolean(screen));
 
@@ -2359,9 +2472,10 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
       if (document.visibilityState === "hidden") return;
       publishRemoteStream();
       void remoteAudioRef.current?.play().catch(() => undefined);
+      void screenAudioElRef.current?.play().catch(() => undefined);
     };
     const onVisibility = () => {
-      videoQualityKeyRef.current = "";
+      videoQualityKeyRef.current = {};
       void adaptVideoQuality(lastNetworkRef.current?.level || "good");
       resumeRemoteMedia();
     };
@@ -2423,6 +2537,8 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     toggleDeafen,
     toggleNoiseFilter,
     toggleCamera,
+    flipCamera,
+    canFlipCamera,
     toggleScreenShare,
     setMinimized,
   };

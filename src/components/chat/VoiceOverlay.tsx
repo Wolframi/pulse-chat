@@ -13,6 +13,7 @@ import type { VoiceChannelUser } from "@/lib/types";
 import {
   IconCamera,
   IconCameraOff,
+  IconSwitchCamera,
   IconExpand,
   IconHeadphones,
   IconMic,
@@ -67,6 +68,8 @@ type VoiceOverlayProps = {
   onToggleDeafen: () => void;
   onToggleNoiseFilter?: () => void;
   onToggleCamera: () => void;
+  onFlipCamera?: () => void;
+  canFlipCamera?: boolean;
   onToggleScreenShare: () => void;
   onToggleMinimized: () => void;
   onExpand?: () => void;
@@ -290,6 +293,8 @@ function VoiceStagePanel({
   onToggleDeafen,
   onToggleNoiseFilter,
   onToggleCamera,
+  onFlipCamera,
+  canFlipCamera = false,
   onToggleScreenShare,
   onToggleMinimized,
   dock = false,
@@ -610,6 +615,18 @@ function VoiceStagePanel({
           >
             {cameraOff ? <IconCameraOff size={20} /> : <IconCamera size={20} />}
           </button>
+          {canFlipCamera && !cameraOff && onFlipCamera ? (
+            <button
+              type="button"
+              className="call__btn call__btn--circle"
+              onClick={onFlipCamera}
+              disabled={mediaBusy}
+              aria-label="Переключить камеру"
+              title="Переключить камеру"
+            >
+              <IconSwitchCamera size={20} />
+            </button>
+          ) : null}
           <button
             type="button"
             className={`call__btn call__btn--circle ${sharingScreen ? "is-on" : ""}`}
@@ -679,6 +696,8 @@ export function VoiceOverlay({
   onToggleDeafen,
   onToggleNoiseFilter,
   onToggleCamera,
+  onFlipCamera,
+  canFlipCamera = false,
   onToggleScreenShare,
   onToggleMinimized,
   onExpand,
@@ -803,6 +822,8 @@ export function VoiceOverlay({
               onToggleDeafen={onToggleDeafen}
               onToggleNoiseFilter={onToggleNoiseFilter}
               onToggleCamera={onToggleCamera}
+              onFlipCamera={onFlipCamera}
+              canFlipCamera={canFlipCamera}
               onToggleScreenShare={onToggleScreenShare}
               onToggleMinimized={onToggleMinimized}
               dock

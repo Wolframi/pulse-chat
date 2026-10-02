@@ -14,6 +14,7 @@ import type { CallMode, IncomingCall } from "@/lib/types";
 import {
   IconCamera,
   IconCameraOff,
+  IconSwitchCamera,
   IconExpand,
   IconMic,
   IconMicOff,
@@ -97,6 +98,8 @@ type CallMediaProps = {
   onToggleDeafen?: () => void;
   onToggleNoiseFilter?: () => void;
   onToggleCamera: () => void;
+  onFlipCamera?: () => void;
+  canFlipCamera?: boolean;
   onToggleScreenShare: () => void;
   onToggleMinimized: () => void;
   /** Open the call's chat when expanding from the floating bar */
@@ -134,6 +137,8 @@ type CallOverlayProps = {
   onToggleDeafen?: () => void;
   onToggleNoiseFilter?: () => void;
   onToggleCamera: () => void;
+  onFlipCamera?: () => void;
+  canFlipCamera?: boolean;
   onToggleScreenShare: () => void;
   onToggleMinimized: () => void;
   onExpandCall?: () => void;
@@ -186,6 +191,8 @@ export function CallPanel({
   onToggleDeafen,
   onToggleNoiseFilter,
   onToggleCamera,
+  onFlipCamera,
+  canFlipCamera = false,
   onToggleScreenShare,
   onToggleMinimized,
   dock = false,
@@ -460,6 +467,18 @@ export function CallPanel({
               <IconCamera size={20} />
             )}
           </button>
+          {canFlipCamera && !cameraOff && onFlipCamera ? (
+            <button
+              type="button"
+              className="call__btn call__btn--circle"
+              onClick={onFlipCamera}
+              disabled={mediaBusy}
+              aria-label="Переключить камеру"
+              title="Переключить камеру"
+            >
+              <IconSwitchCamera size={20} />
+            </button>
+          ) : null}
           {remoteIsScreen ? <ScreenVolumeKnob owner={active.peerId} /> : null}
           <button
             type="button"
@@ -598,6 +617,8 @@ export function CallOverlay({
   onToggleDeafen,
   onToggleNoiseFilter,
   onToggleCamera,
+  onFlipCamera,
+  canFlipCamera = false,
   onToggleScreenShare,
   onToggleMinimized,
   onExpandCall,
@@ -771,6 +792,8 @@ export function CallOverlay({
               onToggleDeafen={onToggleDeafen}
               onToggleNoiseFilter={onToggleNoiseFilter}
               onToggleCamera={onToggleCamera}
+              onFlipCamera={onFlipCamera}
+              canFlipCamera={canFlipCamera}
               onToggleScreenShare={onToggleScreenShare}
               onToggleMinimized={onToggleMinimized}
               dock

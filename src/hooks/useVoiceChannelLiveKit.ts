@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AudioPresets,
   LocalAudioTrack,
+  LocalVideoTrack,
   Room,
   RoomEvent,
+  ScreenSharePresets,
   Track,
   VideoPresets,
   VideoQuality,
@@ -36,6 +38,15 @@ import {
   type VoiceSettingsChange,
 } from "@/lib/mediaDevices";
 import { registerScreenAudio, unregisterScreenAudio } from "@/lib/screenAudio";
+import {
+  CAMERA_SEND_PARAMS,
+  SCREEN_SEND_PARAMS,
+  captureScreenShare,
+  phoneCanFlipCamera,
+  prepareScreenAudioTrack,
+  prepareScreenTrack,
+  type CameraFacing,
+} from "@/lib/webrtcMedia";
 import {
   configureSpeakingAnalyser,
   createSpeakingSamples,
@@ -71,58 +82,49 @@ type LiveKitTokenResponse = {
   error?: string;
 };
 
-const CAMERA_CAPTURE = {
-  resolution: VideoPresets.h720.resolution,
-  frameRate: 24,
-  facingMode: "user" as const,
-};
+function cameraCapture(facing: CameraFacing, tier: "high" | "mid" = "high") {
+  const resolution =
+    tier === "high"
+      ? VideoPresets.h1080.resolution
+      : VideoPresets.h720.resolution;
+  return {
+    resolution,
+    frameRate: tier === "high" ? 30 : 24,
+    facingMode: facing,
+  };
+}
 
-const SCREEN_SHARE_CAPTURE = {
-  audio: true,
-  resolution: VideoPresets.h720.resolution,
-  contentHint: "detail" as const,
-  systemAudio: "include" as const,
-  suppressLocalAudioPlayback: true,
-};
-
-const SCREEN_SHARE_CAPTURE_SIMPLE = {
-  audio: true,
-  resolution: VideoPresets.h720.resolution,
-  contentHint: "detail" as const,
-};
-
-const SCREEN_SHARE_CAPTURE_VIDEO_ONLY = {
-  audio: false,
-  resolution: VideoPresets.h720.resolution,
-  contentHint: "detail" as const,
-};
-
-const SCREEN_SHARE_PUBLISH = {
+const SCREEN_VIDEO_PUBLISH = {
+  source: Track.Source.ScreenShare,
   // Simulcast layers for screen share often never appear on LiveKit 1.8
   // (subscribers get notFoundTimeout / empty stage).
   simulcast: false,
   degradationPreference: "maintain-resolution" as const,
   videoEncoding: {
-    maxBitrate: 2_500_000,
-    maxFramerate: 24,
+    maxBitrate: SCREEN_SEND_PARAMS.maxBitrate,
+    maxFramerate: SCREEN_SEND_PARAMS.maxFramerate,
+  },
+  screenShareEncoding: {
+    maxBitrate: SCREEN_SEND_PARAMS.maxBitrate,
+    maxFramerate: SCREEN_SEND_PARAMS.maxFramerate,
   },
 };
 
 const ROOM_PUBLISH_DEFAULTS = {
-  audioPreset: AudioPresets.speech,
+  audioPreset: { maxBitrate: 64_000 },
   dtx: true,
-  red: false,
+  red: true,
   forceStereo: false,
   simulcast: true,
   videoCodec: "vp8" as const,
   videoEncoding: {
-    maxBitrate: 1_500_000,
-    maxFramerate: 24,
+    maxBitrate: CAMERA_SEND_PARAMS.maxBitrate,
+    maxFramerate: CAMERA_SEND_PARAMS.maxFramerate,
   },
-  videoSimulcastLayers: [VideoPresets.h180, VideoPresets.h360],
+  videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h720],
   screenShareEncoding: {
-    maxBitrate: 2_500_000,
-    maxFramerate: 24,
+    maxBitrate: ScreenSharePresets.h1080fps30.encoding.maxBitrate,
+    maxFramerate: ScreenSharePresets.h1080fps30.encoding.maxFramerate,
   },
   screenShareSimulcastLayers: [],
 };
@@ -139,37 +141,58 @@ function markAsScreenTrack(track: MediaStreamTrack | undefined) {
 }
 
 async function enableLiveKitScreenShare(room: Room) {
+  const display = await captureScreenShare();
+  const videoTrack = display.getVideoTracks()[0];
+  if (!videoTrack) {
+    display.getTracks().forEach((track) => track.stop());
+    throw new Error("screen-share-failed");
+  }
+  prepareScreenTrack(videoTrack);
+  const audioTrack = display.getAudioTracks()[0] || null;
+  try {
+    await room.localParticipant.publishTrack(videoTrack, SCREEN_VIDEO_PUBLISH);
+  } catch (error) {
+    display.getTracks().forEach((track) => track.stop());
+    throw error;
+  }
+  markAsScreenTrack(videoTrack);
+  if (!audioTrack) return;
+  prepareScreenAudioTrack(audioTrack);
+  try {
+    await room.localParticipant.publishTrack(audioTrack, {
+      source: Track.Source.ScreenShareAudio,
+      audioPreset: AudioPresets.musicHighQualityStereo,
+      dtx: false,
+      forceStereo: true,
+      red: false,
+    });
+  } catch {
+    audioTrack.stop();
+  }
+}
+
+async function enableLiveKitCamera(room: Room, facing: CameraFacing) {
   const attempts = [
-    SCREEN_SHARE_CAPTURE,
-    SCREEN_SHARE_CAPTURE_SIMPLE,
-    SCREEN_SHARE_CAPTURE_VIDEO_ONLY,
+    cameraCapture(facing, "high"),
+    cameraCapture(facing, "mid"),
+    { facingMode: facing },
+    { frameRate: 30 },
   ];
   let lastError: unknown;
   for (const capture of attempts) {
     try {
-      await room.localParticipant.setScreenShareEnabled(
-        true,
-        capture,
-        SCREEN_SHARE_PUBLISH,
-      );
-      const live = room.localParticipant.getTrackPublication(
-        Track.Source.ScreenShare,
-      )?.track?.mediaStreamTrack;
-      if (live?.readyState === "live") {
-        markAsScreenTrack(live);
-        return;
-      }
+      await room.localParticipant.setCameraEnabled(true, capture, {
+        simulcast: true,
+      });
+      return;
     } catch (error) {
       lastError = error;
       const name = error instanceof Error ? error.name : "";
-      if (name === "NotAllowedError" || name === "AbortError") {
-        throw error;
-      }
+      if (name === "NotAllowedError" || name === "AbortError") throw error;
+      await room.localParticipant.setCameraEnabled(false).catch(() => undefined);
     }
   }
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("screen-share-failed");
+  throw lastError instanceof Error ? lastError : new Error("camera-unavailable");
 }
 
 function liveKitAudioCapture(micId = "") {
@@ -219,7 +242,9 @@ export function useVoiceChannelLiveKit({
   const mutedRef = useRef(false);
   const deafenedRef = useRef(false);
   const cameraOffRef = useRef(true);
+  const cameraFacingRef = useRef<CameraFacing>("user");
   const sharingScreenRef = useRef(false);
+  const [canFlipCamera, setCanFlipCamera] = useState(false);
   const mediaBusyRef = useRef(false);
   const audioBusyRef = useRef(false);
   const screenStopBusyRef = useRef(false);
@@ -434,6 +459,7 @@ export function useVoiceChannelLiveKit({
           // often comes back as a black frame after LiveKit resubscribe.
           if (source === Track.Source.ScreenShare) {
             publication.setEnabled(true);
+            publication.setVideoQuality(VideoQuality.HIGH);
             continue;
           }
           if (hidden) {
@@ -441,7 +467,7 @@ export function useVoiceChannelLiveKit({
             continue;
           }
           publication.setEnabled(true);
-          publication.setVideoQuality(VideoQuality.LOW);
+          publication.setVideoQuality(VideoQuality.HIGH);
         } catch {
           /* publication may already be detached */
         }
@@ -752,8 +778,8 @@ export function useVoiceChannelLiveKit({
             singlePeerConnection: false,
             audioCaptureDefaults: liveKitAudioCapture(validMicId),
             videoCaptureDefaults: {
-              resolution: VideoPresets.h720.resolution,
-              frameRate: 24,
+              resolution: VideoPresets.h1080.resolution,
+              frameRate: 30,
             },
             publishDefaults: ROOM_PUBLISH_DEFAULTS,
             stopLocalTrackOnUnpublish: true,
@@ -833,8 +859,8 @@ export function useVoiceChannelLiveKit({
           throw cancelled;
         }
         if (!keepCameraOff) {
-          await room.localParticipant
-            .setCameraEnabled(true, CAMERA_CAPTURE, { simulcast: true })
+          await enableLiveKitCamera(room, cameraFacingRef.current)
+            .then(async () => setCanFlipCamera(await phoneCanFlipCamera()))
             .catch(() => undefined);
         }
         if (keepSharing) {
@@ -1100,11 +1126,12 @@ export function useVoiceChannelLiveKit({
     setMediaBusy(true);
     try {
       const turningOn = cameraOffRef.current;
-      await room.localParticipant.setCameraEnabled(
-        turningOn,
-        CAMERA_CAPTURE,
-        { simulcast: true },
-      );
+      if (turningOn) {
+        await enableLiveKitCamera(room, cameraFacingRef.current);
+        setCanFlipCamera(await phoneCanFlipCamera());
+      } else {
+        await room.localParticipant.setCameraEnabled(false);
+      }
       if (roomRef.current !== room) {
         void room.disconnect(true).catch(() => undefined);
         return;
@@ -1121,6 +1148,37 @@ export function useVoiceChannelLiveKit({
       setMediaBusy(false);
     }
   }, [emitMediaState, syncLocalStream]);
+
+  const flipCamera = useCallback(async () => {
+    const room = roomRef.current;
+    if (!room || cameraOffRef.current || mediaBusyRef.current) return;
+    const publication = room.localParticipant.getTrackPublication(
+      Track.Source.Camera,
+    );
+    const track = publication?.track;
+    if (!(track instanceof LocalVideoTrack)) return;
+    const next: CameraFacing =
+      cameraFacingRef.current === "user" ? "environment" : "user";
+    mediaBusyRef.current = true;
+    setMediaBusy(true);
+    try {
+      try {
+        await track.restartTrack(cameraCapture(next, "high"));
+      } catch {
+        await track.restartTrack(cameraCapture(next, "mid"));
+      }
+      if (roomRef.current !== room) return;
+      cameraFacingRef.current = next;
+      setCanFlipCamera(true);
+      syncLocalStream(room);
+    } catch {
+      if (roomRef.current !== room) return;
+      setError("Не удалось переключить камеру");
+    } finally {
+      mediaBusyRef.current = false;
+      setMediaBusy(false);
+    }
+  }, [syncLocalStream]);
 
   const stopScreenShare = useCallback(async () => {
     const room = roomRef.current;
@@ -1510,6 +1568,8 @@ export function useVoiceChannelLiveKit({
     toggleDeafen,
     toggleNoiseFilter,
     toggleCamera,
+    flipCamera,
+    canFlipCamera,
     toggleScreenShare,
     setMinimized,
     clearError,

@@ -1,20 +1,34 @@
 /** Shared WebRTC media helpers for calls and voice channels. */
 
-export const CAMERA_VIDEO_CONSTRAINTS = {
-  width: { ideal: 1280, max: 1920 },
-  height: { ideal: 720, max: 1080 },
-  frameRate: { ideal: 24, max: 30 },
-  facingMode: "user",
-} as MediaTrackConstraints;
+export type CameraFacing = "user" | "environment";
+
+/** Ideal, not exact: a bare facingMode string is an exact match and drops cameras that omit it. */
+export function cameraVideoConstraints(
+  facing: CameraFacing = "user",
+): MediaTrackConstraints {
+  return {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 30, max: 30 },
+    facingMode: { ideal: facing },
+  };
+}
+
+export const CAMERA_VIDEO_CONSTRAINTS = cameraVideoConstraints("user");
 
 export const CAMERA_SEND_PARAMS = {
-  maxBitrate: 1_500_000,
-  maxFramerate: 24,
+  maxBitrate: 3_000_000,
+  maxFramerate: 30,
 } as const;
 
-/** Speech-oriented Opus cap — enough for voice, leaves headroom for video. */
+/** Opus speech cap. 64 kbps stays intelligible on lossy links without starving video. */
 export const AUDIO_SEND_PARAMS = {
-  maxBitrate: 48_000,
+  maxBitrate: 64_000,
+} as const;
+
+/** System/tab audio from a screen share — stereo, not a speech codec. */
+export const SCREEN_AUDIO_SEND_PARAMS = {
+  maxBitrate: 128_000,
 } as const;
 
 export type CallNetworkLevel = "good" | "ok" | "poor";
@@ -45,17 +59,18 @@ export const SCREEN_CAPTURE_CONSTRAINTS = {
     frameRate: { ideal: 30, max: 30 },
   } as MediaTrackConstraints,
   audio: {
-    echoCancellation: true,
+    echoCancellation: false,
     noiseSuppression: false,
     autoGainControl: false,
+    channelCount: { ideal: 2 },
     // Keep Pulse's remote playback out of system/tab loopback.
     restrictOwnAudio: true,
   } as MediaTrackConstraints,
 };
 
 export const SCREEN_SEND_PARAMS = {
-  maxBitrate: 2_800_000,
-  maxFramerate: 24,
+  maxBitrate: 5_000_000,
+  maxFramerate: 30,
 } as const;
 
 export function emptyCallStatsCursor(): CallStatsCursor {
@@ -137,18 +152,18 @@ export function readInboundFlow(report: RTCStatsReport): {
 
 export function callNetworkLevel(sample: CallNetworkSample): CallNetworkLevel {
   if (
-    sample.lossPct > 8 ||
-    sample.rttMs > 280 ||
-    sample.jitterMs > 50 ||
-    (sample.availableBitrate > 0 && sample.availableBitrate < 400_000)
+    sample.lossPct > 10 ||
+    sample.rttMs > 450 ||
+    sample.jitterMs > 80 ||
+    (sample.availableBitrate > 0 && sample.availableBitrate < 700_000)
   ) {
     return "poor";
   }
   if (
-    sample.lossPct > 3 ||
-    sample.rttMs > 160 ||
-    sample.jitterMs > 30 ||
-    (sample.availableBitrate > 0 && sample.availableBitrate < 1_000_000)
+    sample.lossPct > 4 ||
+    sample.rttMs > 250 ||
+    sample.jitterMs > 45 ||
+    (sample.availableBitrate > 0 && sample.availableBitrate < 2_000_000)
   ) {
     return "ok";
   }
@@ -162,15 +177,15 @@ export function videoQualityForCall(
 ): CallVideoQuality {
   if (hidden) {
     return kind === "screen"
-      ? { label: "540", maxBitrate: 800_000, maxFramerate: 10, scale: 2 }
-      : { label: "360", maxBitrate: 250_000, maxFramerate: 8, scale: 2 };
+      ? { label: "720", maxBitrate: 1_200_000, maxFramerate: 8, scale: 1.5 }
+      : { label: "360", maxBitrate: 400_000, maxFramerate: 12, scale: 2 };
   }
   if (kind === "screen") {
     if (level === "poor") {
-      return { label: "540", maxBitrate: 1_200_000, maxFramerate: 15, scale: 2 };
+      return { label: "720", maxBitrate: 1_800_000, maxFramerate: 15, scale: 1.5 };
     }
     if (level === "ok") {
-      return { label: "720", maxBitrate: 1_800_000, maxFramerate: 20, scale: 1.5 };
+      return { label: "1080", maxBitrate: 3_000_000, maxFramerate: 24, scale: 1 };
     }
     return {
       label: "1080",
@@ -180,13 +195,13 @@ export function videoQualityForCall(
     };
   }
   if (level === "poor") {
-    return { label: "360", maxBitrate: 500_000, maxFramerate: 12, scale: 2 };
+    return { label: "360", maxBitrate: 600_000, maxFramerate: 15, scale: 2 };
   }
   if (level === "ok") {
-    return { label: "540", maxBitrate: 900_000, maxFramerate: 20, scale: 1.5 };
+    return { label: "720", maxBitrate: 1_700_000, maxFramerate: 24, scale: 1 };
   }
   return {
-    label: "720",
+    label: "1080",
     maxBitrate: CAMERA_SEND_PARAMS.maxBitrate,
     maxFramerate: CAMERA_SEND_PARAMS.maxFramerate,
     scale: 1,
@@ -206,35 +221,31 @@ type ScreenDisplayOptions = DisplayMediaStreamOptions & {
   suppressLocalAudioPlayback?: boolean;
 };
 
-function displaySurfaceOf(stream: MediaStream) {
-  const settings = stream.getVideoTracks()[0]?.getSettings?.() || {};
-  return (settings as { displaySurface?: string }).displaySurface;
-}
-
 function sanitizeScreenAudio(stream: MediaStream) {
-  const surface = displaySurfaceOf(stream);
   for (const track of stream.getAudioTracks()) {
-    try {
-      void track.applyConstraints({
-        echoCancellation: true,
-        restrictOwnAudio: true,
-      } as MediaTrackConstraints);
-    } catch {
-      /* older browsers */
-    }
+    prepareScreenAudioTrack(track);
     const restricted =
       (track.getSettings() as { restrictOwnAudio?: boolean }).restrictOwnAudio ===
       true;
-    // Full-screen capture is speaker loopback and includes the other person
-    // unless the browser excluded this tab's audio.
-    if (surface === "monitor" && !restricted) {
-      track.stop();
-      stream.removeTrack(track);
-      continue;
+    if (restricted) continue;
+    try {
+      void track.applyConstraints({
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: false,
+        restrictOwnAudio: true,
+      } as MediaTrackConstraints);
+    } catch {
+      /* keep the system/tab audio the user asked to share */
     }
-    prepareScreenAudioTrack(track);
   }
   return stream;
+}
+
+function prefersUnconstrainedScreenVideo() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /Safari/i.test(ua) && !/Chrome|Chromium|Edg|Android|CriOS|FxiOS/i.test(ua);
 }
 
 function displayCaptureFailed(error: unknown) {
@@ -251,12 +262,25 @@ function displayCaptureFailed(error: unknown) {
 
 /** Screen share with content audio, without capturing the call from speakers. */
 export async function captureScreenShare() {
-  const video = SCREEN_CAPTURE_CONSTRAINTS.video;
+  const video = prefersUnconstrainedScreenVideo()
+    ? true
+    : SCREEN_CAPTURE_CONSTRAINTS.video;
   const audio = SCREEN_CAPTURE_CONSTRAINTS.audio;
   const attempts: ScreenDisplayOptions[] = [
     {
       video,
       audio,
+      systemAudio: "include",
+      suppressLocalAudioPlayback: true,
+    },
+    {
+      video,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: false,
+        restrictOwnAudio: true,
+      } as MediaTrackConstraints,
       systemAudio: "include",
       suppressLocalAudioPlayback: true,
     },
@@ -294,12 +318,15 @@ export async function attachLocalScreenAudioTrack(
       (sender) =>
         sender.track?.kind === "audio" && sender.track.contentHint === "music",
     );
-  if (existing) {
-    existing.setStreams?.(stream);
-    await existing.replaceTrack(track);
-    return existing;
+  let sender = existing;
+  if (sender) {
+    sender.setStreams?.(stream);
+    await sender.replaceTrack(track);
+  } else {
+    sender = pc.addTrack(track, stream);
   }
-  return pc.addTrack(track, stream);
+  await applyAudioSenderParams(sender, SCREEN_AUDIO_SEND_PARAMS.maxBitrate);
+  return sender;
 }
 
 export async function detachLocalScreenAudioTrack(
@@ -330,6 +357,81 @@ export function prepareCameraTrack(track: MediaStreamTrack) {
   } catch {
     /* older browsers */
   }
+}
+
+export async function phoneCanFlipCamera() {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
+    return false;
+  }
+  const ua = navigator.userAgent || "";
+  const coarse =
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(pointer: coarse)")?.matches;
+  const mobile =
+    /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
+    (navigator.maxTouchPoints > 1 && Boolean(coarse));
+  try {
+    const cameras = (await navigator.mediaDevices.enumerateDevices()).filter(
+      (device) => device.kind === "videoinput",
+    );
+    if (cameras.length > 1) return true;
+  } catch {
+    /* permission not granted yet */
+  }
+  return mobile;
+}
+
+/** Front/back phone cameras, with fallbacks when 1080p or facingMode is rejected. */
+export async function openCameraStream(facing: CameraFacing = "user") {
+  const attempts: MediaStreamConstraints[] = [
+    { audio: false, video: cameraVideoConstraints(facing) },
+    {
+      audio: false,
+      video: {
+        facingMode: { ideal: facing },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 30 },
+      },
+    },
+    { audio: false, video: { facingMode: { ideal: facing } } },
+    { audio: false, video: true },
+  ];
+  let lastError: unknown;
+  for (const constraints of attempts) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const track = stream.getVideoTracks()[0];
+      if (!track) {
+        stream.getTracks().forEach((item) => item.stop());
+        continue;
+      }
+      prepareCameraTrack(track);
+      try {
+        const width = track.getSettings().width || 0;
+        if (width > 0 && width < 1280) {
+          await track.applyConstraints({
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30, max: 30 },
+          });
+        }
+      } catch {
+        /* keep the mode the device actually opened */
+      }
+      return stream;
+    } catch (error) {
+      lastError = error;
+      const name =
+        error && typeof error === "object" && "name" in error
+          ? String((error as { name?: string }).name)
+          : "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        throw error;
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("camera-unavailable");
 }
 
 export function prepareScreenTrack(track: MediaStreamTrack) {
@@ -509,14 +611,19 @@ export async function applyVideoSenderParams(
     if (!params.encodings || params.encodings.length === 0) {
       params.encodings = [{}];
     }
-    params.encodings[0].maxBitrate = opts.maxBitrate;
-    params.encodings[0].maxFramerate = opts.maxFramerate;
-    params.encodings[0].scaleResolutionDownBy = opts.scaleResolutionDownBy ?? 1;
-    if (opts.maintainResolution) {
-      (params as RTCRtpSendParameters & {
-        degradationPreference?: string;
-      }).degradationPreference = "maintain-resolution";
-    }
+    const encoding = params.encodings[0] as RTCRtpEncodingParameters & {
+      networkPriority?: RTCPriorityType;
+    };
+    encoding.maxBitrate = opts.maxBitrate;
+    encoding.maxFramerate = opts.maxFramerate;
+    encoding.scaleResolutionDownBy = opts.scaleResolutionDownBy ?? 1;
+    encoding.priority = "high";
+    encoding.networkPriority = "high";
+    (params as RTCRtpSendParameters & {
+      degradationPreference?: RTCDegradationPreference;
+    }).degradationPreference = opts.maintainResolution
+      ? "maintain-resolution"
+      : "maintain-framerate";
     await sender.setParameters(params);
   } catch {
     /* browser may reject mid-call tweaks */
@@ -525,7 +632,7 @@ export async function applyVideoSenderParams(
 
 export async function applyAudioSenderParams(
   sender: RTCRtpSender | undefined,
-  maxBitrate = AUDIO_SEND_PARAMS.maxBitrate,
+  maxBitrate: number = AUDIO_SEND_PARAMS.maxBitrate,
 ) {
   if (!sender) return;
   try {
@@ -547,8 +654,12 @@ export async function applyAudioSenders(
     if (!pc) continue;
     for (const sender of pc.getSenders()) {
       if (sender.track?.kind !== "audio") continue;
-      if (sender.track.contentHint === "music") continue;
-      await applyAudioSenderParams(sender);
+      await applyAudioSenderParams(
+        sender,
+        sender.track.contentHint === "music"
+          ? SCREEN_AUDIO_SEND_PARAMS.maxBitrate
+          : AUDIO_SEND_PARAMS.maxBitrate,
+      );
     }
   }
 }
@@ -580,35 +691,58 @@ function preferOpusCodecs(pc: RTCPeerConnection) {
   }
 }
 
-export function patchOpusSdp(sdp: string) {
-  const pts = [...sdp.matchAll(/^a=rtpmap:(\d+) opus\/48000/gim)].map(
+function upsertFmtp(params: string, key: string, value: string) {
+  const next = params.replace(/^;+/, "");
+  const re = new RegExp(`${key}=[^;]*`, "i");
+  if (re.test(next)) return next.replace(re, `${key}=${value}`);
+  return next ? `${next};${key}=${value}` : `${key}=${value}`;
+}
+
+function patchOpusSection(section: string, screen: boolean, eol: string) {
+  const bitrate = screen
+    ? SCREEN_AUDIO_SEND_PARAMS.maxBitrate
+    : AUDIO_SEND_PARAMS.maxBitrate;
+  const pts = [...section.matchAll(/^a=rtpmap:(\d+) opus\/48000/gim)].map(
     (match) => match[1],
   );
-  if (!pts.length) return sdp;
-  let next = sdp;
+  if (!pts.length) return section;
+  let next = section;
   for (const pt of pts) {
+    const tune = (params: string) => {
+      let patched = upsertFmtp(params, "minptime", "10");
+      patched = upsertFmtp(patched, "useinbandfec", "1");
+      patched = upsertFmtp(patched, "usedtx", screen ? "0" : "1");
+      patched = upsertFmtp(patched, "maxaveragebitrate", String(bitrate));
+      patched = upsertFmtp(patched, "stereo", screen ? "1" : "0");
+      if (screen) patched = upsertFmtp(patched, "sprop-stereo", "1");
+      return patched;
+    };
     const fmtp = new RegExp(`^(a=fmtp:${pt} )(.*)$`, "im");
     if (fmtp.test(next)) {
       next = next.replace(fmtp, (_line, prefix: string, params: string) => {
-        let patched = params;
-        if (!/useinbandfec=/i.test(patched)) patched += ";useinbandfec=1";
-        else patched = patched.replace(/useinbandfec=0/i, "useinbandfec=1");
-        if (!/usedtx=/i.test(patched)) patched += ";usedtx=1";
-        else patched = patched.replace(/usedtx=0/i, "usedtx=1");
-        if (!/maxaveragebitrate=/i.test(patched)) {
-          patched += `;maxaveragebitrate=${AUDIO_SEND_PARAMS.maxBitrate}`;
-        }
-        if (!/stereo=/i.test(patched)) patched += ";stereo=0";
-        return `${prefix}${patched}`;
+        return `${prefix}${tune(params)}`;
       });
       continue;
     }
     next = next.replace(
       new RegExp(`^(a=rtpmap:${pt} opus\\/48000.*)$`, "im"),
-      `$1\r\na=fmtp:${pt} minptime=10;useinbandfec=1;usedtx=1;maxaveragebitrate=${AUDIO_SEND_PARAMS.maxBitrate};stereo=0`,
+      `$1${eol}a=fmtp:${pt} ${tune("")}`,
     );
   }
   return next;
+}
+
+export function patchOpusSdp(sdp: string) {
+  const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
+  const chunks = sdp.split(/\r?\n(?=m=)/);
+  let audioIndex = 0;
+  const next = chunks.map((chunk) => {
+    if (!/(^|\n)m=audio /.test(chunk)) return chunk;
+    const screen = audioIndex > 0;
+    audioIndex += 1;
+    return patchOpusSection(chunk, screen, eol);
+  });
+  return next.join(eol);
 }
 
 export function tuneSessionDescription(desc: RTCSessionDescriptionInit) {
@@ -711,4 +845,38 @@ export function streamHasScreenVideo(stream: MediaStream | null) {
     stream &&
       liveVideoTracks(stream).some((track) => videoTrackLooksLikeScreen(track)),
   );
+}
+
+/** First live audio track is the mic; later ones are screen-share audio. */
+export function splitCallAudioTracks(
+  tracks: MediaStreamTrack[],
+  screenIds: Set<string>,
+) {
+  const live = tracks.filter((track) => track.readyState === "live");
+  for (const id of [...screenIds]) {
+    if (!live.some((track) => track.id === id)) screenIds.delete(id);
+  }
+  const unmarked = live.filter((track) => !screenIds.has(track.id));
+  if (unmarked.length > 1) {
+    for (const extra of unmarked.slice(1)) screenIds.add(extra.id);
+  }
+  return {
+    voice: live.filter((track) => !screenIds.has(track.id)),
+    screen: live.filter((track) => screenIds.has(track.id)),
+  };
+}
+
+/**
+ * Remote receivers do not get contentHint. When both camera and screen are
+ * live, the later track is the screen share (it is published after the camera).
+ */
+export function noteRemotePresentation(stream: MediaStream, sharing: boolean) {
+  const live = liveVideoTracks(stream);
+  if (!sharing || live.length < 2) return;
+  const known = live.find((track) => videoTrackLooksLikeScreen(track));
+  const screen = known || live[live.length - 1];
+  prepareScreenTrack(screen);
+  for (const track of live) {
+    if (track !== screen) prepareCameraTrack(track);
+  }
 }

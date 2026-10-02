@@ -382,6 +382,8 @@ export function useVoiceChannel({
     toggleMute: sfu.toggleMute,
     toggleDeafen: sfu.toggleDeafen,
     toggleCamera: sfu.toggleCamera,
+    flipCamera: sfu.flipCamera,
+    canFlipCamera: sfu.canFlipCamera,
     toggleScreenShare: sfu.toggleScreenShare,
     toggleNoiseFilter: sfu.toggleNoiseFilter,
     setMinimized: setMinimizedBoth,

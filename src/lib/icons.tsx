@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Camera,
   CameraOff,
+  SwitchCamera,
   Check,
   CheckCheck,
   ChevronDown,
@@ -125,6 +126,9 @@ export function IconCamera(props: IconProps) {
 }
 export function IconCameraOff(props: IconProps) {
   return wrap(CameraOff, props);
+}
+export function IconSwitchCamera(props: IconProps) {
+  return wrap(SwitchCamera, props);
 }
 export function IconPhoneOff(props: IconProps) {
   return wrap(PhoneOff, props);
