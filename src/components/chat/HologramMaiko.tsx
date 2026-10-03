@@ -180,18 +180,15 @@ function buildMaiko(): Point[] {
     let px: number, py: number, pz: number;
     if (t < 0.55) {
       const u = t / 0.55;
-      // Изнутри тела наружу-вниз-назад: спокойный выход из-под толстовки.
       px = 0.05 + u * 0.42;
       py = -0.30 - u * 0.15;
       pz = -0.20 - u * 0.50;
     } else {
       const u = (t - 0.55) / 0.45;
-      // Плавный подъём наверх-вперёд: пушистая «запятая», но ниже уровня уха.
       px = 0.47 - u * 0.10;
       py = -0.45 + u * 0.75;
       pz = -0.70 + u * 0.25;
     }
-    // Толщина: корень толстый, середина пушистая, кончик тоньше.
     const thick = 0.14 + Math.sin(t * Math.PI) * 0.15;
     const a = Math.random() * Math.PI * 2;
     const b = Math.acos(2 * Math.random() - 1);
@@ -216,18 +213,11 @@ function buildMaiko(): Point[] {
 
 /** Сборка длится 2.2 сек. */
 const ASSEMBLY_MS = 2200;
-/**
- * Сколько полных оборотов модель делает за время сборки.
- * Должно быть целым, тогда в момент окончания сборки угол
- * кратен 2π — модель смотрит точно лицом к зрителю.
- */
+/** Сколько полных оборотов модель делает за время сборки. */
 const SPINS_DURING_ASSEMBLY = 2;
-/** Итоговый угол сборки: -(N × 2π) ≡ 0 по модулю 2π. */
+/** Итоговый угол сборки: -(N × 2π) ≡ 0 по модулю 2π → лицом к зрителю. */
 const FINAL_ANGLE = -SPINS_DURING_ASSEMBLY * Math.PI * 2;
-/**
- * Скорость вращения после сборки, рад/с.
- * -1.0 ≈ один полный оборот за ~6 секунд.
- */
+/** Скорость после сборки: -1.0 рад/с ≈ один оборот за 6 сек. */
 const AFTER_SPIN_SPEED = -1.0;
 
 function renderFrame(
@@ -241,10 +231,6 @@ function renderFrame(
 
   const entryT = Math.min(1, elapsedMs / ASSEMBLY_MS);
 
-  // Вращение:
-  //   • во время сборки — линейно от 0 до FINAL_ANGLE (2 оборота вправо);
-  //   • ровно на 2.2 с угол кратен 2π — модель смотрит прямо на зрителя;
-  //   • после — продолжает вращаться с AFTER_SPIN_SPEED.
   let rotY: number;
   if (elapsedMs < ASSEMBLY_MS) {
     rotY = (elapsedMs / ASSEMBLY_MS) * FINAL_ANGLE;
@@ -263,7 +249,12 @@ function renderFrame(
   const cssW = W / dpr;
   const cssH = H / dpr;
 
-  const scale = Math.min(cssW, cssH) * 0.6 * dpr;
+  // Мобильная плотность: на узких экранах точки меньше, тусклее и без
+  // большого ореола, иначе additive-блендинг сливает их в белое пятно.
+  const minSide = Math.min(cssW, cssH);
+  const density = Math.max(0.55, Math.min(1, minSide / 900));
+
+  const scale = minSide * 0.6 * dpr;
   const cx = W / 2;
   const cy = H / 2;
   const half = Math.hypot(cssW, cssH) * 0.5 * dpr;
@@ -300,9 +291,14 @@ function renderFrame(
     const sy = baseSy + p.offY * p.offR * half * invEase;
 
     const depthNorm = Math.max(0, Math.min(1, (z2 + 1.4) / 2.8));
-    const alpha = (0.35 + 0.65 * depthNorm) * entryEase;
-    const pulse = 0.85 + 0.15 * Math.sin(t * 2.2 + p.phase);
-    const dotR = (0.7 + 1.65 * depthNorm) * dpr * p.sizeMul;
+    // На мобильном приглушаем базовую яркость и амплитуду мерцания.
+    const alpha =
+      (0.22 + 0.60 * depthNorm) *
+      entryEase *
+      (0.6 + 0.4 * density);
+    const pulseAmp = 0.06 + 0.10 * density;
+    const pulse = 1 - pulseAmp + pulseAmp * Math.sin(t * 2.2 + p.phase);
+    const dotR = (0.55 + 1.30 * depthNorm) * dpr * p.sizeMul * density;
 
     const [r, g, b] = REGION_COLORS[p.region] ?? [200, 220, 255];
     const cyanMix = 0.55 * (1 - depthNorm);
@@ -317,19 +313,26 @@ function renderFrame(
 
   ctx.globalCompositeOperation = "lighter";
 
+  // Ореол: на десктопе — заметный, на телефоне — почти незаметный, чтобы
+  // точки не превращались в кашу.
+  const glowAlpha = 0.16 * density;
+  const glowRadius = 1.6 + 1.0 * density;
+
   for (const q of proj) {
-    if (q.a > 0.35) {
-      ctx.fillStyle = `rgba(${q.r},${q.g},${q.b},${(q.a * 0.16).toFixed(3)})`;
+    if (q.a > 0.28) {
+      ctx.fillStyle = `rgba(${q.r},${q.g},${q.b},${(q.a * glowAlpha).toFixed(3)})`;
       ctx.beginPath();
-      ctx.arc(q.sx, q.sy, q.size * 2.6, 0, Math.PI * 2);
+      ctx.arc(q.sx, q.sy, q.size * glowRadius, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.fillStyle = `rgba(${q.r},${q.g},${q.b},${q.a.toFixed(3)})`;
     ctx.beginPath();
     ctx.arc(q.sx, q.sy, q.size, 0, Math.PI * 2);
     ctx.fill();
-    if (q.a > 0.72) {
-      ctx.fillStyle = `rgba(230,250,255,${((q.a - 0.72) * 1.4).toFixed(3)})`;
+    // Блик только для самых передних и только если density это позволяет.
+    if (q.a > 0.72 + 0.1 * (1 - density)) {
+      const shine = Math.max(0, (q.a - (0.72 + 0.1 * (1 - density))) * 1.2);
+      ctx.fillStyle = `rgba(230,250,255,${shine.toFixed(3)})`;
       ctx.beginPath();
       ctx.arc(q.sx, q.sy, q.size * 0.45, 0, Math.PI * 2);
       ctx.fill();
