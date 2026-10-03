@@ -72,8 +72,12 @@ export function useVoiceChannel({
       groupId: string,
       title: string,
       peers?: VoiceChannelUser[],
-      opts?: Partial<MediaControls> & { preserveControls?: boolean },
+      opts?: Partial<MediaControls> & {
+        preserveControls?: boolean;
+        switching?: boolean;
+      },
     ) => Promise<void>;
+    prepareSwitch: () => Promise<void>;
     stopMedia: () => void;
     setPeersExternal: (peers: VoiceChannelUser[]) => void;
     clearError: () => void;
@@ -95,7 +99,10 @@ export function useVoiceChannel({
     async (
       session: ActiveVoice,
       nextPeers: VoiceChannelUser[],
-      opts?: Partial<MediaControls> & { preserveControls?: boolean },
+      opts?: Partial<MediaControls> & {
+        preserveControls?: boolean;
+        switching?: boolean;
+      },
     ) => {
       const api = sfuApiRef.current;
       if (!api) return;
@@ -156,37 +163,63 @@ export function useVoiceChannel({
         sfu.setMinimized(false);
         return;
       }
+      const previous = activeRef.current;
+      const moving = Boolean(previous && previous.channelId !== channelId);
+      const live = sfuApiRef.current;
+      const carried = moving
+        ? {
+            muted: live?.muted ?? false,
+            deafened: live?.deafened ?? false,
+            cameraOff: live?.cameraOff ?? true,
+            sharingScreen: live?.sharingScreen ?? false,
+            preserveControls: true,
+            switching: true,
+          }
+        : undefined;
       const attempt = ++joinAttemptRef.current;
       joiningRef.current = true;
       setJoining(true);
       setError(null);
-      if (activeRef.current) {
-        // Stop previous LiveKit media only. Do NOT call leave(): it bumps
-        // joinAttemptRef and emits voice:leave, which races this join and
-        // can leave presence on the server without an SFU session.
-        sfuApiRef.current?.stopMedia();
-        activeRef.current = null;
-        setActive(null);
-        setPeers([]);
-      }
-
       const pendingSession = { channelId, groupId, title };
       activeRef.current = pendingSession;
       setActive(pendingSession);
       setMinimized(false);
       sfu.setMinimized(false);
-      try {
-        const result = await new Promise<JoinAck>((resolve, reject) => {
+      if (moving) {
+        setPeers([]);
+        await sfuApiRef.current?.prepareSwitch();
+      }
+      if (attempt !== joinAttemptRef.current) return;
+      const askJoin = (nextChannelId: string) =>
+        new Promise<JoinAck>((resolve, reject) => {
           const timeout = window.setTimeout(() => {
             reject(new Error("Сервер не ответил на вход в канал"));
           }, 10_000);
-          socket.emit("voice:join", { channelId }, (response: JoinAck) => {
+          socket.emit("voice:join", { channelId: nextChannelId }, (response: JoinAck) => {
             window.clearTimeout(timeout);
             resolve(response || {});
           });
         });
+      try {
+        const result = await askJoin(channelId);
         if (attempt !== joinAttemptRef.current) return;
         if (!result.ok) {
+          if (moving && previous) {
+            activeRef.current = previous;
+            setActive(previous);
+            setError(result.error || "Не удалось войти в канал");
+            const back = await askJoin(previous.channelId);
+            if (attempt !== joinAttemptRef.current) return;
+            if (back.ok) {
+              await startSfu(previous, back.peers || [], carried);
+            } else {
+              sfuApiRef.current?.stopMedia();
+              activeRef.current = null;
+              setActive(null);
+              setPeers([]);
+            }
+            return;
+          }
           activeRef.current = null;
           setActive(null);
           setError(result.error || "Не удалось войти в канал");
@@ -199,8 +232,9 @@ export function useVoiceChannel({
         setMinimized(false);
         sfu.setMinimized(false);
         const resume = peekMediaResume();
-        const controls =
-          resume?.kind === "voice" && resume.channelId === channelId
+        const controls = moving
+          ? carried
+          : resume?.kind === "voice" && resume.channelId === channelId
             ? {
                 muted: resume.muted,
                 deafened: resume.deafened,
@@ -397,9 +431,11 @@ export function useVoiceChannel({
         ? "Связь потеряна — подключитесь к каналу снова"
         : sfu.linkPhase === "reconnecting"
         ? "Восстановление связи…"
-        : joining || sfu.joining || sfu.linkPhase === "connecting"
-          ? "Подключение…"
-          : null,
+        : sfu.linkPhase === "switching"
+          ? "Переключение…"
+          : joining || sfu.joining || sfu.linkPhase === "connecting"
+            ? "Подключение…"
+            : null,
     error: error || sfu.error,
     join,
     leave,

@@ -925,12 +925,12 @@ export function ChatApp() {
       (currentChat.type === "group" || currentChat.type === "channel"),
   );
 
-  const groupCallOpen = Boolean(
+  const voiceGroupOpen = Boolean(
     voice.active &&
-      !voice.minimized &&
       currentChat?.type === "group" &&
       currentChat.id === voice.active.groupId,
   );
+  const groupCallOpen = Boolean(voiceGroupOpen && !voice.minimized);
 
   const directCallOpen = Boolean(
     active && session?.room === active.chatId && !minimized,
@@ -944,7 +944,7 @@ export function ChatApp() {
   const voiceCallChip = Boolean(
     voice.active &&
       !directCallChip &&
-      (voice.minimized || session?.room !== voice.active.groupId),
+      (voice.minimized || !voiceGroupOpen),
   );
   const callChipAvatar = active
     ? people.find((user) => user.id === active.peerId)?.avatarUrl ||
@@ -1559,7 +1559,11 @@ export function ChatApp() {
         sharingScreen={voice.sharingScreen}
         mediaBusy={voice.mediaBusy}
         minimized={voice.minimized}
-        currentGroupId={session?.room ?? null}
+        currentGroupId={
+          voiceGroupOpen && voice.active
+            ? voice.active.groupId
+            : (session?.room ?? null)
+        }
         selfSpeaking={voice.selfSpeaking}
         noiseFilterEnabled={voice.noiseFilterEnabled}
         noiseFilterKind={voice.noiseFilterKind}
@@ -1759,7 +1763,9 @@ export function ChatApp() {
                 activeVoiceChannelId={voice.active?.channelId || null}
                 voiceJoining={voice.joining}
                 onJoinVoice={(channelId, groupId, title) => {
-                  handleOpenChat(groupId);
+                  const stayingInGroup =
+                    currentChat?.type === "group" && currentChat.id === groupId;
+                  if (!stayingInGroup) handleOpenChat(groupId);
                   voice.setMinimized(false);
                   void voice.join(channelId, groupId, title);
                 }}

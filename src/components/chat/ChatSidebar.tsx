@@ -1111,7 +1111,7 @@ export function ChatSidebar({
                       className={`channel-item channel-item--voice ${
                         joined ? "is-active" : ""
                       }`}
-                      disabled={voiceJoining}
+                      disabled={voiceJoining && !activeVoiceChannelId}
                       onClick={() =>
                         onJoinVoice?.(
                           channel.id,
