@@ -12,15 +12,19 @@ import {
   subscribeVoiceSettings,
   type AudioDeviceOption,
 } from "@/lib/mediaDevices";
-import { getNeuralNoiseEnabled, setNeuralNoiseEnabled } from "@/lib/noiseFilter";
+import {
+  audioCaptureConstraints,
+  getNeuralNoiseEnabled,
+  setNeuralNoiseEnabled,
+  startNoiseFilter,
+  stopNoiseFilter,
+  type NoiseFilterSession,
+} from "@/lib/noiseFilter";
 import { IconHeadphones, IconMic, IconNoise, IconVolume } from "@/lib/icons";
 
 function meterCaptureConstraints(deviceId: string): MediaTrackConstraints {
   return {
-    echoCancellation: true,
-    noiseSuppression: false,
-    autoGainControl: true,
-    channelCount: { ideal: 1 },
+    ...audioCaptureConstraints(),
     ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
   };
 }
@@ -49,9 +53,10 @@ export function VoiceSettings() {
   const meterGenRef = useRef(0);
   const meterRef = useRef<{
     stream: MediaStream | null;
+    filter: NoiseFilterSession | null;
     ctx: AudioContext | null;
     raf: number;
-  }>({ stream: null, ctx: null, raf: 0 });
+  }>({ stream: null, filter: null, ctx: null, raf: 0 });
 
   const paintMeter = useCallback((value: number) => {
     const fill = fillRef.current;
@@ -68,6 +73,8 @@ export function VoiceSettings() {
     state.raf = 0;
     state.stream?.getTracks().forEach((track) => track.stop());
     state.stream = null;
+    void stopNoiseFilter(state.filter);
+    state.filter = null;
     if (state.ctx) {
       void state.ctx.close().catch(() => undefined);
       state.ctx = null;
@@ -104,22 +111,38 @@ export function VoiceSettings() {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
+        meterRef.current.stream = stream;
+        const raw = stream.getAudioTracks()[0];
+        if (!raw) throw new Error("NotFoundError");
+        const filter = await startNoiseFilter(raw);
+        if (gen !== meterGenRef.current) {
+          await stopNoiseFilter(filter);
+          return;
+        }
+        meterRef.current.filter = filter;
+        // The preference may change while the models are loading.
+        await filter.setEnabled(getNeuralNoiseEnabled());
+        if (gen !== meterGenRef.current) {
+          await stopNoiseFilter(filter);
+          return;
+        }
         const Ctx =
           window.AudioContext ||
           (window as unknown as { webkitAudioContext?: typeof AudioContext })
             .webkitAudioContext;
         if (!Ctx) {
-          stream.getTracks().forEach((track) => track.stop());
+          stopMeter();
           return;
         }
         const ctx = new Ctx();
+        meterRef.current.ctx = ctx;
         if (ctx.state === "suspended") await ctx.resume();
         if (gen !== meterGenRef.current) {
-          stream.getTracks().forEach((track) => track.stop());
+          await stopNoiseFilter(filter);
           void ctx.close().catch(() => undefined);
           return;
         }
-        const source = ctx.createMediaStreamSource(stream);
+        const source = ctx.createMediaStreamSource(new MediaStream([filter.outputTrack]));
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 2048;
         analyser.smoothingTimeConstant = 0;
@@ -130,7 +153,7 @@ export function VoiceSettings() {
             : null;
         const byteBuf = floatBuf ? null : new Uint8Array(analyser.fftSize);
         let envelope = 0;
-        meterRef.current = { stream, ctx, raf: 0 };
+        meterRef.current = { stream, filter, ctx, raf: 0 };
 
         const tick = () => {
           if (gen !== meterGenRef.current) return;
@@ -167,6 +190,8 @@ export function VoiceSettings() {
         meterRef.current.raf = requestAnimationFrame(tick);
         setPermError(null);
       } catch (err) {
+        if (gen !== meterGenRef.current) return;
+        stopMeter();
         setPermError(
           err instanceof Error
             ? friendlyDeviceError(err)
@@ -196,10 +221,13 @@ export function VoiceSettings() {
   }, [micId, startMeter, stopMeter]);
 
   useEffect(() => {
-    return subscribeVoiceSettings(() => {
+    return subscribeVoiceSettings((change) => {
       setMicId(getMicDeviceId());
       setSpeakerId(getSpeakerDeviceId());
       setDtlnOn(getNeuralNoiseEnabled());
+      if (change.noise) {
+        void meterRef.current.filter?.setEnabled(getNeuralNoiseEnabled());
+      }
     });
   }, []);
 

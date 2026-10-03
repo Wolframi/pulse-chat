@@ -218,25 +218,39 @@ export function prepareScreenAudioTrack(track: MediaStreamTrack) {
 
 type ScreenDisplayOptions = DisplayMediaStreamOptions & {
   systemAudio?: "include" | "exclude";
-  suppressLocalAudioPlayback?: boolean;
+  windowAudio?: "window" | "exclude";
+  selfBrowserSurface?: "exclude";
 };
 
-function sanitizeScreenAudio(stream: MediaStream) {
+type ScreenAudioConstraints = MediaTrackConstraints & {
+  restrictOwnAudio?: ConstrainBoolean;
+};
+
+function hasOwnAudioRestriction(track: MediaStreamTrack) {
+  return (
+    (track.getSettings() as MediaTrackSettings & { restrictOwnAudio?: boolean })
+      .restrictOwnAudio === true
+  );
+}
+
+async function sanitizeScreenAudio(stream: MediaStream) {
+  const surface = stream.getVideoTracks()[0]?.getSettings().displaySurface;
   for (const track of stream.getAudioTracks()) {
     prepareScreenAudioTrack(track);
-    const restricted =
-      (track.getSettings() as { restrictOwnAudio?: boolean }).restrictOwnAudio ===
-      true;
-    if (restricted) continue;
+    // Another tab has its own audio source. Desktop/window audio can include
+    // the call, even when the browser ignores our systemAudio/windowAudio hints.
+    if (surface === "browser" || hasOwnAudioRestriction(track)) continue;
     try {
-      void track.applyConstraints({
-        echoCancellation: true,
-        noiseSuppression: false,
-        autoGainControl: false,
-        restrictOwnAudio: true,
-      } as MediaTrackConstraints);
+      await track.applyConstraints({
+        restrictOwnAudio: { exact: true },
+      } as ScreenAudioConstraints);
     } catch {
-      /* keep the system/tab audio the user asked to share */
+      // Unsupported constraints may reject asynchronously or be ignored.
+    }
+    if (!hasOwnAudioRestriction(track)) {
+      // Never send an unfiltered loopback back to the other participants.
+      track.stop();
+      stream.removeTrack(track);
     }
   }
   return stream;
@@ -266,38 +280,36 @@ export async function captureScreenShare() {
     ? true
     : SCREEN_CAPTURE_CONSTRAINTS.video;
   const audio = SCREEN_CAPTURE_CONSTRAINTS.audio;
+  const supportsOwnAudioRestriction = (
+    navigator.mediaDevices.getSupportedConstraints() as MediaTrackSupportedConstraints & {
+      restrictOwnAudio?: boolean;
+    }
+  ).restrictOwnAudio === true;
+  const captureOptions: ScreenDisplayOptions = {
+    // Older browsers cannot separate the call from desktop audio. They can
+    // still share another tab with sound and any screen without sound.
+    systemAudio: supportsOwnAudioRestriction ? "include" : "exclude",
+    windowAudio: supportsOwnAudioRestriction ? "window" : "exclude",
+    selfBrowserSurface: "exclude",
+  };
   const attempts: ScreenDisplayOptions[] = [
     {
+      ...captureOptions,
       video,
       audio,
-      systemAudio: "include",
-      suppressLocalAudioPlayback: true,
     },
     {
-      video,
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: false,
-        autoGainControl: false,
-        restrictOwnAudio: true,
-      } as MediaTrackConstraints,
-      systemAudio: "include",
-      suppressLocalAudioPlayback: true,
-    },
-    {
+      ...captureOptions,
       video,
       audio: true,
-      systemAudio: "include",
-      suppressLocalAudioPlayback: true,
     },
-    { video, audio: true },
-    { video, audio: false },
+    { ...captureOptions, video, audio: false },
   ];
   let lastError: unknown;
   for (const options of attempts) {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia(options);
-      return sanitizeScreenAudio(stream);
+      return await sanitizeScreenAudio(stream);
     } catch (error) {
       lastError = error;
       if (!displayCaptureFailed(error)) throw error;

@@ -18,6 +18,8 @@ class DtlnOutput extends AudioWorkletProcessor {
     this.lastDelta = 0;
     this.correction = 0;
     this.wasAvailable = false;
+    this.hasWet = false;
+    this.lastWet = 0;
     this.misses = 0;
     this.failed = false;
     this.stopped = false;
@@ -38,6 +40,7 @@ class DtlnOutput extends AudioWorkletProcessor {
         };
         this.workerPort.start();
       } else if (data.type === "enabled") {
+        if (data.enabled !== this.enabled) this.hasWet = false;
         this.enabled = data.enabled;
       } else if (data.type === "stop") {
         this.stopped = true;
@@ -63,17 +66,21 @@ class DtlnOutput extends AudioWorkletProcessor {
     const playSequence = sequence - JITTER_FRAMES;
     const slot = ((playSequence % CAPACITY) + CAPACITY) % CAPACITY;
     const available = playSequence >= 0 && this.tags[slot] === playSequence;
-    const target = this.enabled && available && !this.failed ? 1 : 0;
+    if (available) this.hasWet = true;
+    const target = this.enabled && this.hasWet && !this.failed ? 1 : 0;
     const transition = available !== this.wasAvailable;
     this.wasAvailable = available;
 
-    // Late frames cannot grow latency. Missing frames use aligned dry audio, not zeros.
+    // A late inference must not reopen the raw mic for a keyboard click/thump.
+    // Brief gaps fade the last denoised sample; sustained failure falls back to
+    // browser NS through the existing error path. Bypass still uses aligned dry.
     for (let i = 0; i < output.length; i++) {
       const dry = this.dry[this.dryPosition];
       this.dry[this.dryPosition] = input[i] ?? 0;
       this.dryPosition = (this.dryPosition + 1) % DRY_DELAY;
       this.mix += Math.max(-1 / 400, Math.min(1 / 400, target - this.mix));
-      const wet = available ? this.wet[slot * QUANTUM + i] : dry;
+      const wet = available ? this.wet[slot * QUANTUM + i] : this.lastWet * 0.98;
+      this.lastWet = wet;
       let value = dry + (wet - dry) * this.mix;
       if (!Number.isFinite(value)) {
         value = dry;

@@ -174,12 +174,12 @@ function resolveNoiseMode(mode?: NoiseFilterMode | boolean): NoiseFilterMode {
   return getNoiseFilterMode();
 }
 
-/** Capture constraints: AEC/AGC always; browser NS when DTLN is off and the slider is above 0. */
+/** Keep browser NS before DTLN, including model startup and late-frame bypass. */
 export function audioCaptureConstraints(): MediaTrackConstraints {
   const micId = getMicDeviceId();
   return {
     echoCancellation: true,
-    noiseSuppression: wantsBrowserNs(),
+    noiseSuppression: getNoiseFilterMode() !== "off",
     autoGainControl: true,
     channelCount: { ideal: 1 },
     sampleRate: { ideal: 48000 },
@@ -200,10 +200,14 @@ export function setMicEnabled(
 }
 
 async function setBrowserNs(track: MediaStreamTrack, enabled: boolean) {
-  if (track.readyState === "ended" || track.getSettings().noiseSuppression === enabled) return;
+  if (track.readyState === "ended") return;
+  const constraints = track.getConstraints();
+  // Chromium may keep reporting the initial getSettings value after a toggle.
+  // Compare the requested constraints so off -> on cannot silently stay off.
+  if (constraints.noiseSuppression === enabled) return;
   try {
     // applyConstraints replaces the constraint set: preserve the selected mic and AEC/AGC.
-    await track.applyConstraints({ ...track.getConstraints(), noiseSuppression: enabled });
+    await track.applyConstraints({ ...constraints, noiseSuppression: enabled });
   } catch {
     /* Devices can reject changes during capture; keep the existing audio. */
   }
@@ -228,11 +232,12 @@ export async function startNoiseFilter(
     setEnabled(next) {
       updates = updates.catch(() => undefined).then(async () => {
         if (stopped) return;
+        session.enabled = next || wantsBrowserNs();
+        await setBrowserNs(sourceTrack, session.enabled);
+        if (stopped) return;
         const available = graph && await graph.setEnabled(next);
         if (stopped) return;
         session.kind = available && !failed ? "dtln" : "browser";
-        session.enabled = next || wantsBrowserNs();
-        await setBrowserNs(sourceTrack, session.kind === "browser" ? session.enabled : !next && wantsBrowserNs());
         warnNoiseFallback(session, next);
       });
       return updates;
@@ -243,6 +248,7 @@ export async function startNoiseFilter(
       await graph?.stop();
     },
   };
+  await setBrowserNs(sourceTrack, resolved !== "off");
   try {
     graph = await createDtlnGraph(sourceTrack, () => {
       failed = true;
@@ -262,7 +268,6 @@ export async function startNoiseFilter(
     graph = undefined;
     session.outputTrack = sourceTrack;
   }
-  await setBrowserNs(sourceTrack, resolved === "standard" || (resolved === "high" && session.kind === "browser"));
   warnNoiseFallback(session, resolved === "high");
   return session;
 }
