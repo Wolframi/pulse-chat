@@ -54,6 +54,7 @@ export type CallStatsCursor = {
 
 export const SCREEN_CAPTURE_CONSTRAINTS = {
   video: {
+    displaySurface: "monitor",
     width: { ideal: 1920, max: 2560 },
     height: { ideal: 1080, max: 1440 },
     frameRate: { ideal: 30, max: 30 },
@@ -63,7 +64,8 @@ export const SCREEN_CAPTURE_CONSTRAINTS = {
     noiseSuppression: false,
     autoGainControl: false,
     channelCount: { ideal: 2 },
-    // Keep Pulse's remote playback out of system/tab loopback.
+    suppressLocalAudioPlayback: false,
+    // Keep Mayko's remote playback out of system loopback.
     restrictOwnAudio: true,
   } as MediaTrackConstraints,
 };
@@ -220,10 +222,56 @@ type ScreenDisplayOptions = DisplayMediaStreamOptions & {
   systemAudio?: "include" | "exclude";
   windowAudio?: "window" | "exclude";
   selfBrowserSurface?: "exclude";
+  monitorTypeSurfaces?: "include";
+  surfaceSwitching?: "exclude";
 };
 
 type ScreenAudioConstraints = MediaTrackConstraints & {
   restrictOwnAudio?: ConstrainBoolean;
+};
+
+const CALL_AUDIO_CAPTURE_HANDLE = "mayko-call-audio";
+
+type CaptureHandleConfig = {
+  handle?: string;
+  exposeOrigin?: boolean;
+  permittedOrigins?: string[];
+};
+
+/** Let other Mayko tabs recognize a tab playing a call, without exposing it to other sites. */
+export function configureCallAudioCapture(active: boolean) {
+  const devices = navigator.mediaDevices as MediaDevices & {
+    setCaptureHandleConfig?: (config: CaptureHandleConfig) => void;
+  };
+  try {
+    devices?.setCaptureHandleConfig?.(
+      active
+        ? {
+            handle: CALL_AUDIO_CAPTURE_HANDLE,
+            exposeOrigin: true,
+            permittedOrigins: [window.location.origin],
+          }
+        : {},
+    );
+  } catch {
+    // Capture Handle is unavailable in some browsers and embedded frames.
+  }
+}
+
+function capturesCallTab(track: MediaStreamTrack | undefined) {
+  const handle = (
+    track as (MediaStreamTrack & {
+      getCaptureHandle?: () => { handle?: string; origin?: string } | null;
+    }) | undefined
+  )?.getCaptureHandle?.();
+  return (
+    handle?.origin === window.location.origin &&
+    handle?.handle === CALL_AUDIO_CAPTURE_HANDLE
+  );
+}
+
+type ScreenCaptureOptions = {
+  onAudioUnavailable?: (message: string) => void;
 };
 
 function hasOwnAudioRestriction(track: MediaStreamTrack) {
@@ -233,12 +281,32 @@ function hasOwnAudioRestriction(track: MediaStreamTrack) {
   );
 }
 
-async function sanitizeScreenAudio(stream: MediaStream) {
-  const surface = stream.getVideoTracks()[0]?.getSettings().displaySurface;
+async function sanitizeScreenAudio(
+  stream: MediaStream,
+  { onAudioUnavailable }: ScreenCaptureOptions,
+) {
+  const video = stream.getVideoTracks()[0];
+  const surface = video?.getSettings().displaySurface;
+  const removeAudio = (track: MediaStreamTrack, message: string) => {
+    track.stop();
+    stream.removeTrack(track);
+    onAudioUnavailable?.(message);
+  };
+  const removeCallTabAudio = () => {
+    if (!capturesCallTab(video)) return;
+    for (const track of stream.getAudioTracks()) {
+      removeAudio(
+        track,
+        "Звук вкладки со звонком не передаётся, чтобы собеседники не слышали эхо.",
+      );
+    }
+  };
+  removeCallTabAudio();
   for (const track of stream.getAudioTracks()) {
     prepareScreenAudioTrack(track);
-    // Another tab has its own audio source. Desktop/window audio can include
-    // the call, even when the browser ignores our systemAudio/windowAudio hints.
+    // Tab audio is separate from system audio; restrictOwnAudio has no effect
+    // on it. Capture Handle above rejects tabs playing a call. Desktop/window
+    // audio can include the call even when the browser ignores capture hints.
     if (surface === "browser" || hasOwnAudioRestriction(track)) continue;
     try {
       await track.applyConstraints({
@@ -249,10 +317,17 @@ async function sanitizeScreenAudio(stream: MediaStream) {
     }
     if (!hasOwnAudioRestriction(track)) {
       // Never send an unfiltered loopback back to the other participants.
-      track.stop();
-      stream.removeTrack(track);
+      removeAudio(
+        track,
+        "Демонстрация идёт без звука: браузер не смог исключить голоса собеседников. Попробуйте обновить Chrome или Edge либо демонстрировать отдельную вкладку со звуком.",
+      );
     }
   }
+  // A shared tab can navigate to Mayko or join a call after capture starts.
+  video?.addEventListener("capturehandlechange", removeCallTabAudio);
+  video?.addEventListener("ended", () => {
+    video.removeEventListener("capturehandlechange", removeCallTabAudio);
+  }, { once: true });
   return stream;
 }
 
@@ -275,22 +350,19 @@ function displayCaptureFailed(error: unknown) {
 }
 
 /** Screen share with content audio, without capturing the call from speakers. */
-export async function captureScreenShare() {
+export async function captureScreenShare(options: ScreenCaptureOptions = {}) {
   const video = prefersUnconstrainedScreenVideo()
     ? true
     : SCREEN_CAPTURE_CONSTRAINTS.video;
   const audio = SCREEN_CAPTURE_CONSTRAINTS.audio;
-  const supportsOwnAudioRestriction = (
-    navigator.mediaDevices.getSupportedConstraints() as MediaTrackSupportedConstraints & {
-      restrictOwnAudio?: boolean;
-    }
-  ).restrictOwnAudio === true;
   const captureOptions: ScreenDisplayOptions = {
-    // Older browsers cannot separate the call from desktop audio. They can
-    // still share another tab with sound and any screen without sound.
-    systemAudio: supportsOwnAudioRestriction ? "include" : "exclude",
-    windowAudio: supportsOwnAudioRestriction ? "window" : "exclude",
+    // Offer audio for the chosen source. Verify isolation on the actual track,
+    // rather than hiding desktop/window audio based on a global feature flag.
+    systemAudio: "include",
+    windowAudio: "window",
     selfBrowserSurface: "exclude",
+    monitorTypeSurfaces: "include",
+    surfaceSwitching: "exclude",
   };
   const attempts: ScreenDisplayOptions[] = [
     {
@@ -306,13 +378,20 @@ export async function captureScreenShare() {
     { ...captureOptions, video, audio: false },
   ];
   let lastError: unknown;
-  for (const options of attempts) {
+  for (const attempt of attempts) {
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia(options);
-      return await sanitizeScreenAudio(stream);
+      stream = await navigator.mediaDevices.getDisplayMedia(attempt);
     } catch (error) {
       lastError = error;
       if (!displayCaptureFailed(error)) throw error;
+      continue;
+    }
+    try {
+      return await sanitizeScreenAudio(stream, options);
+    } catch (error) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw error;
     }
   }
   throw lastError instanceof Error ? lastError : new Error("screen-share-failed");

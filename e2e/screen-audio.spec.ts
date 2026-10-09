@@ -37,6 +37,9 @@ const cases = [
   { name: "drops system audio when the browser ignores isolation", surface: "monitor", supported: true, initial: false, result: "ignored", keep: false },
   { name: "drops window loopback when isolation is unavailable", surface: "window", supported: false, initial: false, result: "ignored", keep: false },
   { name: "keeps another tab's content audio on older browsers", surface: "browser", supported: false, initial: false, result: "ignored", keep: true },
+  { name: "offers and keeps isolated system audio even without the global feature flag", surface: "monitor", supported: false, initial: false, result: "applied", keep: true },
+  { name: "keeps isolated window audio", surface: "window", supported: true, initial: false, result: "applied", keep: true },
+  { name: "rejects audio from a Mayko tab playing a call", surface: "browser", supported: true, initial: true, result: "ignored", keep: false, callTab: true },
   { name: "does not trust an unknown capture source", surface: undefined, supported: false, initial: false, result: "ignored", keep: false },
   { name: "sanitizes audio returned by the compatibility fallback", surface: "monitor", supported: true, initial: false, result: "ignored", keep: false, fallback: true },
 ] as const;
@@ -50,9 +53,23 @@ for (const scenario of cases) {
       const stream = new MediaStream([video, audio]);
       let restricted = scenario.initial;
       let applied = false;
+      const warnings: string[] = [];
+      let config: { handle?: string; exposeOrigin?: boolean; permittedOrigins?: string[] } = {};
+      Object.defineProperty(navigator.mediaDevices, "setCaptureHandleConfig", {
+        value: (value: typeof config) => { config = value; },
+      });
+      window.screenAudioTest.configureCallAudioCapture(true);
+      Object.defineProperty(video, "getCaptureHandle", {
+        value: () => "callTab" in scenario && scenario.callTab
+          ? { handle: config.handle, origin: location.origin }
+          : null,
+      });
       const requests: (DisplayMediaStreamOptions & {
         systemAudio?: string;
+        windowAudio?: string;
         selfBrowserSurface?: string;
+        monitorTypeSurfaces?: string;
+        surfaceSwitching?: string;
       })[] = [];
       Object.defineProperty(video, "getSettings", {
         value: () => ({ displaySurface: scenario.surface }),
@@ -83,13 +100,17 @@ for (const scenario of cases) {
         },
       });
       try {
-        const captured = await window.screenAudioTest.captureScreenShare();
+        const captured = await window.screenAudioTest.captureScreenShare({
+          onAudioUnavailable: (message) => warnings.push(message),
+        });
         return {
           audioCount: captured.getAudioTracks().length,
           audioState: audio.readyState,
           videoState: video.readyState,
           applied,
           requests,
+          warnings,
+          config,
         };
       } finally {
         stream.getTracks().forEach((track) => track.stop());
@@ -101,13 +122,60 @@ for (const scenario of cases) {
     expect(result.audioState).toBe(scenario.keep ? "live" : "ended");
     expect(result.videoState).toBe("live");
     expect(result.applied).toBe(scenario.surface !== "browser" && !scenario.initial);
+    expect(result.warnings).toHaveLength(scenario.keep ? 0 : 1);
+    if (!scenario.keep) expect(result.warnings[0]).toMatch(/(без звука|эхо)/);
+    expect(result.config.permittedOrigins).toEqual(["http://127.0.0.1:3000"]);
     expect(result.requests).toHaveLength("fallback" in scenario ? 2 : 1);
     for (const request of result.requests) {
-      expect(request.systemAudio).toBe(scenario.supported ? "include" : "exclude");
+      expect(request.systemAudio).toBe("include");
+      expect(request.windowAudio).toBe("window");
       expect(request.selfBrowserSurface).toBe("exclude");
+      expect(request.monitorTypeSurfaces).toBe("include");
+      expect(request.surfaceSwitching).toBe("exclude");
+      expect(request.video).toMatchObject({ displaySurface: "monitor" });
     }
   });
 }
+
+test("stops tab audio if the shared tab joins a call later", async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const ctx = new AudioContext();
+    const audio = ctx.createMediaStreamDestination().stream.getAudioTracks()[0];
+    const video = document.createElement("canvas").captureStream().getVideoTracks()[0];
+    const stream = new MediaStream([video, audio]);
+    let config: { handle?: string; permittedOrigins?: string[] } = {};
+    const warnings: string[] = [];
+    Object.defineProperty(navigator.mediaDevices, "setCaptureHandleConfig", {
+      value: (value: typeof config) => { config = value; },
+    });
+    Object.defineProperty(video, "getSettings", { value: () => ({ displaySurface: "browser" }) });
+    Object.defineProperty(video, "getCaptureHandle", {
+      value: () => config.handle ? { handle: config.handle, origin: location.origin } : null,
+    });
+    Object.defineProperty(navigator.mediaDevices, "getDisplayMedia", { value: async () => stream });
+    try {
+      const captured = await window.screenAudioTest.captureScreenShare({
+        onAudioUnavailable: (message) => warnings.push(message),
+      });
+      const before = captured.getAudioTracks().length;
+      window.screenAudioTest.configureCallAudioCapture(true);
+      video.dispatchEvent(new Event("capturehandlechange"));
+      const after = captured.getAudioTracks().length;
+      window.screenAudioTest.configureCallAudioCapture(false);
+      video.dispatchEvent(new Event("capturehandlechange"));
+      return { before, after, audioState: audio.readyState, videoState: video.readyState, config, warnings };
+    } finally {
+      stream.getTracks().forEach((track) => track.stop());
+      await ctx.close();
+    }
+  });
+  expect(result.before).toBe(1);
+  expect(result.after).toBe(0);
+  expect(result.audioState).toBe("ended");
+  expect(result.videoState).toBe("live");
+  expect(result.config).toEqual({});
+  expect(result.warnings).toHaveLength(1);
+});
 
 test("does not reopen the picker after cancellation", async ({ page }) => {
   const result = await page.evaluate(async () => {

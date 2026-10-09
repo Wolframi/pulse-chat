@@ -151,8 +151,11 @@ function markAsScreenTrack(track: MediaStreamTrack | undefined) {
   }
 }
 
-async function enableLiveKitScreenShare(room: Room) {
-  const display = await captureScreenShare();
+async function enableLiveKitScreenShare(
+  room: Room,
+  onAudioUnavailable: (message: string) => void,
+) {
+  const display = await captureScreenShare({ onAudioUnavailable });
   const videoTrack = display.getVideoTracks()[0];
   if (!videoTrack) {
     display.getTracks().forEach((track) => track.stop());
@@ -1123,7 +1126,7 @@ export function useVoiceChannelLiveKit({
           }
         }
         if (keepSharing && !reusedScreen) {
-          await enableLiveKitScreenShare(room).catch(() => undefined);
+          await enableLiveKitScreenShare(room, setError).catch(() => undefined);
         }
         for (const participant of room.remoteParticipants.values()) {
           for (const publication of participant.trackPublications.values()) {
@@ -1504,7 +1507,7 @@ export function useVoiceChannelLiveKit({
         await stopScreenShare();
         return;
       }
-      await enableLiveKitScreenShare(room);
+      await enableLiveKitScreenShare(room, setError);
       if (roomRef.current !== room) {
         void room.disconnect(true).catch(() => undefined);
         return;

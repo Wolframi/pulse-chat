@@ -15,6 +15,7 @@ import { defaultTransition, easeOutSoft, softSpring } from "@/lib/motion";
 import { useChat } from "@/hooks/useChat";
 import { useCall } from "@/hooks/useCall";
 import { useVoiceChannel } from "@/hooks/useVoiceChannel";
+import { configureCallAudioCapture } from "@/lib/webrtcMedia";
 import { JoinGate } from "@/components/chat/JoinGate";
 import { Composer } from "@/components/chat/Composer";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
@@ -213,6 +214,12 @@ export function ChatApp() {
   const joinVoice = voice.join;
   const voiceError = voice.error;
   const clearVoiceError = voice.clearError;
+
+  const playingCallAudio = Boolean(active || voice.active);
+  useEffect(() => {
+    configureCallAudioCapture(playingCallAudio);
+    return () => configureCallAudioCapture(false);
+  }, [playingCallAudio]);
 
   const handleLogout = useCallback(() => {
     stopAudioPlayback();

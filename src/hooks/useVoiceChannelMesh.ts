@@ -1183,7 +1183,7 @@ export function useVoiceChannelMesh({
         return;
       }
 
-      const display = await captureScreenShare();
+      const display = await captureScreenShare({ onAudioUnavailable: setError });
       const track = display.getVideoTracks()[0];
       if (!track) {
         display.getTracks().forEach((item) => item.stop());

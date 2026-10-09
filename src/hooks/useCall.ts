@@ -1826,8 +1826,14 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
     }
 
     let display: MediaStream | null = null;
+    let screenAudioWarning: string | undefined;
     try {
-      display = await captureScreenShare();
+      display = await captureScreenShare({
+        onAudioUnavailable: (message) => {
+          screenAudioWarning = message;
+          setStatus(message);
+        },
+      });
       const track = display.getVideoTracks()[0];
       if (!track) {
         display.getTracks().forEach((item) => item.stop());
@@ -1879,7 +1885,7 @@ export function useCall({ socket, selfId, token = null, onLog }: UseCallOptions)
 
       setSharingScreen(true);
       localSharingScreenRef.current = true;
-      setStatus("Демонстрация экрана");
+      setStatus(screenAudioWarning || "Демонстрация экрана");
       emitSignal(peer.peerId, "screen-on");
       emitCurrentMediaState(cameraWasOffRef.current, true);
       track.onended = () => {
