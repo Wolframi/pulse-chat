@@ -1442,9 +1442,10 @@ export function ChatApp() {
   const showReconnect = Boolean(account && flashOnline && connected);
   const reconnectText = "подключено";
 
-  const [mountAt] = useState(() =>
-    typeof performance !== "undefined" ? performance.now() : Date.now(),
-  );
+  const [introReady, setIntroReady] = useState<{ at: number; durationMs: number } | null>(null);
+  const handleIntroReady = useCallback((durationMs = 5800) => {
+    setIntroReady(ready => ready ?? { at: performance.now(), durationMs });
+  }, []);
   const [introVisible, setIntroVisible] = useState(true);
   const [authWash, setAuthWash] = useState(true);
   // Avoid hydration mismatch: reducedMotion="user" reads matchMedia on first client paint.
@@ -1454,21 +1455,21 @@ export function ChatApp() {
     setMotionPolicy("user");
   }, []);
 
-  // Hold splash until auth is ready AND a calm minimum beat has played.
+  // Start the intro clock after the particles load, including on slow connections.
   useEffect(() => {
     if (!authReady) return;
 
     const reduced =
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const minMs = reduced ? 120 : 4200;
+    if (introReady === null && !reduced) return;
     const now =
       typeof performance !== "undefined" ? performance.now() : Date.now();
-    const wait = Math.max(0, minMs - (now - mountAt));
+    const wait = reduced || !introReady ? 120 : Math.max(0, introReady.durationMs - (now - introReady.at));
 
     const timer = window.setTimeout(() => setIntroVisible(false), wait);
     return () => window.clearTimeout(timer);
-  }, [authReady]);
+  }, [authReady, introReady]);
 
   const showAuthScene = introVisible || !account;
 
@@ -1667,7 +1668,7 @@ export function ChatApp() {
             exit={{ opacity: 0, scale: 1.015 }}
             transition={{ duration: 0.42, ease: easeOut }}
           >
-            <HologramMaiko />
+            <HologramMaiko onReady={handleIntroReady} />
           </motion.div>
         ) : !account ? (
           <motion.div

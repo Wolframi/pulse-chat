@@ -328,7 +328,18 @@
   width: 100vw;
   height: 100vh;
   display: block;
-  filter: drop-shadow(0 0 24px rgba(110, 210, 255, 0.35));
+  opacity: 1;
+  transition: opacity 350ms ease;
   pointer-events: none;
   z-index: 5;
+}
+
+.hologram-maiko.is-exiting {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hologram-maiko {
+    transition: none;
+  }
 }
